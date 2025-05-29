@@ -1,0 +1,10 @@
+{
+  "a2a": {
+    "agent_id": "orchestration_agent_001", 
+    "communication_port": 9005,
+    "target_agents": ["monitor_agent", "healing_agent"]
+  },
+  "xopera_path": "opera",
+  "tosca_templates_dir": "./tosca_templates",
+  "workspace_dir": "./xopera_workspace"
+}

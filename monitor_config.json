@@ -1,0 +1,23 @@
+{
+  "ns3": {
+    "metrics_file": "rural_network_metrics.csv",
+    "topology_file": "network_topology.json"
+  },
+  "thresholds": {
+    "throughput_min": 15.0,
+    "latency_max": 150.0,
+    "packet_loss_max": 0.05,
+    "voltage_min": 200.0,
+    "voltage_max": 240.0,
+    "power_stability_min": 0.85
+  },
+  "monitoring": {
+    "check_interval": 2.0,
+    "baseline_samples": 5
+  },
+  "alerts": {
+    "enable_console_alerts": true,
+    "enable_file_logging": true,
+    "alert_file": "network_alerts.log"
+  }
+}
