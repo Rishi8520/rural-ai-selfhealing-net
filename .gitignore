@@ -1,7 +1,70 @@
+rm .gitignore
+
+cat > .gitignore << 'EOF'
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
 venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment files
 .env
+.venv
+.env.local
+.env.*.local
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
 *.log
-fault_detection_report.json
+logs/
+network_alerts.log
+
+# Generated output files (exclude from version control)
+enhanced_monitoring_report.json
+calculation_agent_data_stream.json
+mcp_agent_alerts.json
+
+# Temporary files
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# NS-3 generated files
+*.xml
+*.tr
+*.pcap
+*.nam
+EOF

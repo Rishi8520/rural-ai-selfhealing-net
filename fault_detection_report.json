@@ -1,16 +1,16 @@
 {
   "monitoring_session": {
-    "start_time": "2025-05-29T21:27:26.853332",
-    "total_faults": 71,
+    "start_time": "2025-05-30T11:05:08.743881",
+    "total_faults": 32,
     "fault_types": [
-      "power_fluctuation",
       "node_failure",
-      "throughput_degradation"
+      "throughput_degradation",
+      "power_fluctuation"
     ]
   },
   "detected_faults": [
     {
-      "alert_id": "FAULT_1748534223_node_05_node_failure",
+      "alert_id": "FAULT_1748583299_node_05_node_failure",
       "node_id": "node_05",
       "fault_type": "node_failure",
       "severity": "CRITICAL",
@@ -26,7 +26,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534223_node_20_node_failure",
+      "alert_id": "FAULT_1748583299_node_20_node_failure",
       "node_id": "node_20",
       "fault_type": "node_failure",
       "severity": "CRITICAL",
@@ -42,7 +42,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_25_node_failure",
+      "alert_id": "FAULT_1748583301_node_25_node_failure",
       "node_id": "node_25",
       "fault_type": "node_failure",
       "severity": "CRITICAL",
@@ -58,7 +58,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_26_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_26_power_fluctuation",
       "node_id": "node_26",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -74,7 +74,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_27_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_27_power_fluctuation",
       "node_id": "node_27",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -90,7 +90,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_28_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_28_power_fluctuation",
       "node_id": "node_28",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -106,7 +106,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_29_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_29_power_fluctuation",
       "node_id": "node_29",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -122,7 +122,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_30_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_30_power_fluctuation",
       "node_id": "node_30",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -138,7 +138,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_31_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_31_power_fluctuation",
       "node_id": "node_31",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -154,7 +154,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_32_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_32_power_fluctuation",
       "node_id": "node_32",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -170,7 +170,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_33_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_33_power_fluctuation",
       "node_id": "node_33",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -186,7 +186,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_34_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_34_power_fluctuation",
       "node_id": "node_34",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -202,7 +202,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_34_throughput_degradation",
+      "alert_id": "FAULT_1748583301_node_34_throughput_degradation",
       "node_id": "node_34",
       "fault_type": "throughput_degradation",
       "severity": "HIGH",
@@ -218,7 +218,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_35_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_35_power_fluctuation",
       "node_id": "node_35",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -234,7 +234,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_36_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_36_power_fluctuation",
       "node_id": "node_36",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -250,7 +250,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_37_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_37_power_fluctuation",
       "node_id": "node_37",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -266,7 +266,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_38_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_38_power_fluctuation",
       "node_id": "node_38",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -282,7 +282,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_39_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_39_power_fluctuation",
       "node_id": "node_39",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -298,7 +298,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_40_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_40_power_fluctuation",
       "node_id": "node_40",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -314,7 +314,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_40_throughput_degradation",
+      "alert_id": "FAULT_1748583301_node_40_throughput_degradation",
       "node_id": "node_40",
       "fault_type": "throughput_degradation",
       "severity": "HIGH",
@@ -330,7 +330,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_41_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_41_power_fluctuation",
       "node_id": "node_41",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -346,7 +346,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_42_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_42_power_fluctuation",
       "node_id": "node_42",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -362,7 +362,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_43_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_43_power_fluctuation",
       "node_id": "node_43",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -378,7 +378,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_44_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_44_power_fluctuation",
       "node_id": "node_44",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -394,7 +394,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_45_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_45_power_fluctuation",
       "node_id": "node_45",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -410,7 +410,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_46_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_46_power_fluctuation",
       "node_id": "node_46",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -426,7 +426,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_47_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_47_power_fluctuation",
       "node_id": "node_47",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -442,7 +442,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_48_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_48_power_fluctuation",
       "node_id": "node_48",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -458,7 +458,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534225_node_49_power_fluctuation",
+      "alert_id": "FAULT_1748583301_node_49_power_fluctuation",
       "node_id": "node_49",
       "fault_type": "power_fluctuation",
       "severity": "HIGH",
@@ -474,7 +474,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534229_node_00_node_failure",
+      "alert_id": "FAULT_1748583305_node_00_node_failure",
       "node_id": "node_00",
       "fault_type": "node_failure",
       "severity": "CRITICAL",
@@ -490,7 +490,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534229_node_01_node_failure",
+      "alert_id": "FAULT_1748583305_node_01_node_failure",
       "node_id": "node_01",
       "fault_type": "node_failure",
       "severity": "CRITICAL",
@@ -506,7 +506,7 @@
       }
     },
     {
-      "alert_id": "FAULT_1748534231_node_24_throughput_degradation",
+      "alert_id": "FAULT_1748583307_node_24_throughput_degradation",
       "node_id": "node_24",
       "fault_type": "throughput_degradation",
       "severity": "HIGH",
@@ -520,794 +520,170 @@
         "operational": true,
         "node_type": "access"
       }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_15_node_failure",
-      "node_id": "node_15",
-      "fault_type": "node_failure",
-      "severity": "CRITICAL",
-      "simulation_time": 330.0,
-      "description": "Node node_15 is non-operational (likely fiber cut or hardware failure)",
-      "metrics": {
-        "throughput": 0.0,
-        "latency": 1000.0,
-        "packet_loss": 1.0,
-        "voltage_level": 167.2,
-        "operational": false,
-        "node_type": "distribution"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_16_power_fluctuation",
-      "node_id": "node_16",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 44.0,
-        "latency": 20.0,
-        "packet_loss": 0.006,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "distribution"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_17_power_fluctuation",
-      "node_id": "node_17",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 57.0,
-        "latency": 18.0,
-        "packet_loss": 0.01,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "distribution"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_18_power_fluctuation",
-      "node_id": "node_18",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 64.0,
-        "latency": 31.0,
-        "packet_loss": 0.008,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "distribution"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_19_power_fluctuation",
-      "node_id": "node_19",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 49.0,
-        "latency": 27.0,
-        "packet_loss": 0.007,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "distribution"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_21_power_fluctuation",
-      "node_id": "node_21",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 35.0,
-        "latency": 39.0,
-        "packet_loss": 0.01,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_22_power_fluctuation",
-      "node_id": "node_22",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 27.0,
-        "latency": 35.0,
-        "packet_loss": 0.021,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_23_power_fluctuation",
-      "node_id": "node_23",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 33.0,
-        "latency": 30.0,
-        "packet_loss": 0.029,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_24_power_fluctuation",
-      "node_id": "node_24",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 11.0,
-        "latency": 43.0,
-        "packet_loss": 0.013,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_24_throughput_degradation",
-      "node_id": "node_24",
-      "fault_type": "throughput_degradation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Throughput dropped 55.3% from baseline (11.0 vs 24.6 Mbps)",
-      "metrics": {
-        "throughput": 11.0,
-        "latency": 43.0,
-        "packet_loss": 0.013,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_25_power_fluctuation",
-      "node_id": "node_25",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 18.0,
-        "latency": 43.0,
-        "packet_loss": 0.013,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_26_power_fluctuation",
-      "node_id": "node_26",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 12.0,
-        "latency": 51.0,
-        "packet_loss": 0.024,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_27_power_fluctuation",
-      "node_id": "node_27",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 34.0,
-        "latency": 31.0,
-        "packet_loss": 0.019,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_28_power_fluctuation",
-      "node_id": "node_28",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 14.0,
-        "latency": 35.0,
-        "packet_loss": 0.029,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_29_power_fluctuation",
-      "node_id": "node_29",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 14.0,
-        "latency": 33.0,
-        "packet_loss": 0.026,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_30_power_fluctuation",
-      "node_id": "node_30",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 16.0,
-        "latency": 38.0,
-        "packet_loss": 0.028,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_31_power_fluctuation",
-      "node_id": "node_31",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 15.0,
-        "latency": 44.0,
-        "packet_loss": 0.011,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_32_power_fluctuation",
-      "node_id": "node_32",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 19.0,
-        "latency": 55.0,
-        "packet_loss": 0.028,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_33_power_fluctuation",
-      "node_id": "node_33",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 34.0,
-        "latency": 35.0,
-        "packet_loss": 0.027,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_34_power_fluctuation",
-      "node_id": "node_34",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 16.0,
-        "latency": 48.0,
-        "packet_loss": 0.023,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_35_power_fluctuation",
-      "node_id": "node_35",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 14.0,
-        "latency": 55.0,
-        "packet_loss": 0.016,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_36_power_fluctuation",
-      "node_id": "node_36",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 14.0,
-        "latency": 56.0,
-        "packet_loss": 0.028,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_36_throughput_degradation",
-      "node_id": "node_36",
-      "fault_type": "throughput_degradation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Throughput dropped 54.5% from baseline (14.0 vs 30.8 Mbps)",
-      "metrics": {
-        "throughput": 14.0,
-        "latency": 56.0,
-        "packet_loss": 0.028,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_37_power_fluctuation",
-      "node_id": "node_37",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 38.0,
-        "latency": 37.0,
-        "packet_loss": 0.015,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_38_power_fluctuation",
-      "node_id": "node_38",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 24.0,
-        "latency": 39.0,
-        "packet_loss": 0.028,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_39_power_fluctuation",
-      "node_id": "node_39",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 28.0,
-        "latency": 27.0,
-        "packet_loss": 0.013,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_40_power_fluctuation",
-      "node_id": "node_40",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 32.0,
-        "latency": 54.0,
-        "packet_loss": 0.029,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_41_power_fluctuation",
-      "node_id": "node_41",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 12.0,
-        "latency": 46.0,
-        "packet_loss": 0.017,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_42_power_fluctuation",
-      "node_id": "node_42",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 30.0,
-        "latency": 25.0,
-        "packet_loss": 0.023,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_43_power_fluctuation",
-      "node_id": "node_43",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 28.0,
-        "latency": 42.0,
-        "packet_loss": 0.02,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_44_power_fluctuation",
-      "node_id": "node_44",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 21.0,
-        "latency": 53.0,
-        "packet_loss": 0.028,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_45_power_fluctuation",
-      "node_id": "node_45",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 21.0,
-        "latency": 47.0,
-        "packet_loss": 0.025,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_46_power_fluctuation",
-      "node_id": "node_46",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 38.0,
-        "latency": 46.0,
-        "packet_loss": 0.012,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_47_power_fluctuation",
-      "node_id": "node_47",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 14.0,
-        "latency": 27.0,
-        "packet_loss": 0.027,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_48_power_fluctuation",
-      "node_id": "node_48",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 14.0,
-        "latency": 30.0,
-        "packet_loss": 0.016,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534233_node_49_power_fluctuation",
-      "node_id": "node_49",
-      "fault_type": "power_fluctuation",
-      "severity": "HIGH",
-      "simulation_time": 330.0,
-      "description": "Voltage out of range: 167.2V (normal: 200.0-240.0V)",
-      "metrics": {
-        "throughput": 24.0,
-        "latency": 47.0,
-        "packet_loss": 0.024,
-        "voltage_level": 167.2,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534237_node_10_node_failure",
-      "node_id": "node_10",
-      "fault_type": "node_failure",
-      "severity": "CRITICAL",
-      "simulation_time": 390.0,
-      "description": "Node node_10 is non-operational (likely fiber cut or hardware failure)",
-      "metrics": {
-        "throughput": 0.0,
-        "latency": 1000.0,
-        "packet_loss": 1.0,
-        "voltage_level": 220.0,
-        "operational": false,
-        "node_type": "distribution"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534245_node_29_throughput_degradation",
-      "node_id": "node_29",
-      "fault_type": "throughput_degradation",
-      "severity": "HIGH",
-      "simulation_time": 510.0,
-      "description": "Throughput dropped 57.1% from baseline (12.0 vs 28.0 Mbps)",
-      "metrics": {
-        "throughput": 12.0,
-        "latency": 34.0,
-        "packet_loss": 0.011,
-        "voltage_level": 220.0,
-        "operational": true,
-        "node_type": "access"
-      }
-    },
-    {
-      "alert_id": "FAULT_1748534245_node_31_throughput_degradation",
-      "node_id": "node_31",
-      "fault_type": "throughput_degradation",
-      "severity": "HIGH",
-      "simulation_time": 510.0,
-      "description": "Throughput dropped 52.4% from baseline (10.0 vs 21.0 Mbps)",
-      "metrics": {
-        "throughput": 10.0,
-        "latency": 25.0,
-        "packet_loss": 0.027,
-        "voltage_level": 220.0,
-        "operational": true,
-        "node_type": "access"
-      }
     }
   ],
   "fault_history": {
     "node_05": {
       "fault_type": "node_failure",
       "detection_time": 180.0,
-      "active": false,
-      "recovery_time": 420.0
+      "active": true,
+      "recovery_time": null
     },
     "node_20": {
       "fault_type": "node_failure",
       "detection_time": 180.0,
-      "active": false,
-      "recovery_time": 480.0
-    },
-    "node_25": {
-      "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
       "active": true,
       "recovery_time": null
     },
+    "node_25": {
+      "fault_type": "node_failure",
+      "detection_time": 210.0,
+      "active": false,
+      "recovery_time": 300.0
+    },
     "node_26": {
       "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 480.0
+      "recovery_time": 300.0
     },
     "node_27": {
       "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 480.0
+      "recovery_time": 300.0
     },
     "node_28": {
       "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 480.0
+      "recovery_time": 300.0
     },
     "node_29": {
-      "fault_type": "throughput_degradation",
-      "detection_time": 510.0,
+      "fault_type": "power_fluctuation",
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 510.0
+      "recovery_time": 300.0
     },
     "node_30": {
       "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 480.0
+      "recovery_time": 300.0
     },
     "node_31": {
-      "fault_type": "throughput_degradation",
-      "detection_time": 510.0,
+      "fault_type": "power_fluctuation",
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 510.0
+      "recovery_time": 300.0
     },
     "node_32": {
       "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 480.0
+      "recovery_time": 300.0
     },
     "node_33": {
       "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 480.0
+      "recovery_time": 300.0
     },
     "node_34": {
-      "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "fault_type": "throughput_degradation",
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 480.0
+      "recovery_time": 300.0
     },
     "node_35": {
       "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 510.0
+      "recovery_time": 300.0
     },
     "node_36": {
-      "fault_type": "throughput_degradation",
-      "detection_time": 330.0,
+      "fault_type": "power_fluctuation",
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 510.0
+      "recovery_time": 300.0
     },
     "node_37": {
       "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 510.0
+      "recovery_time": 300.0
     },
     "node_38": {
       "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 510.0
+      "recovery_time": 300.0
     },
     "node_39": {
       "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 510.0
+      "recovery_time": 300.0
     },
     "node_40": {
-      "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "fault_type": "throughput_degradation",
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 510.0
+      "recovery_time": 300.0
     },
     "node_41": {
       "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 510.0
+      "recovery_time": 300.0
     },
     "node_42": {
       "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 510.0
+      "recovery_time": 300.0
     },
     "node_43": {
       "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 510.0
+      "recovery_time": 300.0
     },
     "node_44": {
       "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 510.0
+      "recovery_time": 300.0
     },
     "node_45": {
       "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 510.0
+      "recovery_time": 300.0
     },
     "node_46": {
       "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 510.0
+      "recovery_time": 300.0
     },
     "node_47": {
       "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 510.0
+      "recovery_time": 300.0
     },
     "node_48": {
       "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 510.0
+      "recovery_time": 300.0
     },
     "node_49": {
       "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
+      "detection_time": 210.0,
       "active": false,
-      "recovery_time": 510.0
+      "recovery_time": 300.0
     },
     "node_00": {
       "fault_type": "node_failure",
@@ -1323,63 +699,9 @@
     },
     "node_24": {
       "fault_type": "throughput_degradation",
-      "detection_time": 330.0,
+      "detection_time": 300.0,
       "active": false,
-      "recovery_time": 480.0
-    },
-    "node_15": {
-      "fault_type": "node_failure",
-      "detection_time": 330.0,
-      "active": false,
-      "recovery_time": 480.0
-    },
-    "node_16": {
-      "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
-      "active": false,
-      "recovery_time": 480.0
-    },
-    "node_17": {
-      "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
-      "active": false,
-      "recovery_time": 480.0
-    },
-    "node_18": {
-      "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
-      "active": false,
-      "recovery_time": 480.0
-    },
-    "node_19": {
-      "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
-      "active": false,
-      "recovery_time": 480.0
-    },
-    "node_21": {
-      "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
-      "active": false,
-      "recovery_time": 480.0
-    },
-    "node_22": {
-      "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
-      "active": false,
-      "recovery_time": 480.0
-    },
-    "node_23": {
-      "fault_type": "power_fluctuation",
-      "detection_time": 330.0,
-      "active": false,
-      "recovery_time": 480.0
-    },
-    "node_10": {
-      "fault_type": "node_failure",
-      "detection_time": 390.0,
-      "active": true,
-      "recovery_time": null
+      "recovery_time": 300.0
     }
   }
 }
