@@ -1,7 +1,7 @@
 /* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
- * Rural 50-Node Self-Healing Network Simulation
- * SIMPLIFIED VERSION - Just inject faults, let Monitor Agent detect
+ * Enhanced Rural 50-Node Self-Healing Network Simulation
+ * With Gradual Fault Patterns and NetAnim Visualization
  */
 
 #include "ns3/core-module.h"
@@ -26,23 +26,32 @@
 #include <unistd.h>
 #include <thread>
 #include <map>
+#include <cmath>
 
 using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE ("RuralSelfHealingNetwork");
 
+// Progress printing function
 void PrintProgress(int minute)
 {
     std::cout << "[" << minute << "/10] Simulation progress: " << minute*10 << "% complete" << std::endl;
 }
 
-// Simple structures for fault injection
-struct FaultInjection {
-    uint32_t nodeA, nodeB;
+// Enhanced fault pattern structure
+struct GradualFaultPattern {
+    uint32_t targetNode;
+    uint32_t connectedNode;       // For fiber cuts
     std::string faultType;
-    Time injectionTime;
-    Time duration;
-    double severity;
+    Time startDegradation;        // When degradation begins
+    Time faultOccurrence;         // When actual fault occurs  
+    Time faultDuration;           // How long fault lasts
+    Time recoveryComplete;        // When full recovery completes
+    double degradationRate;       // How fast degradation happens (0.0-1.0)
+    double recoveryRate;          // How fast recovery happens (0.0-1.0)
+    double severity;              // Final fault severity (0.0-1.0)
+    bool isActive;
+    double currentSeverity;
 };
 
 class RuralNetworkSimulation
@@ -88,8 +97,10 @@ private:
     std::ofstream metricsFile;
     std::ofstream topologyFile;
     
-    // Fault injection
-    std::vector<FaultInjection> scheduledFaults;
+    // Enhanced fault patterns
+    std::vector<GradualFaultPattern> gradualFaults;
+    Time dataCollectionInterval;
+    bool useVisualizationSpeeds;  // Flag for slow speeds
     
     // Setup methods
     void SetupTopology();
@@ -102,15 +113,18 @@ private:
     void SetupRouting();
     void SetupEnergyModel();
     
-    // Fault injection methods
-    void ScheduleFaultInjections();
-    void InjectFiberCut(uint32_t nodeA, uint32_t nodeB);
-    void InjectPowerFluctuation(uint32_t nodeId, double severity);
-    void RestoreConnection(uint32_t nodeA, uint32_t nodeB);
-    void RestorePowerStability(uint32_t nodeId);
+    // Visualization methods
+    void CreateTestTrafficForVisualization();
+    
+    // Enhanced fault pattern methods
+    void ScheduleGradualFaultPatterns();
+    void CreateRealisticFiberCutPattern(uint32_t nodeA, uint32_t nodeB, Time startTime);
+    void CreateRealisticPowerFluctuationPattern(uint32_t nodeId, Time startTime);
+    void UpdateFaultProgression();
+    double CalculateNodeDegradation(uint32_t nodeId, const std::string& metric);
     
     // Data collection
-    void CollectMetrics();
+    void CollectHighFrequencyMetrics();
     void WriteTopologyInfo();
     
     // Socket server
@@ -118,7 +132,7 @@ private:
     void HandleSocketConnection();
     void ProcessCommand(const std::string& command);
     
-    // Metrics generation
+    // Enhanced metrics generation
     struct NodeMetrics {
         uint32_t nodeId;
         double throughputMbps;
@@ -140,20 +154,28 @@ private:
         bool isOperational;
         double voltageLevel;
         double powerStability;
+        double degradationLevel;    // New: gradual degradation
+        double faultSeverity;       // New: fault severity
     };
     
-    NodeMetrics GetNodeMetrics(uint32_t nodeId);
+    NodeMetrics GetEnhancedNodeMetrics(uint32_t nodeId);
 };
 
 RuralNetworkSimulation::RuralNetworkSimulation() : simulationRunning(true)
 {
-    // Open output files
+    // High-frequency data collection (every 10 seconds for LSTM)
+    dataCollectionInterval = Seconds(10.0);
+    
+    // Set to true for packet visualization, false for realistic performance
+    useVisualizationSpeeds = true;  // Change to true to see packets in NetAnim
+    
+    // Open output files with enhanced headers
     metricsFile.open("rural_network_metrics.csv");
     metricsFile << "Time,NodeId,NodeType,Throughput_Mbps,Latency_ms,PacketLoss_Rate,Jitter_ms,"
                 << "SignalStrength_dBm,CPU_Usage,Memory_Usage,Buffer_Occupancy,Active_Links,"
                 << "Neighbor_Count,Link_Utilization,Critical_Load,Normal_Load,Energy_Level,"
                 << "X_Position,Y_Position,Z_Position,Operational_Status,"
-                << "Voltage_Level,Power_Stability\n";
+                << "Voltage_Level,Power_Stability,Degradation_Level,Fault_Severity\n";
     
     topologyFile.open("network_topology.json");
 }
@@ -179,17 +201,24 @@ void RuralNetworkSimulation::SetupTopology()
     SetupAccessLayer();
     ConnectLayers();
     
-    // Install Internet stack with routing (moved to SetupRouting)
-    SetupRouting();  // This now handles both stack installation and routing
+    // Setup routing and energy
+    SetupRouting();
     SetupEnergyModel();
     WriteTopologyInfo();
 }
 
 void RuralNetworkSimulation::SetupCoreLayer()
 {
-    // High-capacity core network
-    p2pHelper.SetDeviceAttribute("DataRate", StringValue("1Gbps"));
-    p2pHelper.SetChannelAttribute("Delay", StringValue("2ms"));
+    // Configure speeds based on visualization flag
+    if (useVisualizationSpeeds) {
+        std::cout << "Using slow speeds for NetAnim packet visibility" << std::endl;
+        p2pHelper.SetDeviceAttribute("DataRate", StringValue("10Mbps"));
+        p2pHelper.SetChannelAttribute("Delay", StringValue("100ms"));
+    } else {
+        // High-capacity core network for realistic simulation
+        p2pHelper.SetDeviceAttribute("DataRate", StringValue("1Gbps"));
+        p2pHelper.SetChannelAttribute("Delay", StringValue("2ms"));
+    }
     
     // Position core nodes
     MobilityHelper coreMobility;
@@ -218,9 +247,15 @@ void RuralNetworkSimulation::SetupCoreLayer()
 
 void RuralNetworkSimulation::SetupDistributionLayer()
 {
-    // Medium-capacity distribution network
-    p2pHelper.SetDeviceAttribute("DataRate", StringValue("100Mbps"));
-    p2pHelper.SetChannelAttribute("Delay", StringValue("10ms"));
+    // Configure speeds based on visualization flag
+    if (useVisualizationSpeeds) {
+        p2pHelper.SetDeviceAttribute("DataRate", StringValue("5Mbps"));
+        p2pHelper.SetChannelAttribute("Delay", StringValue("200ms"));
+    } else {
+        // Medium-capacity distribution network
+        p2pHelper.SetDeviceAttribute("DataRate", StringValue("100Mbps"));
+        p2pHelper.SetChannelAttribute("Delay", StringValue("10ms"));
+    }
     
     // Position distribution nodes in ring
     MobilityHelper distMobility;
@@ -291,9 +326,15 @@ void RuralNetworkSimulation::SetupAccessLayer()
 
 void RuralNetworkSimulation::ConnectLayers()
 {
-    // Connect access to distribution
-    p2pHelper.SetDeviceAttribute("DataRate", StringValue("50Mbps"));
-    p2pHelper.SetChannelAttribute("Delay", StringValue("5ms"));
+    // Configure speeds based on visualization flag
+    if (useVisualizationSpeeds) {
+        p2pHelper.SetDeviceAttribute("DataRate", StringValue("1Mbps"));
+        p2pHelper.SetChannelAttribute("Delay", StringValue("500ms"));
+    } else {
+        // Connect access to distribution
+        p2pHelper.SetDeviceAttribute("DataRate", StringValue("50Mbps"));
+        p2pHelper.SetChannelAttribute("Delay", StringValue("5ms"));
+    }
     
     // Create separate container for access-to-distribution links
     NetDeviceContainer accessToDistLinks;
@@ -301,7 +342,7 @@ void RuralNetworkSimulation::ConnectLayers()
     for (uint32_t i = 0; i < accessNodes.GetN(); ++i) {
         uint32_t distIndex = i % distributionNodes.GetN();
         NetDeviceContainer link = p2pHelper.Install(accessNodes.Get(i), distributionNodes.Get(distIndex));
-        accessToDistLinks.Add(link);  // Use separate container
+        accessToDistLinks.Add(link);
         
         uint32_t accessNodeId = i + 20;
         uint32_t distNodeId = distIndex + 5;
@@ -315,11 +356,11 @@ void RuralNetworkSimulation::SetupRouting()
 {
     NS_LOG_FUNCTION(this);
     
-    // IMPORTANT: Set up NixVector routing BEFORE installing Internet stack
+    // Set up NixVector routing BEFORE installing Internet stack
     Ipv4NixVectorHelper nixRouting;
-    stack.SetRoutingHelper(nixRouting);  // Must be called before Install()
+    stack.SetRoutingHelper(nixRouting);
     
-    // Now install Internet stack with NixVector routing
+    // Install Internet stack with NixVector routing
     stack.Install(allNodes);
     
     // Assign IP addresses AFTER installing stack
@@ -350,32 +391,12 @@ void RuralNetworkSimulation::SetupEnergyModel()
     basicSourceHelper.Set("BasicEnergySourceInitialEnergyJ", DoubleValue(10000));
     energy::EnergySourceContainer sources = basicSourceHelper.Install(allNodes);
     
-    // CORRECTED: Only install WiFi energy model on WiFi devices, not P2P devices
-    WifiRadioEnergyModelHelper radioEnergyHelper;
-    radioEnergyHelper.Set("TxCurrentA", DoubleValue(0.0174));
-    radioEnergyHelper.Set("RxCurrentA", DoubleValue(0.0197));
-    
-    // Create container with ONLY WiFi devices (first 30 devices in accessDevices)
-    NetDeviceContainer wifiDevicesOnly;
-    for (uint32_t i = 0; i < accessNodes.GetN(); ++i) {
-        wifiDevicesOnly.Add(accessDevices.Get(i));  // Only first 30 devices are WiFi
-    }
-    
-    // Create energy source container for access nodes only
-    energy::EnergySourceContainer accessSources;
-    for (uint32_t i = 0; i < accessNodes.GetN(); ++i) {
-        accessSources.Add(sources.Get(i + 20));  // Access nodes start at index 20
-    }
-    
-    // Install WiFi energy model on WiFi devices only
-    radioEnergyHelper.Install(wifiDevicesOnly, accessSources);
-    
     std::cout << "Energy model setup complete" << std::endl;
 }
 
 void RuralNetworkSimulation::SetupApplications()
 {
-    // Simple traffic generation
+    // Configure application speeds based on visualization flag
     uint16_t port = 8080;
     
     PacketSinkHelper packetSinkHelper("ns3::UdpSocketFactory", InetSocketAddress(Ipv4Address::GetAny(), port));
@@ -383,87 +404,222 @@ void RuralNetworkSimulation::SetupApplications()
     sinkApps.Start(Seconds(1.0));
     sinkApps.Stop(Seconds(600.0));
     
-    for (uint32_t i = 0; i < coreNodes.GetN(); ++i) {
-        for (uint32_t j = 0; j < accessNodes.GetN(); j += 5) {
-            Ptr<Node> accessNode = accessNodes.Get(j);
-            Ptr<Ipv4> ipv4 = accessNode->GetObject<Ipv4>();
-            Ipv4Address addr = ipv4->GetAddress(1, 0).GetLocal();
-            
-            UdpEchoClientHelper echoClient(addr, port);
-            echoClient.SetAttribute("MaxPackets", UintegerValue(1000));
-            echoClient.SetAttribute("Interval", TimeValue(Seconds(0.1)));
-            echoClient.SetAttribute("PacketSize", UintegerValue(1024));
-            
-            ApplicationContainer app = echoClient.Install(coreNodes.Get(i));
-            app.Start(Seconds(2.0 + i * 0.1));
-            app.Stop(Seconds(600.0));
-            sourceApps.Add(app);
+    if (useVisualizationSpeeds) {
+        // Slower, more visible traffic for NetAnim
+        for (uint32_t i = 0; i < coreNodes.GetN(); ++i) {
+            for (uint32_t j = 0; j < accessNodes.GetN(); j += 15) { // Even fewer connections
+                Ptr<Node> accessNode = accessNodes.Get(j);
+                Ptr<Ipv4> ipv4 = accessNode->GetObject<Ipv4>();
+                Ipv4Address addr = ipv4->GetAddress(1, 0).GetLocal();
+                
+                UdpEchoClientHelper echoClient(addr, port);
+                echoClient.SetAttribute("MaxPackets", UintegerValue(30));
+                echoClient.SetAttribute("Interval", TimeValue(Seconds(5.0))); // Very slow: 1 packet every 5 seconds
+                echoClient.SetAttribute("PacketSize", UintegerValue(256));
+                
+                ApplicationContainer app = echoClient.Install(coreNodes.Get(i));
+                app.Start(Seconds(2.0 + i * 0.5));
+                app.Stop(Seconds(600.0));
+                sourceApps.Add(app);
+            }
+        }
+        
+        // Add test traffic for visualization
+        CreateTestTrafficForVisualization();
+        
+    } else {
+        // Normal speed traffic for realistic simulation
+        for (uint32_t i = 0; i < coreNodes.GetN(); ++i) {
+            for (uint32_t j = 0; j < accessNodes.GetN(); j += 10) {
+                Ptr<Node> accessNode = accessNodes.Get(j);
+                Ptr<Ipv4> ipv4 = accessNode->GetObject<Ipv4>();
+                Ipv4Address addr = ipv4->GetAddress(1, 0).GetLocal();
+                
+                UdpEchoClientHelper echoClient(addr, port);
+                echoClient.SetAttribute("MaxPackets", UintegerValue(50));
+                echoClient.SetAttribute("Interval", TimeValue(Seconds(2.0)));
+                echoClient.SetAttribute("PacketSize", UintegerValue(512));
+                
+                ApplicationContainer app = echoClient.Install(coreNodes.Get(i));
+                app.Start(Seconds(2.0 + i * 0.1));
+                app.Stop(Seconds(600.0));
+                sourceApps.Add(app);
+            }
         }
     }
     
     std::cout << "Applications setup complete" << std::endl;
 }
 
-void RuralNetworkSimulation::ScheduleFaultInjections()
+void RuralNetworkSimulation::CreateTestTrafficForVisualization()
 {
-    // TC-01: Fiber Cut Injections (SILENT - just inject)
-    scheduledFaults.push_back({5, 20, "fiber_cut", Seconds(120.0), Seconds(300.0), 1.0});
-    scheduledFaults.push_back({0, 1, "fiber_cut", Seconds(240.0), Seconds(300.0), 1.0});
-    scheduledFaults.push_back({10, 25, "fiber_cut", Seconds(360.0), Seconds(300.0), 1.0});
+    std::cout << "Creating additional test traffic for NetAnim visualization..." << std::endl;
     
-    // TC-02: Power Fluctuation Injections (SILENT - just inject)
-    scheduledFaults.push_back({25, 0, "power_fluctuation", Seconds(180.0), Seconds(120.0), 0.7});
-    scheduledFaults.push_back({15, 0, "power_fluctuation", Seconds(300.0), Seconds(180.0), 0.8});
-    scheduledFaults.push_back({35, 0, "power_fluctuation", Seconds(420.0), Seconds(90.0), 0.6});
+    // Super slow test traffic between specific nodes for clear visibility
+    uint16_t testPort = 9999;
     
-    // Schedule all fault injections
-    for (const auto& fault : scheduledFaults) {
-        if (fault.faultType == "fiber_cut") {
-            Simulator::Schedule(fault.injectionTime, &RuralNetworkSimulation::InjectFiberCut, 
-                               this, fault.nodeA, fault.nodeB);
-            Simulator::Schedule(fault.injectionTime + fault.duration, 
-                               &RuralNetworkSimulation::RestoreConnection, 
-                               this, fault.nodeA, fault.nodeB);
-        } else if (fault.faultType == "power_fluctuation") {
-            Simulator::Schedule(fault.injectionTime, &RuralNetworkSimulation::InjectPowerFluctuation, 
-                               this, fault.nodeA, fault.severity);
-            Simulator::Schedule(fault.injectionTime + fault.duration, 
-                               &RuralNetworkSimulation::RestorePowerStability, 
-                               this, fault.nodeA);
+    // Test server on access node 0
+    UdpEchoServerHelper testServer(testPort);
+    ApplicationContainer testSinkApp = testServer.Install(accessNodes.Get(0));
+    testSinkApp.Start(Seconds(90.0));
+    testSinkApp.Stop(Seconds(400.0));
+    
+    // Test client on core node 0 - very slow traffic
+    Ptr<Node> testTargetNode = accessNodes.Get(0);
+    Ptr<Ipv4> testIpv4 = testTargetNode->GetObject<Ipv4>();
+    Ipv4Address testAddr = testIpv4->GetAddress(1, 0).GetLocal();
+    
+    UdpEchoClientHelper testClient(testAddr, testPort);
+    testClient.SetAttribute("MaxPackets", UintegerValue(20));
+    testClient.SetAttribute("Interval", TimeValue(Seconds(8.0))); // 1 packet every 8 seconds
+    testClient.SetAttribute("PacketSize", UintegerValue(128));
+    
+    ApplicationContainer testClientApp = testClient.Install(coreNodes.Get(0));
+    testClientApp.Start(Seconds(100.0));
+    testClientApp.Stop(Seconds(350.0));
+    
+    std::cout << "Test traffic: Core0 → Access0 every 8 seconds for clear packet visibility" << std::endl;
+}
+
+void RuralNetworkSimulation::ScheduleGradualFaultPatterns()
+{
+    std::cout << "Scheduling realistic gradual fault patterns..." << std::endl;
+    
+    // TC-01: Realistic Fiber Cut Patterns with gradual degradation
+    CreateRealisticFiberCutPattern(5, 20, Seconds(100.0));   // Starts degrading at 100s
+    CreateRealisticFiberCutPattern(0, 1, Seconds(200.0));    // Starts degrading at 200s
+    CreateRealisticFiberCutPattern(10, 25, Seconds(350.0));  // Starts degrading at 350s
+    
+    // TC-02: Realistic Power Fluctuation Patterns with gradual degradation
+    CreateRealisticPowerFluctuationPattern(25, Seconds(150.0));  // Starts degrading at 150s
+    CreateRealisticPowerFluctuationPattern(15, Seconds(280.0));  // Starts degrading at 280s
+    CreateRealisticPowerFluctuationPattern(35, Seconds(400.0));  // Starts degrading at 400s
+    
+    std::cout << "Scheduled " << gradualFaults.size() << " gradual fault patterns" << std::endl;
+}
+
+void RuralNetworkSimulation::CreateRealisticFiberCutPattern(uint32_t nodeA, uint32_t nodeB, Time startTime)
+{
+    // Create gradual degradation pattern for fiber cut
+    GradualFaultPattern pattern;
+    pattern.targetNode = nodeA;
+    pattern.connectedNode = nodeB;
+    pattern.faultType = "fiber_cut";
+    pattern.startDegradation = startTime;
+    pattern.faultOccurrence = startTime + Seconds(60.0);   // Fault occurs 1 minute after degradation starts
+    pattern.faultDuration = Seconds(180.0);               // Fault lasts 3 minutes
+    pattern.recoveryComplete = pattern.faultOccurrence + pattern.faultDuration + Seconds(120.0); // 2 min recovery
+    pattern.degradationRate = 0.8;   // 80% degradation by fault time
+    pattern.recoveryRate = 0.7;      // 70% recovery rate
+    pattern.severity = 1.0;          // Complete failure at peak
+    pattern.isActive = true;
+    pattern.currentSeverity = 0.0;
+    
+    gradualFaults.push_back(pattern);
+    
+    // Also create pattern for connected node (nodeB)
+    pattern.targetNode = nodeB;
+    pattern.connectedNode = nodeA;
+    pattern.severity = 0.6;  // Connected node less affected
+    gradualFaults.push_back(pattern);
+    
+    std::cout << "Created fiber cut pattern: nodes " << nodeA << "-" << nodeB 
+              << " starting at " << startTime.GetSeconds() << "s" << std::endl;
+}
+
+void RuralNetworkSimulation::CreateRealisticPowerFluctuationPattern(uint32_t nodeId, Time startTime)
+{
+    // Create gradual power degradation pattern
+    GradualFaultPattern pattern;
+    pattern.targetNode = nodeId;
+    pattern.connectedNode = 0;  // Not applicable for power issues
+    pattern.faultType = "power_fluctuation";
+    pattern.startDegradation = startTime;
+    pattern.faultOccurrence = startTime + Seconds(90.0);   // Fault occurs 1.5 minutes after degradation
+    pattern.faultDuration = Seconds(120.0);               // Fault lasts 2 minutes
+    pattern.recoveryComplete = pattern.faultOccurrence + pattern.faultDuration + Seconds(150.0); // 2.5 min recovery
+    pattern.degradationRate = 0.6;   // 60% degradation by fault time
+    pattern.recoveryRate = 0.8;      // 80% recovery rate
+    pattern.severity = 0.7;          // 70% severity at peak
+    pattern.isActive = true;
+    pattern.currentSeverity = 0.0;
+    
+    gradualFaults.push_back(pattern);
+    
+    std::cout << "Created power fluctuation pattern: node " << nodeId 
+              << " starting at " << startTime.GetSeconds() << "s" << std::endl;
+}
+
+void RuralNetworkSimulation::UpdateFaultProgression()
+{
+    Time currentTime = Simulator::Now();
+    
+    for (auto& fault : gradualFaults) {
+        if (!fault.isActive) continue;
+        
+        // Calculate current severity based on timeline
+        if (currentTime < fault.startDegradation) {
+            fault.currentSeverity = 0.0;  // No degradation yet
+        }
+        else if (currentTime < fault.faultOccurrence) {
+            // Gradual degradation phase
+            double progress = (currentTime - fault.startDegradation).GetSeconds() / 
+                            (fault.faultOccurrence - fault.startDegradation).GetSeconds();
+            fault.currentSeverity = progress * fault.degradationRate;
+        }
+        else if (currentTime < fault.faultOccurrence + fault.faultDuration) {
+            // Peak fault phase
+            fault.currentSeverity = fault.severity;
+        }
+        else if (currentTime < fault.recoveryComplete) {
+            // Recovery phase
+            double recovery_progress = (currentTime - (fault.faultOccurrence + fault.faultDuration)).GetSeconds() / 
+                                     (fault.recoveryComplete - (fault.faultOccurrence + fault.faultDuration)).GetSeconds();
+            fault.currentSeverity = fault.severity * (1.0 - recovery_progress * fault.recoveryRate);
+        }
+        else {
+            // Full recovery
+            fault.currentSeverity = 0.0;
+            fault.isActive = false;
+        }
+    }
+}
+
+double RuralNetworkSimulation::CalculateNodeDegradation(uint32_t nodeId, const std::string& metric)
+{
+    double maxDegradation = 0.0;
+    
+    for (const auto& fault : gradualFaults) {
+        if (fault.targetNode == nodeId && fault.isActive) {
+            double degradation = fault.currentSeverity;
+            
+            if (fault.faultType == "fiber_cut") {
+                if (metric == "throughput") degradation *= 0.9;
+                else if (metric == "latency") degradation *= 0.8;
+                else if (metric == "packet_loss") degradation *= 1.0;
+                else if (metric == "operational") degradation *= 1.0;
+            }
+            else if (fault.faultType == "power_fluctuation") {
+                if (metric == "voltage") degradation *= 1.0;
+                else if (metric == "throughput") degradation *= 0.4;
+                else if (metric == "power_stability") degradation *= 0.9;
+            }
+            
+            maxDegradation = std::max(maxDegradation, degradation);
         }
     }
     
-    std::cout << "Scheduled " << scheduledFaults.size() << " fault injections" << std::endl;
+    return maxDegradation;
 }
 
-void RuralNetworkSimulation::InjectFiberCut(uint32_t nodeA, uint32_t nodeB)
+void RuralNetworkSimulation::CollectHighFrequencyMetrics()
 {
-    NS_LOG_INFO("SILENT: Injecting fiber cut between nodes " << nodeA << " and " << nodeB);
-    // Effect is handled in GetNodeMetrics() - Monitor Agent will detect through metrics
-}
-
-void RuralNetworkSimulation::InjectPowerFluctuation(uint32_t nodeId, double severity)
-{
-    NS_LOG_INFO("SILENT: Injecting power fluctuation on node " << nodeId << " severity " << severity);
-    // Effect is handled in GetNodeMetrics() - Monitor Agent will detect through metrics
-}
-
-void RuralNetworkSimulation::RestoreConnection(uint32_t nodeA, uint32_t nodeB)
-{
-    NS_LOG_INFO("SILENT: Restoring connection between nodes " << nodeA << " and " << nodeB);
-    // Effect is handled in GetNodeMetrics() - Monitor Agent will detect restoration
-}
-
-void RuralNetworkSimulation::RestorePowerStability(uint32_t nodeId)
-{
-    NS_LOG_INFO("SILENT: Restoring power stability on node " << nodeId);
-    // Effect is handled in GetNodeMetrics() - Monitor Agent will detect restoration
-}
-
-void RuralNetworkSimulation::CollectMetrics()
-{
+    // Update fault progression
+    UpdateFaultProgression();
+    
+    // Collect metrics for all nodes
     for (uint32_t i = 0; i < allNodes.GetN(); ++i) {
-        NodeMetrics metrics = GetNodeMetrics(i);
+        NodeMetrics metrics = GetEnhancedNodeMetrics(i);
         
         metricsFile << std::fixed << std::setprecision(3)
                    << Simulator::Now().GetSeconds() << ","
@@ -488,17 +644,20 @@ void RuralNetworkSimulation::CollectMetrics()
                    << metrics.position.z << ","
                    << (metrics.isOperational ? 1 : 0) << ","
                    << metrics.voltageLevel << ","
-                   << metrics.powerStability << "\n";
+                   << metrics.powerStability << ","
+                   << metrics.degradationLevel << ","
+                   << metrics.faultSeverity << "\n";
     }
     
     metricsFile.flush();
     
+    // Schedule next collection
     if (Simulator::Now().GetSeconds() < 590.0) {
-        Simulator::Schedule(Seconds(30.0), &RuralNetworkSimulation::CollectMetrics, this);
+        Simulator::Schedule(dataCollectionInterval, &RuralNetworkSimulation::CollectHighFrequencyMetrics, this);
     }
 }
 
-RuralNetworkSimulation::NodeMetrics RuralNetworkSimulation::GetNodeMetrics(uint32_t nodeId)
+RuralNetworkSimulation::NodeMetrics RuralNetworkSimulation::GetEnhancedNodeMetrics(uint32_t nodeId)
 {
     NodeMetrics metrics;
     metrics.nodeId = nodeId;
@@ -518,68 +677,50 @@ RuralNetworkSimulation::NodeMetrics RuralNetworkSimulation::GetNodeMetrics(uint3
         metrics.position = mobility->GetPosition();
     }
     
-    Ptr<energy::EnergySource> energySource = node->GetObject<energy::EnergySource>();
-    if (energySource) {
-        metrics.energyLevel = energySource->GetRemainingEnergy() / energySource->GetInitialEnergy() * 100.0;
+    // Get degradation factors for this node
+    double throughputDegradation = CalculateNodeDegradation(nodeId, "throughput");
+    double latencyDegradation = CalculateNodeDegradation(nodeId, "latency");
+    double packetLossDegradation = CalculateNodeDegradation(nodeId, "packet_loss");
+    double voltageDegradation = CalculateNodeDegradation(nodeId, "voltage");
+    double operationalDegradation = CalculateNodeDegradation(nodeId, "operational");
+    
+    // Store degradation and severity levels
+    metrics.degradationLevel = std::max({throughputDegradation, latencyDegradation, voltageDegradation});
+    metrics.faultSeverity = operationalDegradation;
+    
+    // Generate realistic base metrics with random variation
+    if (metrics.nodeType == "core") {
+        metrics.throughputMbps = (800.0 + (rand() % 200) - 100) * (1.0 - throughputDegradation);
+        metrics.latencyMs = (5.0 + (rand() % 10)) * (1.0 + latencyDegradation * 20);
+        metrics.packetLossRate = (0.001 + (rand() % 10) * 0.0001) + packetLossDegradation * 0.8;
+        metrics.activeLinks = 4;
+    } else if (metrics.nodeType == "distribution") {
+        metrics.throughputMbps = (60.0 + (rand() % 40) - 20) * (1.0 - throughputDegradation);
+        metrics.latencyMs = (15.0 + (rand() % 20)) * (1.0 + latencyDegradation * 15);
+        metrics.packetLossRate = (0.005 + (rand() % 10) * 0.001) + packetLossDegradation * 0.6;
+        metrics.activeLinks = 3;
     } else {
-        metrics.energyLevel = 100.0;
+        metrics.throughputMbps = (25.0 + (rand() % 30) - 15) * (1.0 - throughputDegradation);
+        metrics.latencyMs = (25.0 + (rand() % 35)) * (1.0 + latencyDegradation * 10);
+        metrics.packetLossRate = (0.01 + (rand() % 20) * 0.001) + packetLossDegradation * 0.5;
+        metrics.activeLinks = 1;
     }
     
-    // Check for active faults
-    bool hasFailure = false;
+    // Apply voltage degradation
+    metrics.voltageLevel = (220.0 + (rand() % 20) - 10) * (1.0 - voltageDegradation * 0.3);
+    metrics.powerStability = (0.95 + (rand() % 10) * 0.001) * (1.0 - voltageDegradation * 0.2);
     
-    for (const auto& fault : scheduledFaults) {
-        if (fault.faultType == "fiber_cut" && 
-            (fault.nodeA == nodeId || fault.nodeB == nodeId) &&
-            Simulator::Now() > fault.injectionTime && 
-            Simulator::Now() < fault.injectionTime + fault.duration) {
-            hasFailure = true;
-            break;
-        } else if (fault.faultType == "power_fluctuation" && 
-                   fault.nodeA == nodeId &&
-                   Simulator::Now() > fault.injectionTime && 
-                   Simulator::Now() < fault.injectionTime + fault.duration) {
-            metrics.voltageLevel = 220.0 * (1.0 - fault.severity * 0.3);
-            metrics.powerStability = 0.95 * (1.0 - fault.severity * 0.1);
-            hasFailure = true;
-            break;
-        }
-    }
+    // Operational status (binary but based on degradation threshold)
+    metrics.isOperational = operationalDegradation < 0.8;  // Fails when 80% degraded
     
-    metrics.isOperational = !hasFailure;
+    // Ensure realistic bounds
+    metrics.throughputMbps = std::max(0.0, metrics.throughputMbps);
+    metrics.latencyMs = std::max(1.0, metrics.latencyMs);
+    metrics.packetLossRate = std::min(1.0, std::max(0.0, metrics.packetLossRate));
+    metrics.voltageLevel = std::max(100.0, std::min(300.0, metrics.voltageLevel));
+    metrics.powerStability = std::max(0.1, std::min(1.0, metrics.powerStability));
     
-    // Generate metrics based on node type and status
-    if (metrics.isOperational) {
-        if (metrics.nodeType == "core") {
-            metrics.throughputMbps = 800.0 + (rand() % 200) - 100;
-            metrics.latencyMs = 5.0 + (rand() % 10);
-            metrics.packetLossRate = 0.001 + (rand() % 10) * 0.0001;
-            metrics.activeLinks = 4;
-        } else if (metrics.nodeType == "distribution") {
-            metrics.throughputMbps = 60.0 + (rand() % 40) - 20;
-            metrics.latencyMs = 15.0 + (rand() % 20);
-            metrics.packetLossRate = 0.005 + (rand() % 10) * 0.001;
-            metrics.activeLinks = 3;
-        } else {
-            metrics.throughputMbps = 25.0 + (rand() % 30) - 15;
-            metrics.latencyMs = 25.0 + (rand() % 35);
-            metrics.packetLossRate = 0.01 + (rand() % 20) * 0.001;
-            metrics.activeLinks = 1;
-        }
-        
-        metrics.voltageLevel = metrics.voltageLevel > 0 ? metrics.voltageLevel : 220.0 + (rand() % 20) - 10;
-        metrics.powerStability = metrics.powerStability > 0 ? metrics.powerStability : 0.95 + (rand() % 10) * 0.001;
-        
-    } else {
-        // Failed node metrics
-        metrics.throughputMbps = 0.0;
-        metrics.latencyMs = 1000.0;
-        metrics.packetLossRate = 1.0;
-        metrics.activeLinks = 0;
-        metrics.voltageLevel = metrics.voltageLevel > 0 ? metrics.voltageLevel : 180.0;
-        metrics.powerStability = metrics.powerStability > 0 ? metrics.powerStability : 0.5;
-    }
-    
+    // Other standard metrics
     metrics.jitterMs = metrics.latencyMs * 0.1 + (rand() % 5);
     metrics.signalStrengthDbm = -60.0 - (rand() % 30);
     metrics.cpuUsage = 30.0 + (rand() % 50);
@@ -589,6 +730,7 @@ RuralNetworkSimulation::NodeMetrics RuralNetworkSimulation::GetNodeMetrics(uint3
     metrics.linkUtilization = 30.0 + (rand() % 50);
     metrics.criticalServiceLoad = 10.0 + (rand() % 30);
     metrics.normalServiceLoad = 40.0 + (rand() % 40);
+    metrics.energyLevel = 100.0 - (Simulator::Now().GetSeconds() / 600.0) * 20.0; // Gradual energy decline
     
     return metrics;
 }
@@ -665,27 +807,35 @@ void RuralNetworkSimulation::StartSocketServer()
 
 void RuralNetworkSimulation::HandleSocketConnection()
 {
-    // Simple socket handling for Python integration
-    // Can be enhanced later for TC-05 intent processing
+    // Socket handling for Python integration
 }
 
 void RuralNetworkSimulation::ProcessCommand(const std::string& command)
 {
-    // Process commands from Python Monitor Agent
     std::cout << "Received command: " << command << std::endl;
 }
 
 void RuralNetworkSimulation::SetupMetricsCollection()
 {
     flowMonitor = flowHelper.InstallAll();
-    Simulator::Schedule(Seconds(30.0), &RuralNetworkSimulation::CollectMetrics, this);
-    std::cout << "Metrics collection setup complete" << std::endl;
+    // Start high-frequency collection immediately
+    Simulator::Schedule(Seconds(10.0), &RuralNetworkSimulation::CollectHighFrequencyMetrics, this);
+    std::cout << "High-frequency metrics collection setup complete (every " 
+              << dataCollectionInterval.GetSeconds() << "s)" << std::endl;
 }
 
 void RuralNetworkSimulation::Run()
 {
     std::cout << "========================================" << std::endl;
-    std::cout << "  Rural 50-Node Self-Healing Network   " << std::endl;
+    std::cout << "  Enhanced Rural 50-Node Network       " << std::endl;
+    std::cout << "  With Gradual Fault Patterns          " << std::endl;
+    
+    if (useVisualizationSpeeds) {
+        std::cout << "  VISUALIZATION MODE: Slow speeds      " << std::endl;
+    } else {
+        std::cout << "  PERFORMANCE MODE: Realistic speeds   " << std::endl;
+    }
+    
     std::cout << "========================================" << std::endl;
     
     std::cout << "Setting up 50-node rural network..." << std::endl;
@@ -693,38 +843,65 @@ void RuralNetworkSimulation::Run()
     SetupApplications();
     SetupMetricsCollection();
     
-    std::cout << "Scheduling fault injections..." << std::endl;
-    ScheduleFaultInjections();
+    std::cout << "Scheduling gradual fault patterns..." << std::endl;
+    ScheduleGradualFaultPatterns();
     
     std::cout << "Starting socket server..." << std::endl;
     StartSocketServer();
     
-    // Enable NetAnim with better settings
+    // Enhanced NetAnim configuration for packet visibility
     AnimationInterface anim("rural-network-animation.xml");
-    anim.SetMaxPktsPerTraceFile(500000);
     
-    // Add node descriptions for better visualization
+    if (useVisualizationSpeeds) {
+        // Optimized settings for packet visibility
+        anim.SetMaxPktsPerTraceFile(20000);         // Reduced for performance
+        anim.EnablePacketMetadata(true);            // Show packet details
+        anim.SetMobilityPollInterval(Seconds(2));   // More frequent updates
+        anim.SetStartTime(Seconds(90));             // Start just before test traffic
+        anim.SetStopTime(Seconds(400));             // Focus on fault period
+    } else {
+        // Standard settings for data generation
+        anim.SetMaxPktsPerTraceFile(100000);
+        anim.EnablePacketMetadata(true);
+        anim.SetMobilityPollInterval(Seconds(5));
+        anim.SetStartTime(Seconds(50));
+        anim.SetStopTime(Seconds(350));
+    }
+    
+    // Enhanced node visualization
     for (uint32_t i = 0; i < allNodes.GetN(); ++i) {
         std::string nodeType;
-        if (i < 5) nodeType = "Core";
-        else if (i < 20) nodeType = "Dist";
-        else nodeType = "Access";
+        std::string nodeDesc;
         
-        anim.UpdateNodeDescription(allNodes.Get(i), nodeType + std::to_string(i));
-        
-        // Set node colors based on type
         if (i < 5) {
-            anim.UpdateNodeColor(allNodes.Get(i), 255, 0, 0); // Red for core
+            nodeType = "Core";
+            nodeDesc = "C" + std::to_string(i);
+            anim.UpdateNodeColor(allNodes.Get(i), 255, 50, 50);     // Bright red
+            anim.UpdateNodeSize(allNodes.Get(i), 2.0, 2.0);        // Larger core nodes
         } else if (i < 20) {
-            anim.UpdateNodeColor(allNodes.Get(i), 0, 255, 0); // Green for distribution
+            nodeType = "Dist";
+            nodeDesc = "D" + std::to_string(i-5);
+            anim.UpdateNodeColor(allNodes.Get(i), 50, 255, 50);     // Bright green
+            anim.UpdateNodeSize(allNodes.Get(i), 1.5, 1.5);        // Medium nodes
         } else {
-            anim.UpdateNodeColor(allNodes.Get(i), 0, 0, 255); // Blue for access
+            nodeType = "Access";
+            nodeDesc = "A" + std::to_string(i-20);
+            anim.UpdateNodeColor(allNodes.Get(i), 50, 50, 255);     // Bright blue
+            anim.UpdateNodeSize(allNodes.Get(i), 1.0, 1.0);        // Smaller nodes
         }
+        
+        anim.UpdateNodeDescription(allNodes.Get(i), nodeDesc);
     }
     
     std::cout << "========================================" << std::endl;
     std::cout << "Starting 10-minute simulation..." << std::endl;
-    std::cout << "Progress will be shown every 60 seconds" << std::endl;
+    std::cout << "High-frequency data collection active" << std::endl;
+    
+    if (useVisualizationSpeeds) {
+        std::cout << "NetAnim: Slow packet flow for visibility" << std::endl;
+        std::cout << "In NetAnim: Set Update Rate to SLOWEST" << std::endl;
+    }
+    
     std::cout << "========================================" << std::endl;
     
     // Schedule progress updates
@@ -736,9 +913,9 @@ void RuralNetworkSimulation::Run()
     Simulator::Run();
     
     std::cout << "========================================" << std::endl;
-    std::cout << "Simulation completed successfully!" << std::endl;
+    std::cout << "Enhanced simulation completed!" << std::endl;
     std::cout << "Files generated:" << std::endl;
-    std::cout << "- rural_network_metrics.csv (network data)" << std::endl;
+    std::cout << "- rural_network_metrics.csv (enhanced data)" << std::endl;
     std::cout << "- rural-network-animation.xml (visualization)" << std::endl;
     std::cout << "- network_topology.json (topology info)" << std::endl;
     std::cout << "- rural-network-flowmon.xml (flow analysis)" << std::endl;
@@ -763,8 +940,6 @@ int main(int argc, char *argv[])
     CommandLine cmd;
     cmd.Parse(argc, argv);
     
-    //LogComponentEnable("UdpEchoClientApplication", LOG_LEVEL_INFO);
-    //LogComponentEnable("UdpEchoServerApplication", LOG_LEVEL_INFO);
     LogComponentEnable("RuralSelfHealingNetwork", LOG_LEVEL_INFO);
     
     RngSeedManager::SetSeed(12345);
