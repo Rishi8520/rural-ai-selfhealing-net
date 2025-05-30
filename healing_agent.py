@@ -7,30 +7,35 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 import sys # For sys.exit()
 import time # For time.time() in timestamps
+import logging # Added logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
 
 # --- Placeholder for RAG Knowledge Base ---
 # This knowledge base is structured per node, allowing for contextual retrieval.
 # In a real system, this would be loaded from a persistent database or configuration files.
 NODE_KNOWLEDGE_BASE = {
-    "node_1": [
-        {"doc_id": "doc_1_1", "content": "Node 1 is a core router. Common issues: high latency, CPU spikes. Healing: restart interface, check routing table, verify BGP sessions."},
-        {"doc_id": "doc_1_2", "content": "Node 1 firmware update policy: quarterly. Downtime window: 2 AM - 4 AM UTC. Critical service: VoIP."},
-        {"doc_id": "doc_1_3", "content": "Past incident: Node 1 packet loss due to faulty transceiver. Resolution: Replace transceiver, update firmware. Check optical power levels."},
+    "node_00": [ # Changed to node_00 to match monitor_agent's formatting
+        {"doc_id": "doc_00_1", "content": "Node 00 is a core router. Common issues: high latency, CPU spikes. Healing: restart interface, check routing table, verify BGP sessions."},
+        {"doc_id": "doc_00_2", "content": "Node 00 firmware update policy: quarterly. Downtime window: 2 AM - 4 AM UTC. Critical service: VoIP."},
+        {"doc_id": "doc_00_3", "content": "Past incident: Node 00 packet loss due to faulty transceiver. Resolution: Replace transceiver, update firmware. Check optical power levels."},
     ],
-    "node_2": [
-        {"doc_id": "doc_2_1", "content": "Node 2 is an edge switch. Common issues: port errors, signal degradation. Healing: disable/enable port, check cable, inspect SFP module."},
-        {"doc_id": "doc_2_2", "content": "Node 2 is part of VoIP cluster. Prioritize voice traffic. Ensure QoS policies are applied."},
+    "node_01": [ # Changed to node_01
+        {"doc_id": "doc_01_1", "content": "Node 01 is an edge switch. Common issues: port errors, signal degradation. Healing: disable/enable port, check cable, inspect SFP module."},
+        {"doc_id": "doc_01_2", "content": "Node 01 is part of VoIP cluster. Prioritize voice traffic. Ensure QoS policies are applied."},
     ],
     # ... up to 50 nodes
 }
 
 # Populate for all 50 nodes for demonstration if not explicitly defined
-for i in range(1, 51):
-    if f"node_{i}" not in NODE_KNOWLEDGE_BASE:
-        NODE_KNOWLEDGE_BASE[f"node_{i}"] = [
-            {"doc_id": f"doc_{i}_1", "content": f"Node {i} is a general purpose network device. Standard healing procedures apply. High CPU usually indicates misconfiguration or excessive traffic. Check process list."},
-            {"doc_id": f"doc_{i}_2", "content": f"Node {i} operates in a data center environment. Temperature control is critical. Power fluctuations should be immediately investigated. Verify redundant power supplies."},
-            {"doc_id": f"doc_{i}_3", "content": f"Node {i} has a standard software stack. If memory usage is high, consider restarting non-critical services first."},
+for i in range(50): # Iterate from 0 to 49
+    node_id_formatted = f"node_{i:02d}" # Format as node_00, node_01, etc.
+    if node_id_formatted not in NODE_KNOWLEDGE_BASE:
+        NODE_KNOWLEDGE_BASE[node_id_formatted] = [
+            {"doc_id": f"doc_{i}_1", "content": f"Node {node_id_formatted} is a general purpose network device. Standard healing procedures apply. High CPU usually indicates misconfiguration or excessive traffic. Check process list."},
+            {"doc_id": f"doc_{i}_2", "content": f"Node {node_id_formatted} operates in a data center environment. Temperature control is critical. Power fluctuations should be immediately investigated. Verify redundant power supplies."},
+            {"doc_id": f"doc_{i}_3", "content": f"Node {node_id_formatted} has a standard software stack. If memory usage is high, consider restarting non-critical services first."},
         ]
 
 # --- Retrieval-Augmented Generation (RAG) Component ---
@@ -59,7 +64,7 @@ class RetrievalAugmentedGenerator:
         Pre-processes the knowledge base for efficient retrieval.
         It fits a TfidfVectorizer for each node's documents.
         """
-        print("RAG: Preparing knowledge base...")
+        logger.info("RAG: Preparing knowledge base...")
         # Ensure a 'default' entry exists for nodes without specific KB
         if "default" not in self.knowledge_base:
             self.knowledge_base["default"] = [
@@ -76,7 +81,7 @@ class RetrievalAugmentedGenerator:
             else:
                 self.vectorizers[node_id] = None
                 self.doc_contents[node_id] = []
-        print("RAG: Knowledge base preparation complete.")
+        logger.info("RAG: Knowledge base preparation complete.")
 
     def retrieve_context(self, node_id, query, top_k=3):
         """
@@ -95,13 +100,13 @@ class RetrievalAugmentedGenerator:
         actual_node_id = node_id
         if node_id not in self.vectorizers or not self.vectorizers[node_id]:
             actual_node_id = "default"
-            print(f"RAG: Warning: No specific knowledge base found or prepared for node {node_id}. Using default context.")
+            logger.warning(f"RAG: No specific knowledge base found or prepared for node {node_id}. Using default context.")
 
         vectorizer = self.vectorizers.get(actual_node_id)
         docs = self.doc_contents.get(actual_node_id, [])
 
         if not vectorizer or not docs:
-            print(f"RAG: Warning: No context available for node {actual_node_id}. Returning empty context.")
+            logger.warning(f"RAG: No context available for node {actual_node_id}. Returning empty context.")
             return []
 
         # Transform the query and documents into TF-IDF vectors
@@ -127,29 +132,32 @@ class HealingAgent:
     retrieves contextual information using RAG, generates detailed healing recommendations
     using an LLM (Gemini API), and pushes these recommendations to the Master Control Plane (MCP).
     """
-    def __init__(self, sub_socket_address_a2a, push_socket_address_mcp):
+    # Added context parameter for shared ZeroMQ context
+    def __init__(self, context: zmq.Context, sub_socket_address_a2a: str, push_socket_address_mcp: str):
         """
         Initializes the Healing Agent.
 
         Args:
+            context (zmq.Context): The shared ZeroMQ context.
             sub_socket_address_a2a (str): ZeroMQ address to subscribe to Calculation Agent's PUB socket.
             push_socket_address_mcp (str): ZeroMQ address to push healing recommendations to MCP's PULL socket.
         """
         self.sub_socket_address_a2a = sub_socket_address_a2a
         self.push_socket_address_mcp = push_socket_address_mcp
 
-        self.context = zmq.asyncio.Context()
+        self.context = context # Use the passed context
         
         # A2A communication: SUB socket to receive anomaly alerts from Calculation Agent (PUB)
         self.a2a_subscriber_socket = self.context.socket(zmq.SUB)
         self.a2a_subscriber_socket.connect(self.sub_socket_address_a2a)
         self.a2a_subscriber_socket.setsockopt_string(zmq.SUBSCRIBE, "") # Subscribe to all messages
-        print(f"Healing Agent: A2A Subscriber connected to {self.sub_socket_address_a2a}")
+        logger.info(f"Healing Agent: A2A Subscriber connected to {self.sub_socket_address_a2a}")
 
         # MCP communication: PUSH socket to send healing recommendations to MCP (PULL)
         self.mcp_push_socket = self.context.socket(zmq.PUSH)
-        self.mcp_push_socket.connect(self.push_socket_address_mcp) # Connect to MCP's PULL socket
-        print(f"Healing Agent: MCP PUSH connected to {self.push_socket_address_mcp}")
+        # *** CRITICAL FIX: Healing Agent PUSHes to MCP Agent, so it BINDS ***
+        self.mcp_push_socket.bind(self.push_socket_address_mcp) 
+        logger.info(f"Healing Agent: MCP PUSH bound to {self.push_socket_address_mcp}")
 
         self.rag = RetrievalAugmentedGenerator(NODE_KNOWLEDGE_BASE)
 
@@ -169,7 +177,7 @@ class HealingAgent:
         
         # --- Python-compatible placeholder for LLM call ---
         # This simulates the LLM's response without requiring an actual API key or network call.
-        print("Healing Agent: Simulating LLM call to Gemini API...")
+        logger.info("Healing Agent: Simulating LLM call to Gemini API...")
         await asyncio.sleep(1) # Simulate API latency
 
         try:
@@ -221,13 +229,13 @@ Important: {mock_important_note}
                 text = result["candidates"][0]["content"]["parts"][0]["text"]
                 return text
             else:
-                print(f"Healing Agent: LLM response structure unexpected: {result}")
+                logger.error(f"Healing Agent: LLM response structure unexpected: {result}")
                 return "Failed to generate recommendations from LLM. Response structure unexpected."
         except json.JSONDecodeError:
-            print(f"Healing Agent: Could not decode anomaly_context as JSON: {anomaly_context}")
+            logger.error(f"Healing Agent: Could not decode anomaly_context as JSON: {anomaly_context}")
             return "Failed to generate recommendations: Anomaly context was malformed."
         except Exception as e:
-            print(f"Healing Agent: Error during simulated Gemini API call: {e}")
+            logger.error(f"Healing Agent: Error during simulated Gemini API call: {e}")
             return f"Failed to generate recommendations from LLM due to simulated API error: {e}"
 
     def build_prompt(self, anomaly_context, docs):
@@ -267,14 +275,15 @@ Based on the anomaly report and the provided knowledge, please provide:
             alert_message (dict): The anomaly alert message received from Calculation Agent.
         """
         node_id = alert_message.get("node_id", "N/A")
-        anomaly_data = alert_message.get("anomaly_data", {})
+        # Ensure 'anomaly_data' key is used as per Calculation Agent's alert structure
+        anomaly_data = alert_message.get("details", {}) # Changed from "anomaly_data" to "details"
         severity = anomaly_data.get("severity_classification", "N/A")
         root_causes = anomaly_data.get("root_cause_indicators", [])
         affected_components = anomaly_data.get("affected_components", [])
 
-        print(f"\nHealing Agent: Received A2A alert for Node {node_id}: Severity {severity}")
-        print(f"  Root Causes: {root_causes}")
-        print(f"  Affected Components: {affected_components}")
+        logger.info(f"\nHealing Agent: Received A2A alert for Node {node_id}: Severity {severity}")
+        logger.info(f"  Root Causes: {root_causes}")
+        logger.info(f"  Affected Components: {affected_components}")
 
         # Construct a query for RAG based on anomaly data
         # Ensure root_causes are correctly extracted for the query if they are dicts
@@ -284,7 +293,7 @@ Based on the anomaly report and the provided knowledge, please provide:
 
         # Retrieve contextual information from the knowledge base using RAG
         contextual_info = self.rag.retrieve_context(node_id, rag_query)
-        print(f"  Retrieved RAG Context: {contextual_info}")
+        logger.info(f"  Retrieved RAG Context: {contextual_info}")
 
         # Prepare anomaly context string for the LLM prompt
         anomaly_context_str = json.dumps(anomaly_data, indent=2)
@@ -293,10 +302,9 @@ Based on the anomaly report and the provided knowledge, please provide:
         generated_llm_recommendations = await self.generate_recommendations_with_llm(
             anomaly_context_str, contextual_info
         )
-        print(f"  LLM Generated Recommendations:\n{generated_llm_recommendations}")
+        logger.info(f"  LLM Generated Recommendations:\n{generated_llm_recommendations}")
 
         # Split the LLM response into diagnosis, recommendations, and important note for structured output
-        # This is a basic parsing; a more robust solution might use regex or force JSON output from LLM
         diagnosis = "No diagnosis generated."
         recommendations_list = []
         important_note = "No important note provided."
@@ -325,7 +333,6 @@ Based on the anomaly report and the provided knowledge, please provide:
             recommendations_list.append("No specific actions extracted from LLM output. Manual investigation required.")
         
         # Prepare the final healing recommendation message to be sent to MCP
-        # Initialize final_recommendation_message here to prevent UnboundLocalError
         final_recommendation_message = {
             "node_id": node_id,
             "timestamp": alert_message.get("timestamp", time.time()),
@@ -339,7 +346,7 @@ Based on the anomaly report and the provided knowledge, please provide:
             "raw_llm_output": generated_llm_recommendations # Include raw output for debugging/completeness
         }
 
-        print(f"Healing Agent: Final Healing Recommendation for MCP: {json.dumps(final_recommendation_message, indent=2)}")
+        logger.info(f"Healing Agent: Final Healing Recommendation for MCP: {json.dumps(final_recommendation_message, indent=2)}")
 
         # MCP Communication: Push the healing recommendation to MCP
         mcp_message = {
@@ -347,33 +354,40 @@ Based on the anomaly report and the provided knowledge, please provide:
             "type": "healing_recommendation",
             "payload": final_recommendation_message
         }
-        await self.mcp_push_socket.send_json(mcp_message)
-        print(f"Healing Agent: Pushed healing recommendation for Node {node_id} to MCP.")
+        # ZeroMQ PUSH socket sends strings, so dump JSON to string
+        await self.mcp_push_socket.send_string(json.dumps(mcp_message))
+        logger.info(f"Healing Agent: Pushed healing recommendation for Node {node_id} to MCP.")
 
     async def start(self):
         """
         Starts the Healing Agent, continuously listening for anomaly alerts
         from the Calculation Agent.
         """
-        print("Healing Agent started. Waiting for anomaly alerts from Calculation Agent...")
+        logger.info("Healing Agent started. Waiting for anomaly alerts from Calculation Agent...")
         while True:
             try:
                 # Listen for messages from Calculation Agent via A2A subscriber socket
-                alert_message = await self.a2a_subscriber_socket.recv_json()
+                # ZeroMQ PUB/SUB sends strings, so recv_string
+                alert_message_str = await self.a2a_subscriber_socket.recv_string()
+                alert_message = json.loads(alert_message_str) # Parse the JSON string
+                
                 if alert_message.get("type") == "anomaly_alert":
                     asyncio.create_task(self.process_anomaly_alert(alert_message))
                 else:
-                    print(f"Healing Agent: Received unknown message type: {alert_message.get('type')}")
+                    logger.info(f"Healing Agent: Received unknown message type: {alert_message.get('type')}")
             except zmq.error.ZMQError as e:
-                print(f"Healing Agent: ZMQ Error: {e}. Retrying in 1 second...")
+                logger.error(f"Healing Agent: ZMQ Error: {e}. Retrying in 1 second...")
                 await asyncio.sleep(1) # Wait before retrying on ZMQ error
+            except json.JSONDecodeError as e:
+                logger.error(f"Healing Agent: JSON Decode Error: {e}. Message: {alert_message_str}")
+                await asyncio.sleep(1)
             except Exception as e:
-                print(f"Healing Agent: Unexpected error: {e}. Retrying in 1 second...")
+                logger.error(f"Healing Agent: Unexpected error: {e}. Retrying in 1 second...")
                 await asyncio.sleep(1) # Wait before retrying on general error
 
 # --- Main function to run the Healing Agent (for standalone testing) ---
 if __name__ == "__main__":
-    print("Running standalone test for Healing Agent...")
+    logger.info("Running standalone test for Healing Agent...")
 
     # Define ZeroMQ addresses for standalone testing
     # These should match the addresses used by Calculation Agent and MCP Agent
@@ -381,7 +395,10 @@ if __name__ == "__main__":
     test_push_address_mcp = "tcp://127.0.0.1:5558" # Matches MCP Agent's PULL address
 
     # Initialize and start the Healing Agent
+    # For standalone testing, create a local context
+    local_context = zmq.asyncio.Context() 
     healing_agent = HealingAgent(
+        context=local_context, # Pass local context for standalone
         sub_socket_address_a2a=test_sub_address_a2a,
         push_socket_address_mcp=test_push_address_mcp
     )
@@ -389,10 +406,11 @@ if __name__ == "__main__":
     try:
         asyncio.run(healing_agent.start())
     except KeyboardInterrupt:
-        print("\nHealing Agent standalone test stopped.")
+        logger.info("\nHealing Agent standalone test stopped.")
         sys.exit(0)
     except Exception as e:
-        print(f"An error occurred during standalone Healing Agent run: {e}")
+        logger.exception(f"An error occurred during standalone Healing Agent run: {e}")
         sys.exit(1)
+    finally:
+        local_context.term() # Terminate context on exit
 
-# --- End of File: healing_agent.py ---
