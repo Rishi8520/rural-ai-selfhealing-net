@@ -265,7 +265,7 @@ class EnhancedMonitorAgent:
     async def start_enhanced_monitoring(self):
         """Start enhanced monitoring with gradual fault detection"""
         logger.info("=" * 80)
-        logger.info("STARTING ENHANCED MONITOR AGENT")
+        logger.info("STARTING MONITOR AGENT")
         logger.info("WITH GRADUAL FAULT DETECTION AND DATA STREAMING")
         logger.info("=" * 80)
         
@@ -891,7 +891,7 @@ class EnhancedMonitorAgent:
 
     async def stop_enhanced_monitoring(self):
         """Stop enhanced monitoring and generate comprehensive summary"""
-        logger.info("Stopping Enhanced Monitor Agent...")
+        logger.info("Stopping Monitor Agent...")
         self.is_running = False
         self.streaming_active = False
         
@@ -901,7 +901,7 @@ class EnhancedMonitorAgent:
         # Cleanup
         await self.ns3_interface.cleanup()
         
-        logger.info("Enhanced Monitor Agent stopped successfully")
+        logger.info("Monitor Agent stopped successfully")
 
     async def generate_enhanced_summary(self):
         """Generate comprehensive enhanced monitoring summary"""

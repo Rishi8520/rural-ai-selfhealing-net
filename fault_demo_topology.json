@@ -1,0 +1,18 @@
+{
+  "complete_rural_network_topology": {
+    "simulation_mode": "fault_demo",
+    "total_nodes": 50,
+    "core_layer": {
+      "node_count": 5,
+      "role": "Core routing and switching"
+    },
+    "distribution_layer": {
+      "node_count": 15,
+      "role": "Regional distribution"
+    },
+    "access_layer": {
+      "node_count": 30,
+      "role": "End-user access points"
+    }
+  }
+}

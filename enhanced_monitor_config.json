@@ -1,34 +1,34 @@
 {
-  "ns3": {
-    "metrics_file": "rural_network_metrics.csv",
-    "topology_file": "network_topology.json"
-  },
-  "calculation_agent": {
-    "endpoint": "calculation_agent_data_stream.json",
-    "data_push_interval": 15.0,
-    "batch_size": 5
-  },
-  "mcp_agent": {
-    "endpoint": "mcp_agent_alerts.json",
-    "alert_push_interval": 5.0
-  },
-  "thresholds": {
-    "throughput_min": 15.0,
-    "latency_max": 150.0,
-    "packet_loss_max": 0.05,
-    "voltage_min": 200.0,
-    "voltage_max": 240.0,
-    "power_stability_min": 0.85
-  },
-  "degradation_thresholds": {
-    "degradation_warning": 0.2,
-    "degradation_critical": 0.5,
-    "fault_severity_high": 0.7,
-    "prediction_confidence": 0.8
-  },
-  "monitoring": {
-    "check_interval": 3.0,
-    "baseline_samples": 8,
-    "stream_batch_size": 5
-  }
+    "ns3": {
+        "metrics_file": "fault_demo_network_metrics.csv",
+        "topology_file": "fault_demo_topology.json"
+    },
+    "calculation_agent": {
+        "endpoint": "calculation_agent_data_stream.json",
+        "data_push_interval": 10.0,
+        "batch_size": 3
+    },
+    "mcp_agent": {
+        "endpoint": "mcp_agent_alerts.json",
+        "alert_push_interval": 5.0
+    },
+    "thresholds": {
+        "throughput_min": 15.0,
+        "latency_max": 150.0,
+        "packet_loss_max": 0.05,
+        "voltage_min": 200.0,
+        "voltage_max": 240.0,
+        "power_stability_min": 0.85
+    },
+    "degradation_thresholds": {
+        "degradation_warning": 0.2,
+        "degradation_critical": 0.5,
+        "fault_severity_high": 0.7,
+        "prediction_confidence": 0.8
+    },
+    "monitoring": {
+        "check_interval": 2.0,
+        "baseline_samples": 8,
+        "stream_batch_size": 3
+    }
 }
