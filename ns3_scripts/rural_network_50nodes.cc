@@ -162,6 +162,8 @@ private:
     std::string GetNodeVisualName(uint32_t nodeId);
     void HideFiberLink(uint32_t nodeA, uint32_t nodeB);
     void RestoreFiberLink(uint32_t nodeA, uint32_t nodeB);
+    void ShowPowerIssue(uint32_t nodeId);
+    void HidePowerIssue(uint32_t nodeId);
     
     // Data collection
     void CollectComprehensiveMetrics();
@@ -792,11 +794,14 @@ void CompleteRuralNetworkSimulation::RestoreFiberLink(uint32_t nodeA, uint32_t n
 
 void CompleteRuralNetworkSimulation::CreateRealisticPowerFluctuationPattern(uint32_t nodeId, Time startTime)
 {
+    // Convert node ID to visual name for better logging
+    std::string nodeName = GetNodeVisualName(nodeId);
+    
     GradualFaultPattern pattern;
     pattern.targetNode = nodeId;
     pattern.connectedNode = 0;
     pattern.faultType = "power_fluctuation";
-    pattern.faultDescription = "POWER FLUCTUATION on node " + std::to_string(nodeId);
+    pattern.faultDescription = "POWER FLUCTUATION on " + nodeName;  // ENHANCED: Use visual name
     pattern.startDegradation = startTime;
     pattern.faultOccurrence = startTime + Seconds(60.0);
     pattern.faultDuration = Seconds(90.0);
@@ -807,12 +812,45 @@ void CompleteRuralNetworkSimulation::CreateRealisticPowerFluctuationPattern(uint
     pattern.isActive = true;
     pattern.currentSeverity = 0.0;
     pattern.visualIndicatorActive = false;
-    pattern.visualMessage = "⚡ POWER ISSUE: Node " + std::to_string(nodeId);
+    pattern.visualMessage = "⚡ POWER ISSUE: " + nodeName;  // ENHANCED: Use visual name
     
     gradualFaults.push_back(pattern);
     
-    std::cout << "📋 FAULT: Power fluctuation scheduled - Node " << nodeId 
-              << " at " << startTime.GetSeconds() << "s" << std::endl;
+    // ENHANCED: Schedule power issue visualization events
+    Simulator::Schedule(startTime + Seconds(60.0), 
+                       &CompleteRuralNetworkSimulation::ShowPowerIssue, this, nodeId);
+    Simulator::Schedule(pattern.recoveryComplete,
+                       &CompleteRuralNetworkSimulation::HidePowerIssue, this, nodeId);
+    
+    std::cout << "📋 POWER FLUCTUATION: " << nodeName 
+              << " at " << startTime.GetSeconds() << "s" 
+              << " (Recovery at " << pattern.recoveryComplete.GetSeconds() << "s)" << std::endl;
+}
+
+void CompleteRuralNetworkSimulation::ShowPowerIssue(uint32_t nodeId)
+{
+    if (!animInterface) return;
+    
+    std::string nodeName = GetNodeVisualName(nodeId);
+    
+    // Visual indication of power issue using node description
+    std::string powerMsg = "⚡ POWER ISSUE";
+    animInterface->UpdateNodeDescription(allNodes.Get(nodeId), nodeName + "\n" + powerMsg);
+    
+    std::cout << "🟡 VISUAL: Power issue indicator shown on " << nodeName << std::endl;
+}
+
+// ADDED: Hide power issue visual indicator
+void CompleteRuralNetworkSimulation::HidePowerIssue(uint32_t nodeId)
+{
+    if (!animInterface) return;
+    
+    std::string nodeName = GetNodeVisualName(nodeId);
+    
+    // Restore normal description
+    animInterface->UpdateNodeDescription(allNodes.Get(nodeId), nodeName);
+    
+    std::cout << "🟢 VISUAL: Power issue resolved on " << nodeName << std::endl;
 }
 
 void CompleteRuralNetworkSimulation::UpdateFaultProgression()
