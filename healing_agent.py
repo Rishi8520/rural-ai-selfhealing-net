@@ -8,9 +8,32 @@ from sklearn.metrics.pairwise import cosine_similarity
 import sys # For sys.exit()
 import time # For time.time() in timestamps
 import logging # Added logging
+import platform
+if platform.system() == "Windows":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+# New imports for enhancements
+import os
+from dotenv import load_dotenv # For loading environment variables from .env
+import google.generativeai as genai # For Gemini API
+import google.api_core.exceptions # For Gemini API specific exceptions
+from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type # For robust error handling
+from sentence_transformers import SentenceTransformer # For advanced RAG
+import faiss # For efficient similarity search with dense vectors
+
+# Load environment variables from .env file
+load_dotenv()
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# --- ADDED CODE FOR DEBUGGING GOOGLE_API_KEY ---
+api_key_status = os.getenv("GOOGLE_API_KEY")
+if api_key_status:
+    logger.info(f"GOOGLE_API_KEY is loaded: {api_key_status[:5]}...{api_key_status[-5:]}") # Prints first/last 5 chars for security
+else:
+    logger.error("GOOGLE_API_KEY is NOT loaded. Please ensure it's set or in your .env file.")
+# --- END OF ADDED CODE ---
+
 
 # --- Placeholder for RAG Knowledge Base ---
 # This knowledge base is structured per node, allowing for contextual retrieval.
@@ -22,368 +45,407 @@ NODE_KNOWLEDGE_BASE = {
         {"doc_id": "doc_00_3", "content": "Past incident: Node 00 packet loss due to faulty transceiver. Resolution: Replace transceiver, update firmware. Check optical power levels."},
     ],
     "node_01": [ # Changed to node_01
-        {"doc_id": "doc_01_1", "content": "Node 01 is an edge switch. Common issues: port errors, signal degradation. Healing: disable/enable port, check cable, inspect SFP module."},
-        {"doc_id": "doc_01_2", "content": "Node 01 is part of VoIP cluster. Prioritize voice traffic. Ensure QoS policies are applied."},
+        {"doc_id": "doc_01_1", "content": "Node 01 is a distribution switch. Issues: port errors, VLAN misconfigurations. Healing: clear counters, verify VLAN tags, check trunk links."},
+        {"doc_id": "doc_01_2", "content": "Node 01 power redundancy check: monthly. Battery backup capacity: 8 hours. Located in IDF 3."},
+        {"doc_id": "doc_01_3", "content": "Recent log: Node 01 received excessive broadcast traffic. Action: Implement broadcast storm control, review STP configuration."},
     ],
-    # ... up to 50 nodes
+    "node_02": [
+        {"doc_id": "doc_02_1", "content": "Node 02 is a core firewall. Issues: high connection count, VPN tunnel drops. Healing: review ACLs, check session table limits, verify IKE/IPsec settings."},
+        {"doc_id": "doc_02_2", "content": "Node 02 maintenance window: 1st Saturday of month. Primary function: network segmentation, external access control."},
+        {"doc_id": "doc_02_3", "content": "Security alert: Node 02 detected port scan from external IP. Blocked source. Review IPS/IDS logs."},
+    ],
+    "node_03": [
+        {"doc_id": "doc_03_1", "content": "Node 03 is a core switch. Issues: spanning tree loops, high CPU utilization. Healing: verify STP root bridge, disable unused ports, monitor interface statistics."},
+        {"doc_id": "doc_03_2", "content": "Node 03 is part of datacenter core. Redundancy: HSRP configured. Last firmware version: 15.2(4)E7."},
+        {"doc_id": "doc_03_3", "content": "Performance issue: Node 03 experienced intermittent packet drops. Root cause: faulty SFP module. Replaced module."},
+    ],
+    "node_04": [
+        {"doc_id": "doc_04_1", "content": "Node 04 is a border router. Issues: BGP neighbor flaps, route inconsistencies. Healing: check peer configuration, verify AS path, clear BGP sessions."},
+        {"doc_id": "doc_04_2", "content": "Node 04 connects to ISP A and ISP B. Primary BGP route preference to ISP A. Located at main demarcation point."},
+        {"doc_id": "doc_04_3", "content": "Connectivity loss: Node 04 lost external routes for 5 minutes. Cause: ISP A maintenance. Failover to ISP B successful."},
+    ],
+    "node_05": [
+        {"doc_id": "doc_05_1", "content": "Node 05 is a distribution router. Issues: OSPF neighbor issues, routing table overflow. Healing: check OSPF area configuration, verify link state database, filter routes."},
+        {"doc_id": "doc_05_2", "content": "Node 05 serves the engineering department. IP addressing scheme: 10.5.0.0/16. Next-gen firewall integration pending."},
+        {"doc_id": "doc_05_3", "content": "High CPU: Node 05 CPU utilization spiked. Cause: large number of debug logs enabled. Disabled unnecessary debugs."},
+    ],
+    "node_06": [
+        {"doc_id": "doc_06_1", "content": "Node 06 is an access switch. Issues: client connectivity, PoE failures. Healing: check port status, power cycle PoE device, verify VLAN assignment."},
+        {"doc_id": "doc_06_2", "content": "Node 06 supports IP phones and wireless APs. PoE budget: 370W. Located in conference room area."},
+        {"doc_id": "doc_06_3", "content": "Client complaint: Node 06 users report slow Wi-Fi. Action: Check AP uplink, verify bandwidth utilization, reboot APs."},
+    ],
+    "node_07": [
+        {"doc_id": "doc_07_1", "content": "Node 07 is an access switch. Issues: authentication failures, port security violations. Healing: verify RADIUS/TACACS+ configuration, clear port security violations, check MAC address table."},
+        {"doc_id": "doc_07_2", "content": "Node 07 serves the sales department. Access control: 802.1X enabled. Guest VLAN: VLAN 500."},
+        {"doc_id": "doc_07_3", "content": "Security incident: Node 07 detected unauthorized device. Port disabled by port security. Investigate device."},
+    ],
+    "node_08": [
+        {"doc_id": "doc_08_1", "content": "Node 08 is a wireless controller. Issues: AP disassociations, client roaming problems. Healing: check controller-AP connectivity, review RF profiles, verify client database."},
+        {"doc_id": "doc_08_2", "content": "Node 08 manages 50 access points. Software version: 8.10.130.0. Redundancy: N+1 with Node 09."},
+        {"doc_id": "doc_08_3", "content": "Wi-Fi performance: Node 08 reports high channel utilization. Action: Adjust AP transmit power, optimize channel plan, disable lower data rates."},
+    ],
+    "node_09": [
+        {"doc_id": "doc_09_1", "content": "Node 09 is a load balancer. Issues: server down, health check failures. Healing: verify backend server status, check health monitor configuration, review load balancing algorithm."},
+        {"doc_id": "doc_09_2", "content": "Node 09 provides high availability for web servers. Persistence: Source IP. Algorithms: Least Connections."},
+        {"doc_id": "doc_09_3", "content": "Application slow: Node 09 reports high response times. Cause: one backend server overloaded. Removed server from pool, investigated issue."},
+    ],
+    "node_10": [
+        {"doc_id": "doc_10_1", "content": "Node 10 is a DNS server. Issues: name resolution failures, slow responses. Healing: check DNS service status, verify zone files, clear DNS cache."},
+        {"doc_id": "doc_10_2", "content": "Node 10 is primary internal DNS. Forwarders: public DNS servers. Replication with Node 11."},
+        {"doc_id": "doc_10_3", "content": "Service outage: Node 10 stopped responding. Cause: Disk full. Cleared logs, expanded disk space."},
+    ],
+    "node_11": [
+        {"doc_id": "doc_11_1", "content": "Node 11 is a DHCP server. Issues: IP address exhaustion, client lease failures. Healing: check DHCP pool usage, expand pool, verify helper addresses."},
+        {"doc_id": "doc_11_2", "content": "Node 11 serves the main corporate LAN. Lease duration: 8 hours. Reservations for critical servers."},
+        {"doc_id": "doc_11_3", "content": "Client reports: Node 11 not assigning IPs. Cause: incorrect helper address on switch. Corrected configuration."},
+    ],
+    "node_12": [
+        {"doc_id": "doc_12_1", "content": "Node 12 is a VPN concentrator. Issues: user authentication failures, tunnel instability. Healing: check user credentials, verify pre-shared key, review tunnel logs."},
+        {"doc_id": "doc_12_2", "content": "Node 12 supports remote access VPN. Max concurrent users: 500. Client software: AnyConnect."},
+        {"doc_id": "doc_12_3", "content": "Remote access issue: Node 12 showing high CPU. Cause: DDoS attack targeting VPN. Applied rate limiting, geo-blocking."},
+    ],
+    "node_13": [
+        {"doc_id": "doc_13_1", "content": "Node 13 is an IDS/IPS appliance. Issues: false positives, dropped legitimate traffic. Healing: fine-tune signatures, review bypass rules, update threat intelligence."},
+        {"doc_id": "doc_13_2", "content": "Node 13 monitors core traffic segment. Deployment mode: inline. Signature updates: daily."},
+        {"doc_id": "doc_13_3", "content": "Security event: Node 13 alerted on SQL injection. Blocked traffic. Confirmed application vulnerability patched."},
+    ],
+    "node_14": [
+        {"doc_id": "doc_14_1", "content": "Node 14 is a logging server (Syslog/SIEM). Issues: log ingestion failures, disk full. Healing: check log forwarders, prune old logs, expand storage."},
+        {"doc_id": "doc_14_2", "content": "Node 14 collects logs from all network devices. Retention policy: 90 days. Backups: daily to NAS."},
+        {"doc_id": "doc_14_3", "content": "Log gap: Node 14 not receiving logs from Node 20. Cause: incorrect logging configuration on Node 20. Corrected source IP."},
+    ],
+    "node_15": [
+        {"doc_id": "doc_15_1", "content": "Node 15 is a proxy server. Issues: slow Browse, content filtering bypass. Healing: check proxy service status, review caching policy, update content categories."},
+        {"doc_id": "doc_15_2", "content": "Node 15 handles all outbound HTTP/HTTPS traffic. Authentication: Active Directory. Bypass list for critical applications."},
+        {"doc_id": "doc_15_3", "content": "User reports: Node 15 is slow. Cause: high resource utilization due to large downloads. Implemented bandwidth limits, configured QoS."},
+    ],
+    "node_16": [
+        {"doc_id": "doc_16_1", "content": "Node 16 is a VoIP gateway. Issues: one-way audio, call drops. Healing: check SIP trunk status, verify codec negotiation, review QoS markings."},
+        {"doc_id": "doc_16_2", "content": "Node 16 connects internal VoIP to PSTN. Supported codecs: G.711, G.729. Max concurrent calls: 200."},
+        {"doc_id": "doc_16_3", "content": "Call quality: Node 16 users report choppy audio. Cause: network congestion on WAN link. Prioritized voice traffic with QoS."},
+    ],
+    "node_17": [
+        {"doc_id": "doc_17_1", "content": "Node 17 is a network management system (NMS). Issues: device unreachable, incorrect alerts. Healing: check SNMP/NetFlow configuration, verify device credentials, review alert thresholds."},
+        {"doc_id": "doc_17_2", "content": "Node 17 monitors 1000 devices. Polling interval: 5 minutes. Integration with ticketing system."},
+        {"doc_id": "doc_17_3", "content": "NMS alert storm: Node 17 generated excessive alerts due to flapping link. Suppressed alerts, investigated link stability."},
+    ],
+    "node_18": [
+        {"doc_id": "doc_18_1", "content": "Node 18 is a core application server. Issues: application unresponsive, database errors. Healing: restart application service, check database connectivity, review application logs."},
+        {"doc_id": "doc_18_2", "content": "Node 18 hosts critical ERP application. OS: Windows Server 2019. Database: SQL Server."},
+        {"doc_id": "doc_18_3", "content": "Application crash: Node 18 ERP crashed. Cause: out of memory. Increased RAM, optimized application config."},
+    ],
+    "node_19": [
+        {"doc_id": "doc_19_1", "content": "Node 19 is a backup server. Issues: backup failures, storage full. Healing: check backup job status, clear old backups, expand storage capacity."},
+        {"doc_id": "doc_19_2", "content": "Node 19 backs up all core servers nightly. Backup software: Veeam. Offsite replication to DR site."},
+        {"doc_id": "doc_19_3", "content": "Backup failed: Node 19 backup job failed for Node 02. Cause: firewall blocking communication. Opened necessary ports."},
+    ],
+    # Adding knowledge base entries for nodes 20-49 to cover the access layer
+    "node_20": [
+        {"doc_id": "doc_20_1", "content": "Node 20 is an access switch in building A, floor 1. Issues: port down, slow client access. Healing: check cable, power cycle device, verify VLAN."},
+    ],
+    "node_21": [
+        {"doc_id": "doc_21_1", "content": "Node 21 is an access switch in building A, floor 2. Common issues: PoE failure for IP cameras. Healing: verify PoE budget, reset port."},
+    ],
+    "node_22": [
+        {"doc_id": "doc_22_1", "content": "Node 22 is an access switch in building B, floor 1. Issues: broadcast storm, loop detection. Healing: enable loop guard, check STP on uplink."},
+    ],
+    "node_23": [
+        {"doc_id": "doc_23_1", "content": "Node 23 is an access point in building B, floor 2. Issues: low signal, client disconnects. Healing: check AP placement, adjust power, check channel interference."},
+    ],
+    "node_24": [
+        {"doc_id": "doc_24_1", "content": "Node 24 is an access switch in datacenter row 1. Critical for server rack connectivity. Healing: check link status, replace SFP."},
+    ],
+    "node_25": [
+        {"doc_id": "doc_25_1", "content": "Node 25 is an access switch in datacenter row 2. Issues: high temperature alerts, fan failure. Healing: check cooling, replace fan module."},
+    ],
+    "node_26": [
+        {"doc_id": "doc_26_1", "content": "Node 26 is an IoT gateway in manufacturing plant. Issues: device connectivity, sensor data loss. Healing: check gateway status, review network segment."},
+    ],
+    "node_27": [
+        {"doc_id": "doc_27_1", "content": "Node 27 is a surveillance camera NVR. Issues: video feed loss, storage full. Healing: check camera connection, clear old recordings."},
+    ],
+    "node_28": [
+        {"doc_id": "doc_28_1", "content": "Node 28 is an access switch in the cafeteria. Issues: Wi-Fi slow, high client count. Healing: check AP load, adjust bandwidth limits."},
+    ],
+    "node_29": [
+        {"doc_id": "doc_29_1", "content": "Node 29 is an access switch in the main lobby. Issues: guest network access, captive portal. Healing: verify portal service, check VLAN."},
+    ],
+    "node_30": [
+        {"doc_id": "doc_30_1", "content": "Node 30 is an access switch serving remote office 1. Issues: WAN latency, VPN drops. Healing: check WAN link, optimize VPN tunnel."},
+    ],
+    "node_31": [
+        {"doc_id": "doc_31_1", "content": "Node 31 is an access switch serving remote office 2. Issues: VoIP quality, RTP packet loss. Healing: check QoS configuration, prioritize voice."},
+    ],
+    "node_32": [
+        {"doc_id": "doc_32_1", "content": "Node 32 is an access switch in the executive floor. High priority for critical services. Healing: verify uplink, check dedicated VLANs."},
+    ],
+    "node_33": [
+        {"doc_id": "doc_33_1", "content": "Node 33 is an access point in auditorium. Issues: poor coverage, many clients. Healing: add more APs, adjust power, optimize channel."},
+    ],
+    "node_34": [
+        {"doc_id": "doc_34_1", "content": "Node 34 is an access switch in IT department. Issues: SSH/RDP connectivity, management VLAN. Healing: check ACLs, verify management interface."},
+    ],
+    "node_35": [
+        {"doc_id": "doc_35_1", "content": "Node 35 is an access switch in training room. Issues: projector connectivity, multicast. Healing: check IGMP snooping, verify AV setup."},
+    ],
+    "node_36": [
+        {"doc_id": "doc_36_1", "content": "Node 36 is an access switch in laboratory. Issues: specific device communication, industrial protocols. Healing: check protocol forwarding, verify firewall rules."},
+    ],
+    "node_37": [
+        {"doc_id": "doc_37_1", "content": "Node 37 is an access switch in warehouse. Issues: scanner connectivity, barcode readers. Healing: check wireless signal, verify network access."},
+    ],
+    "node_38": [
+        {"doc_id": "doc_38_1", "content": "Node 38 is an access point in outdoor area. Issues: environmental factors, weather damage. Healing: check physical integrity, verify enclosure."},
+    ],
+    "node_39": [
+        {"doc_id": "doc_39_1", "content": "Node 39 is an access switch in retail store 1. Issues: POS system connectivity, credit card processing. Healing: check PCI compliance, verify secure network."},
+    ],
+    "node_40": [
+        {"doc_id": "doc_40_1", "content": "Node 40 is an access switch in retail store 2. Issues: inventory system access, slow database. Healing: check local server connection, network performance."},
+    ],
+    "node_41": [
+        {"doc_id": "doc_41_1", "content": "Node 41 is an access switch in the data analysis center. High bandwidth requirements. Healing: check link aggregation, monitor traffic."},
+    ],
+    "node_42": [
+        {"doc_id": "doc_42_1", "content": "Node 42 is an access switch in the design studio. Issues: large file transfers, network drive access. Healing: optimize SMB settings, check storage connectivity."},
+    ],
+    "node_43": [
+        {"doc_id": "doc_43_1", "content": "Node 43 is an access switch in the security operations center. Issues: SIEM data feed, security tool access. Healing: ensure high priority, verify dedicated links."},
+    ],
+    "node_44": [
+        {"doc_id": "doc_44_1", "content": "Node 44 is an access point in the recreation area. Issues: public Wi-Fi access, bandwidth hogging. Healing: implement fair usage policy, prioritize business traffic."},
+    ],
+    "node_45": [
+        {"doc_id": "doc_45_1", "content": "Node 45 is an access switch in the cafeteria kitchen. Issues: specific appliance connectivity, network isolation. Healing: verify VLAN segmentation, check power source."},
+    ],
+    "node_46": [
+        {"doc_id": "doc_46_1", "content": "Node 46 is an access switch in the building management system room. Issues: HVAC control, sensor data. Healing: check Modbus/BACnet integration, network reliability."},
+    ],
+    "node_47": [
+        {"doc_id": "doc_47_1", "content": "Node 47 is an access switch in the employee lounge. Issues: streaming services, personal devices. Healing: implement guest policies, manage bandwidth."},
+    ],
+    "node_48": [
+        {"doc_id": "doc_48_1", "content": "Node 48 is an access switch in the shipping/receiving area. Issues: printer connectivity, barcode scanners. Healing: verify printer network settings, check local LAN."},
+    ],
+    "node_49": [
+        {"doc_id": "doc_49_1", "content": "Node 49 is an access switch in the server testing lab. Issues: isolated network, test environment access. Healing: check VLAN segregation, review test network configuration."},
+    ]
 }
 
-# Populate for all 50 nodes for demonstration if not explicitly defined
-for i in range(50): # Iterate from 0 to 49
-    node_id_formatted = f"node_{i:02d}" # Format as node_00, node_01, etc.
-    if node_id_formatted not in NODE_KNOWLEDGE_BASE:
-        NODE_KNOWLEDGE_BASE[node_id_formatted] = [
-            {"doc_id": f"doc_{i}_1", "content": f"Node {node_id_formatted} is a general purpose network device. Standard healing procedures apply. High CPU usually indicates misconfiguration or excessive traffic. Check process list."},
-            {"doc_id": f"doc_{i}_2", "content": f"Node {node_id_formatted} operates in a data center environment. Temperature control is critical. Power fluctuations should be immediately investigated. Verify redundant power supplies."},
-            {"doc_id": f"doc_{i}_3", "content": f"Node {node_id_formatted} has a standard software stack. If memory usage is high, consider restarting non-critical services first."},
-        ]
 
-# --- Retrieval-Augmented Generation (RAG) Component ---
-# This class handles retrieving relevant documents from the knowledge base.
-class RetrievalAugmentedGenerator:
+# Function to load knowledge base from a JSON file (or database in a real scenario)
+def load_knowledge_base_from_file(file_path: str) -> dict:
     """
-    Manages the knowledge base and performs semantic search to retrieve relevant documents.
-    Uses TF-IDF vectorization and cosine similarity for document retrieval.
+    Loads the knowledge base from a specified JSON file.
+    Includes error handling for file operations.
     """
-    def __init__(self, knowledge_base):
-        """
-        Initializes the RAG component with a given knowledge base.
+    try:
+        if not os.path.exists(file_path):
+            logger.error(f"Knowledge base file not found: {file_path}")
+            return {}
+        with open(file_path, 'r') as f:
+            kb = json.load(f)
+            logger.info(f"Knowledge base loaded successfully from {file_path}")
+            return kb
+    except json.JSONDecodeError as e:
+        logger.error(f"Error decoding JSON from knowledge base file {file_path}: {e}")
+        return {}
+    except Exception as e:
+        logger.error(f"An unexpected error occurred while loading knowledge base from {file_path}: {e}")
+        return {}
 
-        Args:
-            knowledge_base (dict): A dictionary where keys are node IDs and values are lists
-                                   of dictionaries, each containing 'doc_id' and 'content' for documents.
-        """
-        self.knowledge_base = knowledge_base
-        self.vectorizers = {} # Stores TfidfVectorizer instance per node
-        self.doc_contents = {} # Stores list of document content strings per node
 
-        self._prepare_knowledge_base()
-
-    def _prepare_knowledge_base(self):
-        """
-        Pre-processes the knowledge base for efficient retrieval.
-        It fits a TfidfVectorizer for each node's documents.
-        """
-        logger.info("RAG: Preparing knowledge base...")
-        # Ensure a 'default' entry exists for nodes without specific KB
-        if "default" not in self.knowledge_base:
-            self.knowledge_base["default"] = [
-                {"doc_id": "doc_default_1", "content": "General network troubleshooting: Check connectivity, power, and basic services. Consult logs for errors."},
-                {"doc_id": "doc_default_2", "content": "If no specific node information, assume standard operating procedures for network devices."},
-            ]
-
-        for node_id, docs in self.knowledge_base.items():
-            contents = [doc["content"] for doc in docs]
-            if contents:
-                vectorizer = TfidfVectorizer().fit(contents)
-                self.vectorizers[node_id] = vectorizer
-                self.doc_contents[node_id] = contents
-            else:
-                self.vectorizers[node_id] = None
-                self.doc_contents[node_id] = []
-        logger.info("RAG: Knowledge base preparation complete.")
-
-    def retrieve_context(self, node_id, query, top_k=3):
-        """
-        Retrieves relevant context documents from the knowledge base for a given node and query.
-        Uses cosine similarity on TF-IDF vectors for retrieval.
-
-        Args:
-            node_id (str): The ID of the node for which to retrieve context.
-            query (str): The query string (e.g., anomaly description) to search for.
-            top_k (int): The number of top similar documents to retrieve.
-
-        Returns:
-            list: A list of strings, where each string is the content of a retrieved document.
-        """
-        # Fallback to a 'default' node if the specific node_id is not in the knowledge base
-        actual_node_id = node_id
-        if node_id not in self.vectorizers or not self.vectorizers[node_id]:
-            actual_node_id = "default"
-            logger.warning(f"RAG: No specific knowledge base found or prepared for node {node_id}. Using default context.")
-
-        vectorizer = self.vectorizers.get(actual_node_id)
-        docs = self.doc_contents.get(actual_node_id, [])
-
-        if not vectorizer or not docs:
-            logger.warning(f"RAG: No context available for node {actual_node_id}. Returning empty context.")
-            return []
-
-        # Transform the query and documents into TF-IDF vectors
-        query_vec = vectorizer.transform([query])
-        doc_vecs = vectorizer.transform(docs)
-
-        # Calculate cosine similarity between query and all documents
-        similarities = cosine_similarity(query_vec, doc_vecs).flatten()
-        sorted_indices = similarities.argsort()[::-1] # Sort in descending order of similarity
-
-        retrieved_docs = []
-        for idx in sorted_indices[:top_k]:
-            # Only include documents with a similarity score above a certain threshold
-            if similarities[idx] > 0.1: # Threshold to filter less relevant documents
-                retrieved_docs.append(docs[idx])
-        return retrieved_docs
-
-# --- Healing Agent Class ---
-# This agent receives anomaly alerts, uses RAG to find context, and generates recommendations using an LLM.
 class HealingAgent:
-    """
-    The Healing Agent receives anomaly alerts from the Calculation Agent,
-    retrieves contextual information using RAG, generates detailed healing recommendations
-    using an LLM (Gemini API), and pushes these recommendations to the Master Control Plane (MCP).
-    """
-    # Added context parameter for shared ZeroMQ context
-    def __init__(self, context: zmq.Context, sub_socket_address_a2a: str, push_socket_address_mcp: str):
-        """
-        Initializes the Healing Agent.
-
-        Args:
-            context (zmq.Context): The shared ZeroMQ context.
-            sub_socket_address_a2a (str): ZeroMQ address to subscribe to Calculation Agent's PUB socket.
-            push_socket_address_mcp (str): ZeroMQ address to push healing recommendations to MCP's PULL socket.
-        """
-        self.sub_socket_address_a2a = sub_socket_address_a2a
-        self.push_socket_address_mcp = push_socket_address_mcp
-
-        self.context = context # Use the passed context
-        
-        # A2A communication: SUB socket to receive anomaly alerts from Calculation Agent (PUB)
+    def __init__(self, context: zmq.asyncio.Context, sub_socket_address_a2a: str, push_socket_address_mcp: str):
+        logger.info("Healing Agent: Initializing...")
+        self.context = context
         self.a2a_subscriber_socket = self.context.socket(zmq.SUB)
-        self.a2a_subscriber_socket.connect(self.sub_socket_address_a2a)
-        self.a2a_subscriber_socket.setsockopt_string(zmq.SUBSCRIBE, "") # Subscribe to all messages
-        logger.info(f"Healing Agent: A2A Subscriber connected to {self.sub_socket_address_a2a}")
+        self.a2a_subscriber_socket.connect(sub_socket_address_a2a)
+        self.a2a_subscriber_socket.setsockopt_string(zmq.SUBSCRIBE, "")  # Subscribe to all messages
 
-        # MCP communication: PUSH socket to send healing recommendations to MCP (PULL)
         self.mcp_push_socket = self.context.socket(zmq.PUSH)
-        # *** CRITICAL FIX: Healing Agent PUSHes to MCP Agent, so it BINDS ***
-        self.mcp_push_socket.bind(self.push_socket_address_mcp) 
-        logger.info(f"Healing Agent: MCP PUSH bound to {self.push_socket_address_mcp}")
+        self.mcp_push_socket.connect(push_socket_address_mcp)
 
-        self.rag = RetrievalAugmentedGenerator(NODE_KNOWLEDGE_BASE)
+        # Initialize LLM and RAG components
+        # Original RAG components (TF-IDF based)
+        self.vectorizer = TfidfVectorizer()
+        self.node_corpus = {node_id: [doc["content"] for doc in docs] for node_id, docs in NODE_KNOWLEDGE_BASE.items()}
+        self.node_tfidf_matrices = {} # Will store TF-IDF matrix for each node's KB
 
-    async def generate_recommendations_with_llm(self, anomaly_context, retrieved_docs):
+        # Advanced RAG components (Sentence-Transformers + FAISS)
+        self.rag_model = SentenceTransformer('all-MiniLM-L6-v2') # Smaller, faster model for embeddings
+        self.rag_index = {} # FAISS index per node
+        self.rag_documents = {} # Original documents per node
+
+        # Ensure that GOOGLE_API_KEY is retrieved after load_dotenv()
+        self.google_api_key = os.getenv("GOOGLE_API_KEY")
+        if not self.google_api_key:
+            raise ValueError("GOOGLE_API_KEY environment variable not set. Cannot initialize LLM.")
+        genai.configure(api_key=self.google_api_key)
+        self.llm = genai.GenerativeModel('gemini-pro')
+        self.last_rag_update = time.time()
+        self.rag_update_interval = 300 # Update every 5 minutes for dynamic KB
+
+        logger.info("Healing Agent: Initialized.")
+
+    async def _prepare_rag_knowledge_base(self):
         """
-        Generates healing recommendations using a simulated Gemini API (gemini-2.0-flash),
-        conditioned on the anomaly context and retrieved knowledge base documents.
-
-        Args:
-            anomaly_context (str): A JSON string detailing the anomaly report.
-            retrieved_docs (list): A list of strings, each being a relevant document from the KB.
-
-        Returns:
-            str: The LLM-generated detailed recommendations.
+        Dynamically loads and prepares the RAG knowledge base, including FAISS indexing.
+        This function should be called periodically or upon KB updates.
         """
-        prompt = self.build_prompt(anomaly_context, retrieved_docs)
-        
-        # --- Python-compatible placeholder for LLM call ---
-        # This simulates the LLM's response without requiring an actual API key or network call.
-        logger.info("Healing Agent: Simulating LLM call to Gemini API...")
-        await asyncio.sleep(1) # Simulate API latency
+        logger.info("RAG: Preparing Advanced knowledge base...")
 
+        # For this simulation, we'll use the fixed NODE_KNOWLEDGE_BASE directly for simplicity.
+        # In a real system, this would be updated from a source.
+
+        for node_id, docs in NODE_KNOWLEDGE_BASE.items():
+            if not docs:
+                logger.warning(f"No documents found for node {node_id} in knowledge base. Skipping RAG preparation for this node.")
+                continue
+
+            # Store original documents
+            self.rag_documents[node_id] = docs
+            corpus = [doc["content"] for doc in docs]
+
+            if not corpus:
+                logger.warning(f"Corpus is empty for node {node_id}. Skipping FAISS index creation.")
+                continue
+
+            # Generate embeddings
+            corpus_embeddings = self.rag_model.encode(corpus)
+            dimension = corpus_embeddings.shape[1]
+
+            # Create FAISS index
+            index = faiss.IndexFlatL2(dimension)
+            index.add(np.array(corpus_embeddings).astype('float32'))
+            self.rag_index[node_id] = index
+            logger.info(f"RAG: Prepared FAISS index for '{node_id}' with {len(docs)} documents.")
+        logger.info("RAG: Advanced knowledge base preparation complete.")
+        self.last_rag_update = time.time()
+
+
+    @retry(wait=wait_exponential(multiplier=1, min=4, max=10), stop=stop_after_attempt(3),
+           retry=retry_if_exception_type(google.api_core.exceptions.ResourceExhausted))
+    async def _call_llm(self, prompt: str) -> str:
+        """
+        Calls the LLM with a given prompt, including retry logic for specific errors.
+        """
         try:
-            # Parse anomaly_context safely
-            anomaly_dict = json.loads(anomaly_context)
-            node_id = anomaly_dict.get('node_id', 'N/A')
-            severity_classification = anomaly_dict.get('severity_classification', 'issue')
-            root_cause_indicators = anomaly_dict.get('root_cause_indicators', [])
-            
-            # Format root causes for the diagnosis
-            root_causes_text = ', '.join([rc.get('feature', 'unknown') for rc in root_cause_indicators]) if root_cause_indicators else 'unknown factors'
-
-            mock_diagnosis = f"Diagnosis for {node_id}: Possible {severity_classification} due to {root_causes_text}."
-            mock_recommendations_list = [
-                "Verify power supply and network cables.",
-                "Check device logs for specific error codes.",
-                "Consider a controlled restart of the affected service/device during off-peak hours.",
-            ]
-            mock_important_note = "Ensure all configurations are backed up before making changes."
-
-            # Construct the mock LLM response similar to what a real LLM might return
-            mock_llm_response_text = f"""
-Diagnosis for {node_id}: Possible {severity_classification} due to {root_causes_text}.
-
-Recommendations:
-1. Verify power supply and network cables.
-2. Check device logs for specific error codes.
-3. Consider a controlled restart of the affected service/device during off-peak hours.
-{f'4. Specific RAG Context: {"; ".join(retrieved_docs)}' if retrieved_docs else ''}
-
-Important: {mock_important_note}
-"""
-            # Simulate the structure of a Gemini API response
-            mock_llm_response = {
-                "candidates": [{
-                    "content": {
-                        "parts": [{
-                            "text": mock_llm_response_text
-                        }]
-                    }
-                }]
-            }
-
-            result = mock_llm_response
-
-            if result and result.get("candidates") and len(result["candidates"]) > 0 and \
-               result["candidates"][0].get("content") and result["candidates"][0]["content"].get("parts") and \
-               len(result["candidates"][0]["content"]["parts"]) > 0:
-                text = result["candidates"][0]["content"]["parts"][0]["text"]
-                return text
-            else:
-                logger.error(f"Healing Agent: LLM response structure unexpected: {result}")
-                return "Failed to generate recommendations from LLM. Response structure unexpected."
-        except json.JSONDecodeError:
-            logger.error(f"Healing Agent: Could not decode anomaly_context as JSON: {anomaly_context}")
-            return "Failed to generate recommendations: Anomaly context was malformed."
+            response = await self.llm.generate_content_async(prompt)
+            if response and response.candidates:
+                if response.candidates[0].content and response.candidates[0].content.parts:
+                    generated_text = "".join([part.text for part in response.candidates[0].content.parts])
+                    return generated_text
+            logger.warning("LLM response did not contain usable text content.")
+            return "No specific healing action recommended by LLM."
+        except google.api_core.exceptions.ResourceExhausted as e:
+            logger.error(f"LLM call failed due to resource exhaustion: {e}. Retrying...")
+            raise # Re-raise to trigger tenacity retry
+        except google.api_core.exceptions.GoogleAPIError as e:
+            logger.error(f"Google API error during LLM call: {e}. Attempting to retry if configured.")
+            raise # Re-raise to trigger tenacity retry for generic API errors
         except Exception as e:
-            logger.error(f"Healing Agent: Error during simulated Gemini API call: {e}")
-            return f"Failed to generate recommendations from LLM due to simulated API error: {e}"
+            logger.error(f"An unexpected error occurred during LLM call: {e}")
+            return "Error calling LLM for healing action."
 
-    def build_prompt(self, anomaly_context, docs):
+
+    async def _retrieve_rag_context(self, node_id: str, query: str, top_k: int = 2) -> str:
         """
-        Constructs the prompt for the LLM, combining anomaly context and retrieved documents.
-
-        Args:
-            anomaly_context (str): A JSON string of the anomaly data.
-            docs (list): List of retrieved knowledge base document contents.
-
-        Returns:
-            str: The formatted prompt string for the LLM.
+        Retrieves relevant context from the RAG knowledge base for a given node and query.
         """
-        docs_text = "\n---\n".join(docs) if docs else "No relevant knowledge base documents found."
-        prompt = f"""
-You are an intelligent network healing assistant. Your task is to analyze anomaly reports and provide detailed, step-by-step healing recommendations.
+        if node_id not in self.rag_index or not self.rag_documents.get(node_id):
+            logger.warning(f"RAG: No knowledge base or index found for node {node_id}. Cannot retrieve context.")
+            return ""
 
-Anomaly Report Details:
-{anomaly_context}
+        query_embedding = self.rag_model.encode([query])
+        # Ensure query_embedding is float32 for FAISS
+        D, I = self.rag_index[node_id].search(np.array(query_embedding).astype('float32'), top_k)
 
-Relevant Knowledge Base Documents:
-{docs_text}
+        context = []
+        for i in range(len(I[0])):
+            doc_index = I[0][i]
+            if doc_index < len(self.rag_documents[node_id]):
+                context.append(self.rag_documents[node_id][doc_index]["content"])
+        logger.info(f"RAG: Retrieved {len(context)} documents for node {node_id} query: '{query[:50]}...'")
+        return "\n".join(context)
 
-Based on the anomaly report and the provided knowledge, please provide:
-1. A brief diagnosis of the potential issue.
-2. Step-by-step, actionable healing recommendations.
-3. Any important considerations or warnings.
-"""
-        return prompt
 
-    async def process_anomaly_alert(self, alert_message):
+    async def _determine_healing_action(self, node_id: str, anomaly_description: str) -> str:
         """
-        Processes an incoming anomaly alert from the Calculation Agent.
-        It retrieves context, generates recommendations, and pushes to MCP.
-
-        Args:
-            alert_message (dict): The anomaly alert message received from Calculation Agent.
+        Determines the appropriate healing action using RAG and LLM.
         """
-        node_id = alert_message.get("node_id", "N/A")
-        # Ensure 'anomaly_data' key is used as per Calculation Agent's alert structure
-        anomaly_data = alert_message.get("details", {}) # Changed from "anomaly_data" to "details"
-        severity = anomaly_data.get("severity_classification", "N/A")
-        root_causes = anomaly_data.get("root_cause_indicators", [])
-        affected_components = anomaly_data.get("affected_components", [])
+        logger.info(f"Healing Agent: Determining action for Node {node_id} - Anomaly: {anomaly_description}")
 
-        logger.info(f"\nHealing Agent: Received A2A alert for Node {node_id}: Severity {severity}")
-        logger.info(f"  Root Causes: {root_causes}")
-        logger.info(f"  Affected Components: {affected_components}")
+        # Ensure RAG knowledge base is prepared (and potentially updated)
+        if not self.rag_index or (time.time() - self.last_rag_update) > self.rag_update_interval:
+            await self._prepare_rag_knowledge_base()
 
-        # Construct a query for RAG based on anomaly data
-        # Ensure root_causes are correctly extracted for the query if they are dicts
-        root_cause_features = [rc.get('feature', '') for rc in root_causes if isinstance(rc, dict)]
-        rag_query = f"Anomaly on {node_id}. Severity: {severity}. Affected: {', '.join(affected_components)}. Root causes: {', '.join(root_cause_features) if root_cause_features else 'N/A'}. Provide healing steps."
+        # Retrieve relevant context using RAG
+        context = await self._retrieve_rag_context(node_id, anomaly_description)
 
+        if context:
+            prompt = (f"Based on the following knowledge about node {node_id} and the anomaly description:\n\n"
+                      f"Node Knowledge: {context}\n\n"
+                      f"Anomaly Description for Node {node_id}: {anomaly_description}\n\n"
+                      f"Recommend a concise, specific healing action. If no specific action is clear, suggest 'Investigate further'.")
+        else:
+            prompt = (f"Anomaly Description for Node {node_id}: {anomaly_description}\n\n"
+                      f"Based on general network knowledge, recommend a concise, specific healing action for node {node_id}. If no specific action is clear, suggest 'Investigate further'.")
 
-        # Retrieve contextual information from the knowledge base using RAG
-        contextual_info = self.rag.retrieve_context(node_id, rag_query)
-        logger.info(f"  Retrieved RAG Context: {contextual_info}")
+        llm_response = await self._call_llm(prompt)
+        logger.info(f"LLM: Generated healing action for Node {node_id}: {llm_response[:100]}...") # Log first 100 chars
+        return llm_response
 
-        # Prepare anomaly context string for the LLM prompt
-        anomaly_context_str = json.dumps(anomaly_data, indent=2)
-
-        # Generate healing recommendations using the LLM (Gemini API)
-        generated_llm_recommendations = await self.generate_recommendations_with_llm(
-            anomaly_context_str, contextual_info
-        )
-        logger.info(f"  LLM Generated Recommendations:\n{generated_llm_recommendations}")
-
-        # Split the LLM response into diagnosis, recommendations, and important note for structured output
-        diagnosis = "No diagnosis generated."
-        recommendations_list = []
-        important_note = "No important note provided."
-
-        # Simple parsing based on the mock LLM output format
-        lines = generated_llm_recommendations.split('\n')
-        rec_start = False
-        for line in lines:
-            line = line.strip()
-            if line.startswith("Diagnosis for"):
-                diagnosis = line
-            elif line.startswith("Recommendations:"):
-                rec_start = True
-            elif line.startswith("Important:"):
-                important_note = line.replace("Important: ", "").strip()
-                rec_start = False # Stop adding to recommendations
-            elif rec_start and line and not line.startswith("---"): # Avoid adding markdown separator to recommendations
-                # Remove numbering, but only if the line starts with a digit followed by a dot and space
-                if line and len(line) > 2 and line[0].isdigit() and line[1] == '.' and line[2] == ' ':
-                    recommendations_list.append(line.split('. ', 1)[1])
-                else:
-                    recommendations_list.append(line)
-
-        # Ensure recommendations_list is not empty if the parsing fails to find anything
-        if not recommendations_list:
-            recommendations_list.append("No specific actions extracted from LLM output. Manual investigation required.")
-        
-        # Prepare the final healing recommendation message to be sent to MCP
-        final_recommendation_message = {
-            "node_id": node_id,
-            "timestamp": alert_message.get("timestamp", time.time()),
-            "severity": severity,
-            "affected_components": affected_components,
-            "root_cause_indicators": root_causes,
-            "time_to_failure": anomaly_data.get("time_to_failure", "N/A"),
-            "diagnosis": diagnosis,
-            "recommended_actions": recommendations_list,
-            "important_note": important_note,
-            "raw_llm_output": generated_llm_recommendations # Include raw output for debugging/completeness
-        }
-
-        logger.info(f"Healing Agent: Final Healing Recommendation for MCP: {json.dumps(final_recommendation_message, indent=2)}")
-
-        # MCP Communication: Push the healing recommendation to MCP
-        mcp_message = {
-            "source": "HealingAgent",
-            "type": "healing_recommendation",
-            "payload": final_recommendation_message
-        }
-        # ZeroMQ PUSH socket sends strings, so dump JSON to string
-        await self.mcp_push_socket.send_string(json.dumps(mcp_message))
-        logger.info(f"Healing Agent: Pushed healing recommendation for Node {node_id} to MCP.")
 
     async def start(self):
-        """
-        Starts the Healing Agent, continuously listening for anomaly alerts
-        from the Calculation Agent.
-        """
-        logger.info("Healing Agent started. Waiting for anomaly alerts from Calculation Agent...")
+        logger.info("Healing Agent: Starting...")
+        await self._prepare_rag_knowledge_base() # Initial preparation
+
         while True:
             try:
-                # Listen for messages from Calculation Agent via A2A subscriber socket
-                # ZeroMQ PUB/SUB sends strings, so recv_string
-                alert_message_str = await self.a2a_subscriber_socket.recv_string()
-                alert_message = json.loads(alert_message_str) # Parse the JSON string
-                
-                if alert_message.get("type") == "anomaly_alert":
-                    asyncio.create_task(self.process_anomaly_alert(alert_message))
+                # Polling for messages from the A2A (Anomaly to Action) channel
+                message = await self.a2a_subscriber_socket.recv_string()
+                timestamp = time.time() # Capture reception time
+
+                # Assume message is a JSON string with 'node_id' and 'anomaly_description'
+                anomaly_data = json.loads(message)
+                node_id = anomaly_data.get("node_id")
+                anomaly_description = anomaly_data.get("anomaly_description")
+
+                if node_id and anomaly_description:
+                    logger.info(f"Healing Agent: Received anomaly for Node {node_id}: {anomaly_description}")
+                    healing_action = await self._determine_healing_action(node_id, anomaly_description)
+
+                    # Prepare message for MCP Agent
+                    mcp_message = {
+                        "timestamp": timestamp,
+                        "source_agent": "HealingAgent",
+                        "target_agent": "MCPAgent",
+                        "node_id": node_id,
+                        "action": healing_action,
+                        "anomaly_description": anomaly_description # Include original anomaly for context
+                    }
+                    mcp_message_str = json.dumps(mcp_message)
+                    await self.mcp_push_socket.send_string(mcp_message_str)
+                    logger.info(f"Healing Agent: Sent action to MCP Agent for Node {node_id}: {healing_action[:50]}...")
                 else:
-                    logger.info(f"Healing Agent: Received unknown message type: {alert_message.get('type')}")
-            except zmq.error.ZMQError as e:
-                logger.error(f"Healing Agent: ZMQ Error: {e}. Retrying in 1 second...")
-                await asyncio.sleep(1) # Wait before retrying on ZMQ error
+                    logger.warning(f"Healing Agent: Received malformed anomaly message: {message}")
+
+                # Periodically update RAG knowledge base
+                if (time.time() - self.last_rag_update) > self.rag_update_interval:
+                    await self._prepare_rag_knowledge_base()
+
+                await asyncio.sleep(0.1) # Small delay to prevent busy-looping
+            except zmq.error.Again:
+                # No message received, continue loop after a small delay
+                await asyncio.sleep(0.1)
             except json.JSONDecodeError as e:
-                logger.error(f"Healing Agent: JSON Decode Error: {e}. Message: {alert_message_str}")
-                await asyncio.sleep(1)
+                logger.error(f"Healing Agent: Error decoding JSON message: {e}. Message: {message[:100]}...")
+                await asyncio.sleep(1) # Wait before retrying on bad message
             except Exception as e:
-                logger.error(f"Healing Agent: Unexpected error: {e}. Retrying in 1 second...")
+                logger.error(f"Healing Agent: Unexpected error during message processing: {e}. Retrying in 1 second...")
                 await asyncio.sleep(1) # Wait before retrying on general error
+
 
 # --- Main function to run the Healing Agent (for standalone testing) ---
 if __name__ == "__main__":
@@ -396,7 +458,7 @@ if __name__ == "__main__":
 
     # Initialize and start the Healing Agent
     # For standalone testing, create a local context
-    local_context = zmq.asyncio.Context() 
+    local_context = zmq.asyncio.Context()
     healing_agent = HealingAgent(
         context=local_context, # Pass local context for standalone
         sub_socket_address_a2a=test_sub_address_a2a,
@@ -406,11 +468,25 @@ if __name__ == "__main__":
     try:
         asyncio.run(healing_agent.start())
     except KeyboardInterrupt:
-        logger.info("\nHealing Agent standalone test stopped.")
+        logger.info("\nHealing Agent standalone test stopped by user (KeyboardInterrupt).")
+        # Clean up ZeroMQ context and sockets on shutdown
+        if healing_agent.a2a_subscriber_socket:
+            healing_agent.a2a_subscriber_socket.close()
+            logger.info("A2A subscriber socket closed.")
+        if healing_agent.mcp_push_socket:
+            healing_agent.mcp_push_socket.close()
+            logger.info("MCP push socket closed.")
+        if local_context:
+            local_context.term()
+            logger.info("ZeroMQ context terminated.")
         sys.exit(0)
     except Exception as e:
-        logger.exception(f"An error occurred during standalone Healing Agent run: {e}")
-        sys.exit(1)
-    finally:
-        local_context.term() # Terminate context on exit
-
+        logger.exception(f"An unhandled exception occurred during Healing Agent runtime: {e}")
+        # Ensure cleanup even on other exceptions
+        if healing_agent.a2a_subscriber_socket:
+            healing_agent.a2a_subscriber_socket.close()
+        if healing_agent.mcp_push_socket:
+            healing_agent.mcp_push_socket.close()
+        if local_context:
+            local_context.term()
+        sys.exit(1) # Exit with error code
