@@ -49,9 +49,9 @@ struct GradualFaultPattern {
     Time startDegradation;
     Time faultOccurrence;
     Time faultDuration;
-    Time recoveryComplete;
+    //Time recoveryComplete;
     double degradationRate;
-    double recoveryRate;
+    //double recoveryRate;
     double severity;
     bool isActive;
     double currentSeverity;
@@ -238,12 +238,13 @@ SimulationConfig CompleteRuralNetworkSimulation::CreateFaultDemoConfig()
     config.targetDataPoints = 120;
     config.outputPrefix = "fault_demo";
     
+    std::cout << "=========================================" << std::endl;
     std::cout << "=== FAULT DEMONSTRATION CONFIGURATION ===" << std::endl;
     std::cout << "Simulation duration: " << config.totalSimulationTime << "s" << std::endl;
     std::cout << "Baseline period: " << config.baselineDuration << "s" << std::endl;
-    std::cout << "Mode: VISUAL FAULT DEMONSTRATION FOR JUDGES" << std::endl;
+    std::cout << "Mode: AI-NATIVE NETWORK DEMONSTRATION" << std::endl;
     std::cout << "Visual indicators: ENABLED" << std::endl;
-    std::cout << "Packet visibility: ENHANCED" << std::endl;
+    //std::cout << "Packet visibility: ENHANCED" << std::endl;
     std::cout << "=========================================" << std::endl;
     
     return config;
@@ -601,7 +602,7 @@ void CompleteRuralNetworkSimulation::CreateBaselineTraffic()
     for (uint32_t i = 0; i < accessNodes.GetN(); i += 5) {
         uint32_t interfaceIndex = (distributionDevices.GetN() / 2) + i;
         if (interfaceIndex < allInterfaces.size()) {
-            Ipv4Address serverAddr = allInterfaces[interfaceIndex].GetAddress(1);
+            //Ipv4Address serverAddr = allInterfaces[interfaceIndex].GetAddress(1);
             
             UdpEchoServerHelper echoServer(port);
             ApplicationContainer serverApp = echoServer.Install(accessNodes.Get(i));
@@ -686,7 +687,7 @@ void CompleteRuralNetworkSimulation::ScheduleGradualFaultPatterns()
     
     // Fiber cut patterns
     CreateRealisticFiberCutPattern(5, 20, Seconds(m_config.faultStartTime + 60.0));
-    CreateRealisticFiberCutPattern(0, 1, Seconds(m_config.faultStartTime + 180.0));
+    CreateRealisticFiberCutPattern(0, 1, Seconds(m_config.faultStartTime + 190.0));
     CreateRealisticFiberCutPattern(10, 25, Seconds(m_config.faultStartTime + 300.0));
     
     // Power fluctuation patterns
@@ -715,9 +716,9 @@ void CompleteRuralNetworkSimulation::CreateRealisticFiberCutPattern(uint32_t nod
     pattern.startDegradation = startTime;
     pattern.faultOccurrence = startTime + Seconds(45.0);
     pattern.faultDuration = Seconds(120.0);
-    pattern.recoveryComplete = pattern.faultOccurrence + pattern.faultDuration + Seconds(90.0);
+    //pattern.recoveryComplete = pattern.faultOccurrence + pattern.faultDuration + Seconds(90.0);
     pattern.degradationRate = 0.8;
-    pattern.recoveryRate = 0.7;
+    //pattern.recoveryRate = 0.7;
     pattern.severity = 1.0;
     pattern.isActive = true;
     pattern.currentSeverity = 0.0;
@@ -736,8 +737,8 @@ void CompleteRuralNetworkSimulation::CreateRealisticFiberCutPattern(uint32_t nod
     // ENHANCED: Schedule link visualization events
     Simulator::Schedule(startTime + Seconds(45.0), 
                        &CompleteRuralNetworkSimulation::HideFiberLink, this, nodeA, nodeB);
-    Simulator::Schedule(pattern.recoveryComplete,
-                       &CompleteRuralNetworkSimulation::RestoreFiberLink, this, nodeA, nodeB);
+    /*Simulator::Schedule(pattern.recoveryComplete,
+                       &CompleteRuralNetworkSimulation::RestoreFiberLink, this, nodeA, nodeB);*/
     
     std::cout << "📋 FIBER CUT: " << nodeAName << "↔" << nodeBName 
               << " at " << startTime.GetSeconds() << "s" << std::endl;
@@ -805,9 +806,9 @@ void CompleteRuralNetworkSimulation::CreateRealisticPowerFluctuationPattern(uint
     pattern.startDegradation = startTime;
     pattern.faultOccurrence = startTime + Seconds(60.0);
     pattern.faultDuration = Seconds(90.0);
-    pattern.recoveryComplete = pattern.faultOccurrence + pattern.faultDuration + Seconds(120.0);
+    //pattern.recoveryComplete = pattern.faultOccurrence + pattern.faultDuration + Seconds(120.0);
     pattern.degradationRate = 0.6;
-    pattern.recoveryRate = 0.8;
+    //pattern.recoveryRate = 0.8;
     pattern.severity = 0.7;
     pattern.isActive = true;
     pattern.currentSeverity = 0.0;
@@ -819,12 +820,13 @@ void CompleteRuralNetworkSimulation::CreateRealisticPowerFluctuationPattern(uint
     // ENHANCED: Schedule power issue visualization events
     Simulator::Schedule(startTime + Seconds(60.0), 
                        &CompleteRuralNetworkSimulation::ShowPowerIssue, this, nodeId);
-    Simulator::Schedule(pattern.recoveryComplete,
-                       &CompleteRuralNetworkSimulation::HidePowerIssue, this, nodeId);
+    /*Simulator::Schedule(pattern.recoveryComplete,
+                       &CompleteRuralNetworkSimulation::HidePowerIssue, this, nodeId);*/
     
     std::cout << "📋 POWER FLUCTUATION: " << nodeName 
               << " at " << startTime.GetSeconds() << "s" 
-              << " (Recovery at " << pattern.recoveryComplete.GetSeconds() << "s)" << std::endl;
+              //<< " (Recovery at " << pattern.recoveryComplete.GetSeconds() << "s)"
+              << std::endl;
 }
 
 void CompleteRuralNetworkSimulation::ShowPowerIssue(uint32_t nodeId)
@@ -876,7 +878,7 @@ void CompleteRuralNetworkSimulation::UpdateFaultProgression()
             // Peak fault phase
             fault.currentSeverity = fault.severity;
         }
-        else if (currentTime < fault.recoveryComplete) {
+        /*else if (currentTime < fault.recoveryComplete) {
             // Recovery phase
             double recovery_progress = (currentTime - (fault.faultOccurrence + fault.faultDuration)).GetSeconds() / 
                                      (fault.recoveryComplete - (fault.faultOccurrence + fault.faultDuration)).GetSeconds();
@@ -886,7 +888,7 @@ void CompleteRuralNetworkSimulation::UpdateFaultProgression()
             // Full recovery
             fault.currentSeverity = 0.0;
             fault.isActive = false;
-        }
+        }*/
         
         // Trigger visual events at key milestones
         if (m_config.enableFaultVisualization) {
