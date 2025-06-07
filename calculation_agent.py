@@ -72,7 +72,6 @@ class AnomalyAlert:
 class LSTMAnomalyModel(Sequential):
     def __init__(self, input_size=None, hidden_size=None, num_layers=2, dropout_rate=0.2, sequence_length=None, **kwargs):
         # Pop custom arguments from kwargs or assign them if explicitly passed
-        # This makes sure they are consumed as keyword args during loading
         _input_size = kwargs.pop('input_size', input_size)
         _hidden_size = kwargs.pop('hidden_size', hidden_size)
         _num_layers = kwargs.pop('num_layers', num_layers)
@@ -97,11 +96,13 @@ class LSTMAnomalyModel(Sequential):
 
         # Add LSTM layers
         for i in range(self.num_layers):
-            return_sequences = (i < self.num_layers - 1) # Return sequences for all but the last LSTM layer
+            # Return sequences for all but the last LSTM layer if there are more layers
+            return_sequences = (i < self.num_layers - 1)
             self.add(LSTM(self.hidden_size, activation='relu', return_sequences=return_sequences))
         
         self.add(Dropout(self.dropout_rate))
-        self.add(Dense(self.input_size)) # Output layer for reconstruction
+        # Output layer for reconstruction: predicts the next sequence's features
+        self.add(Dense(self.input_size)) 
 
     def get_config(self):
         config = super(LSTMAnomalyModel, self).get_config()
@@ -120,11 +121,13 @@ class LSTMAnomalyDetector:
     Manages the LSTM model, data preprocessing, training, and anomaly prediction
     for a single network node.
     """
-    def __init__(self, node_id, input_features_count, sequence_length=5, anomaly_threshold=0.05, save_shap_plots=True, plot_dir="shap_plots"):
+    def __init__(self, node_id, input_features_count, sequence_length=5, anomaly_threshold_percentile=95, save_shap_plots=True, plot_dir="shap_plots"):
         self.node_id = node_id
         self.input_features_count = input_features_count
         self.sequence_length = sequence_length
-        self.anomaly_threshold = anomaly_threshold
+        # Changed from fixed anomaly_threshold to percentile for dynamic calculation
+        self.anomaly_threshold_percentile = anomaly_threshold_percentile 
+        self.dynamic_anomaly_threshold = 0.0 # This will be set after training
         self.model = None
         self.scaler = MinMaxScaler()
         self.data_buffer = deque(maxlen=sequence_length)
@@ -138,6 +141,7 @@ class LSTMAnomalyDetector:
         # Corrected: Change model file extension to .keras
         self.model_path = os.path.join(MODEL_DIR, f"{node_id}_lstm_model.keras")
         self.scaler_path = os.path.join(MODEL_DIR, f"{node_id}_scaler.pkl")
+        self.threshold_path = os.path.join(MODEL_DIR, f"{node_id}_threshold.json") # Path for dynamic threshold
 
         if self.save_shap_plots:
             os.makedirs(self.plot_dir, exist_ok=True)
@@ -161,56 +165,73 @@ class LSTMAnomalyDetector:
         logger.info(f"Node {self.node_id}: LSTM model built with hidden_size={hidden_size}, lr={learning_rate}, layers={num_layers}")
 
     def save_model(self):
-        """Saves the trained LSTM model and scaler."""
+        """Saves the trained LSTM model, scaler, and dynamic threshold."""
         os.makedirs(MODEL_DIR, exist_ok=True)
         try:
             if self.model:
-                # Keras automatically saves custom objects if get_config is implemented
-                # Will save as .keras due to self.model_path extension
                 self.model.save(self.model_path)
                 logger.info(f"Node {self.node_id}: Saved LSTM model to {self.model_path}")
             if self.scaler:
                 joblib.dump(self.scaler, self.scaler_path)
                 logger.info(f"Node {self.node_id}: Saved scaler to {self.scaler_path}")
+            # Save the dynamic anomaly threshold
+            if self.dynamic_anomaly_threshold:
+                with open(self.threshold_path, 'w') as f:
+                    json.dump({'dynamic_anomaly_threshold': self.dynamic_anomaly_threshold}, f)
+                logger.info(f"Node {self.node_id}: Saved dynamic anomaly threshold to {self.threshold_path}")
+
         except Exception as e:
-            logger.error(f"Node {self.node_id}: Error saving model or scaler: {e}")
+            logger.error(f"Node {self.node_id}: Error saving model, scaler, or threshold: {e}")
 
     def load_model(self):
-        """Loads the pre-trained LSTM model and scaler."""
-        # Will load .keras due to self.model_path extension
-        if os.path.exists(self.model_path) and os.path.exists(self.scaler_path):
+        """Loads the pre-trained LSTM model, scaler, and dynamic threshold."""
+        if os.path.exists(self.model_path) and os.path.exists(self.scaler_path) and os.path.exists(self.threshold_path):
             try:
-                # Use custom_object_scope to recognize LSTMAnomalyModel
-                # Keras uses the get_config method to reconstruct the model
                 self.model = load_model(self.model_path, custom_objects={'LSTMAnomalyModel': LSTMAnomalyModel})
                 self.scaler = joblib.load(self.scaler_path)
+                with open(self.threshold_path, 'r') as f:
+                    self.dynamic_anomaly_threshold = json.load(f)['dynamic_anomaly_threshold']
+                
                 self.is_trained = True
-                logger.info(f"Node {self.node_id}: Successfully loaded model from {self.model_path}")
+                logger.info(f"Node {self.node_id}: Successfully loaded model from {self.model_path}, scaler, and threshold ({self.dynamic_anomaly_threshold:.6f}).")
+
+                # Re-initialize SHAP explainer if loading a trained model
+                # Use a small subset of training data (if available) for background
+                # This assumes X_train_scaled for background data would be available from a prior run or needs to be re-created
+                # For a robust solution, you might save/load a small background dataset or generate on the fly
+                if self.shap_background_data is not None: # Check if background data was already set during init/training
+                    try:
+                        self.shap_explainer = shap.GradientExplainer(self.model, self.shap_background_data)
+                        logger.info(f"Node {self.node_id}: SHAP GradientExplainer re-initialized after loading model.")
+                    except Exception as e:
+                        logger.warning(f"Node {self.node_id}: Could not re-initialize SHAP explainer after loading model: {e}")
+                else:
+                     logger.warning(f"Node {self.node_id}: SHAP background data not available during model load. SHAP explainer not re-initialized.")
+
                 return True
             except Exception as e:
-                logger.error(f"Node {self.node_id}: Error loading model: {e}")
+                logger.error(f"Node {self.node_id}: Error loading model components: {e}")
                 return False
         else:
-            logger.warning(f"Node {self.node_id}: No saved model or scaler found.")
+            logger.warning(f"Node {self.node_id}: No saved model, scaler, or threshold found. Will train new model.")
             return False
 
     def train_model(self, X_train, y_train, epochs=50, batch_size=32, verbose=0):
-        """Trains the LSTM model using the provided training data."""
+        """
+        Trains the LSTM model and calculates the dynamic anomaly threshold
+        based on training data reconstruction errors.
+        """
         if X_train.size == 0 or y_train.size == 0:
             logger.warning(f"Node {self.node_id}: Skipping training, X_train or y_train is empty.")
             self.is_trained = False
             return
 
         # Fit scaler if not already fitted (e.g., if loading a new model or first training)
-        # Ensure scaler is fitted on 2D data (all samples, all features)
         if not hasattr(self.scaler, 'min_') or not hasattr(self.scaler, 'scale_'):
-            # Concatenate X_train sequences and y_train targets to fit scaler on all feature distributions
-            # This ensures the scaler covers the full range of data
             combined_data_for_scaler_fit = np.vstack([X_train.reshape(-1, self.input_features_count), y_train])
             self.scaler.fit(combined_data_for_scaler_fit)
-            logger.info(f"Node {self.node_id}: Scaler fitted on training data.")
+            logger.info(f"Node {self.node_id}: Scaler fitted on training data of shape {combined_data_for_scaler_fit.shape}.")
 
-        # Scale X_train and y_train
         X_train_scaled = self.scaler.transform(X_train.reshape(-1, self.input_features_count)).reshape(X_train.shape)
         y_train_scaled = self.scaler.transform(y_train)
 
@@ -220,15 +241,38 @@ class LSTMAnomalyDetector:
         self.is_trained = True
         logger.info(f"Node {self.node_id}: Training complete. Last loss: {history.history['loss'][-1]:.4f}")
 
+        # --- Calculate Dynamic Anomaly Threshold ---
+        # Predict on training data to get reconstruction errors for "normal" data
+        train_predictions_scaled = self.model.predict(X_train_scaled, verbose=0)
+        
+        # Calculate reconstruction error for each training sample
+        # Note: mean_squared_error by default averages over all elements.
+        # To get individual sample errors, you'd calculate element-wise squared difference and then mean per sample.
+        
+        # Reshape for element-wise comparison if necessary (should already be (N_samples, features))
+        if len(y_train_scaled.shape) == 3: # If y_train_scaled is (samples, sequence_length, features)
+            # Take the last timestep's target and prediction for error calculation, or adapt as needed
+            # For autoencoder predicting next step, y_train_scaled should be (samples, features)
+            logger.warning(f"Unexpected y_train_scaled shape in train_model for threshold: {y_train_scaled.shape}")
+            # As a fallback, assume y_train_scaled is already the target for the next step.
+            # If your model truly predicts sequences, this needs adjustment.
+            # Assuming y_train_scaled is (num_samples, num_features) based on original problem setup
+            pass
+
+        # Calculate reconstruction errors for each training sample (element-wise squared diff, then mean per sample)
+        reconstruction_errors = np.mean(np.square(y_train_scaled - train_predictions_scaled), axis=1) # Mean across features
+
+        # Set the dynamic threshold as the specified percentile of these errors
+        self.dynamic_anomaly_threshold = np.percentile(reconstruction_errors, self.anomaly_threshold_percentile)
+        logger.info(f"Node {self.node_id}: Dynamic anomaly threshold set to {self.dynamic_anomaly_threshold:.6f} "
+                    f"(at {self.anomaly_threshold_percentile}th percentile of training reconstruction errors).")
+
         # Initialize SHAP explainer after model training
         try:
-            # Use a sample of the scaled training data as background
             num_background_samples = min(100, X_train_scaled.shape[0])
             background_indices = np.random.choice(X_train_scaled.shape[0], num_background_samples, replace=False)
             self.shap_background_data = X_train_scaled[background_indices] # Store for base_values
 
-            # SHAP explainer for reconstruction task (multi-output model)
-            # The explainer will compute SHAP values for each output feature
             self.shap_explainer = shap.GradientExplainer(self.model, self.shap_background_data)
             logger.info(f"Node {self.node_id}: SHAP GradientExplainer initialized with background data shape {self.shap_background_data.shape}.")
         except Exception as e:
@@ -261,7 +305,6 @@ class LSTMAnomalyDetector:
         current_sequence = np.array(list(self.data_buffer))
 
         # Scale the entire sequence using the fitted scaler
-        # Reshape current_sequence to 2D for scaling (num_timesteps * num_features)
         scaled_sequence_flat = self.scaler.transform(current_sequence.reshape(-1, self.input_features_count))
 
         # Reshape back to 3D (sequence_length, input_features_count)
@@ -294,7 +337,6 @@ class LSTMAnomalyDetector:
                 return
 
             # Create Explanation object for single sample
-            # Ensure values and data are 1D arrays for single sample explanation
             plot_explanation = shap.Explanation(
                 values=shap_values_1d,
                 base_values=base_value_scalar,
@@ -306,9 +348,6 @@ class LSTMAnomalyDetector:
             try:
                 waterfall_path = os.path.join(self.plot_dir, f"waterfall_{plot_suffix}.png")
                 plt.clf() # Clear current figure to avoid overlaying plots
-                # shap.plots.waterfall expects a single explanation object, not an array of them.
-                # If plot_explanation was created as a list of explanations, you'd iterate.
-                # Here, plot_explanation is already for a single instance.
                 shap.plots.waterfall(plot_explanation, show=False)
                 plt.title(f"Waterfall Plot - Node {self.node_id} - {plot_suffix}")
                 plt.tight_layout() # Adjust layout to prevent labels overlapping
@@ -321,7 +360,6 @@ class LSTMAnomalyDetector:
             # Force plot
             try:
                 force_path = os.path.join(self.plot_dir, f"force_{plot_suffix}.html")
-                # Force plot also expects a single explanation instance or its components
                 shap.save_html(force_path, shap.force_plot(
                     base_value=plot_explanation.base_values, # Should be a scalar
                     shap_values=plot_explanation.values,     # Should be 1D array
@@ -359,6 +397,14 @@ class LSTMAnomalyDetector:
             default_return["status"] = "Model not trained"
             default_return["actual_metrics"] = {f: input_data_raw.get(f, 0.0) for f in all_feature_names}
             return default_return
+        
+        # Ensure dynamic_anomaly_threshold is set before prediction
+        if self.dynamic_anomaly_threshold == 0.0:
+            logger.warning(f"Node {self.node_id}: Dynamic anomaly threshold is 0.0. Model might not have been trained correctly or threshold not calculated. Aborting prediction.")
+            default_return["status"] = "Threshold not set"
+            default_return["actual_metrics"] = {f: input_data_raw.get(f, 0.0) for f in all_feature_names}
+            return default_return
+
 
         processed_sequence = self.preprocess_input(input_data_raw, all_feature_names)
 
@@ -393,19 +439,21 @@ class LSTMAnomalyDetector:
             predicted_metrics_original_scale = self.scaler.inverse_transform(predicted_scaled_next_step.reshape(1, -1))[0]
             predicted_metrics_dict = {self.feature_names[i]: float(predicted_metrics_original_scale[i]) for i in range(len(self.feature_names))}
 
+            # Calculate reconstruction error for the current data point
             reconstruction_error = np.mean(np.square(predicted_scaled_next_step - actual_scaled_last_step))
 
-            # A conceptual max error to normalize the anomaly score, needs tuning for specific datasets
-            conceptual_max_error = 0.005
-            anomaly_score = min(1.0, reconstruction_error / conceptual_max_error)
-
+            # Use the dynamically calculated threshold for anomaly detection
+            is_anomaly = reconstruction_error > self.dynamic_anomaly_threshold
+            
+            # Normalize anomaly score based on dynamic threshold (can be adjusted)
+            # A simple linear scaling, capping at 1.0
+            anomaly_score = min(1.0, reconstruction_error / self.dynamic_anomaly_threshold if self.dynamic_anomaly_threshold > 0 else 0.0)
+            
             confidence_level = 100 * (1 - anomaly_score)
-
-            is_anomaly = anomaly_score > self.anomaly_threshold
 
             if is_anomaly:
                 status = "Anomaly detected"
-                logger.debug(f"Node {self.node_id}: Anomaly detected with score: {anomaly_score:.4f}. Generating SHAP explanation...")
+                logger.info(f"Node {self.node_id}: Anomaly detected! Reconstruction Error: {reconstruction_error:.6f}, Threshold: {self.dynamic_anomaly_threshold:.6f}, Score: {anomaly_score:.4f}. Generating SHAP explanation...")
                 if self.shap_explainer is None:
                     logger.warning(f"Node {self.node_id}: SHAP explainer not initialized. Skipping SHAP explanation.")
                     root_cause_indicators = [{"error": "SHAP explainer not initialized", "details": "Cannot generate explanation."}]
@@ -414,35 +462,18 @@ class LSTMAnomalyDetector:
                     recommended_actions = ["Investigate manually."]
                 else:
                     try:
-                        # raw_shap_output_from_explainer will be a list of arrays, one for each output feature
-                        # Each array shape: (batch_size, sequence_length, input_features_count)
                         raw_shap_output_from_explainer = self.shap_explainer.shap_values(input_for_prediction)
                         
                         # Process SHAP values for a multi-output autoencoder
-                        # We need to aggregate SHAP values across the output neurons to get a single importance per input feature.
-                        # For a single prediction (batch_size=1), we're interested in the last timestep.
-                        
-                        # Stack all output SHAP value arrays, then take absolute values
-                        # stacked_shap_abs shape: (num_outputs, batch_size, sequence_length, input_features)
-                        # Example: (21, 1, 10, 21)
                         stacked_shap_abs = np.stack([np.abs(s) for s in raw_shap_output_from_explainer if isinstance(s, np.ndarray)])
                         
-                        # Sum across the output features dimension (axis=0) to get overall importance
-                        # overall_shap_values_per_output_feature shape: (batch_size, sequence_length, input_features)
-                        # Example: (1, 10, 21)
                         overall_shap_values_per_output_feature = np.sum(stacked_shap_abs, axis=0)
                         
-                        # Get SHAP values for the LAST TIMESTEP of the sequence for the FIRST (and only) sample
-                        # This should be a 1D array of shape (input_features_count,)
                         shap_values_for_last_timestep = overall_shap_values_per_output_feature[0, -1, :].astype(float)
                         
-                        # The data for explanation should be the actual input data point (last timestep)
-                        # Ensure this is a 1D array of floats matching the feature names
                         data_for_explanation_original_scale = self.scaler.inverse_transform(actual_scaled_last_step.reshape(1, -1))[0].astype(float)
                         
-                        # The base value for an "anomaly impact" explanation could conceptually be 0.0
-                        # as we are explaining the deviation from normality.
-                        base_value_for_anomaly_impact = 0.0
+                        base_value_for_anomaly_impact = 0.0 # Conceptual baseline for "impact" being explained
 
                         # Check for shape consistency before plotting
                         if len(shap_values_for_last_timestep) != len(self.feature_names) or \
@@ -450,7 +481,6 @@ class LSTMAnomalyDetector:
                             logger.error(f"Node {self.node_id}: SHAP values/data length mismatch with feature names before plotting. "
                                          f"SHAP len: {len(shap_values_for_last_timestep)}, Data len: {len(data_for_explanation_original_scale)}, "
                                          f"Feature names len: {len(self.feature_names)}")
-                            # Fallback to no detailed root causes if shapes are wrong
                             root_cause_indicators.append({"error": "SHAP explanation failed due to shape mismatch", "details": "Cannot generate explanation."})
                         else:
                             plot_suffix = f"{int(time.time())}"
@@ -458,18 +488,16 @@ class LSTMAnomalyDetector:
                                 shap_values_for_last_timestep,
                                 base_value_for_anomaly_impact,
                                 data_for_explanation_original_scale,
-                                self.feature_names, # Use self.feature_names, which is correctly populated
+                                self.feature_names,
                                 plot_suffix
                             ))
 
-                            # Populate root_cause_indicators based on SHAP values
                             sorted_features_by_impact = sorted(zip(self.feature_names, shap_values_for_last_timestep), key=lambda x: np.abs(x[1]), reverse=True)
 
                             top_n = 5
                             for feature, importance in sorted_features_by_impact[:top_n]:
-                                if np.abs(importance) > 1e-6: # Only include features with significant impact
+                                if np.abs(importance) > 1e-6:
                                     root_cause_indicators.append({"feature": feature, "importance": f"{importance:.4f}"})
-                                    # Categorize affected components based on feature names
                                     if any(k in feature.lower() for k in ['throughput', 'latency', 'packet_loss', 'signal_strength', 'neighbor_count', 'link_utilization', 'jitter']):
                                         if "Network" not in affected_components: affected_components.append("Network")
                                     elif any(k in feature.lower() for k in ['cpu_usage', 'memory_usage', 'buffer_occupancy']):
@@ -488,7 +516,6 @@ class LSTMAnomalyDetector:
                             if not root_cause_indicators and is_anomaly:
                                 root_cause_indicators.append({"feature": "Unknown/General Anomaly", "importance": "N/A"})
 
-                            # Determine severity based on anomaly score and affected components
                             if anomaly_score > 0.75 and ("Network" in affected_components or "Equipment" in affected_components or "Node_State" in affected_components):
                                 severity_classification = "Critical"
                             elif anomaly_score > 0.5:
@@ -498,7 +525,6 @@ class LSTMAnomalyDetector:
                             else:
                                 severity_classification = "Low"
 
-                            # Provide recommended actions based on severity
                             if severity_classification == "Critical":
                                 time_to_failure = "Immediate (0-5 min)"
                                 recommended_actions.append("Initiate emergency failover/redundancy switch.")
@@ -523,8 +549,6 @@ class LSTMAnomalyDetector:
                             shap_values_output = {
                                 "feature_names": self.feature_names,
                                 "importances": shap_values_for_last_timestep.tolist(),
-                                # Optionally, include the raw SHAP values per output neuron if needed for deeper analysis
-                                # "raw_shap_values_per_output": [s[0,-1,:].tolist() for s in raw_shap_output_from_explainer]
                             }
 
                     except Exception as e:
@@ -534,6 +558,8 @@ class LSTMAnomalyDetector:
                         severity_classification = "Low"
                         recommended_actions = ["Investigate manually."]
                         shap_values_output = None
+            else: # If not an anomaly, log reconstruction error for monitoring
+                logger.debug(f"Node {self.node_id}: Normal. Reconstruction Error: {reconstruction_error:.6f}, Threshold: {self.dynamic_anomaly_threshold:.6f}, Score: {anomaly_score:.4f}.")
 
             return {
                 "anomaly_score": round(anomaly_score, 4),
@@ -575,8 +601,8 @@ class CalculationAgent:
         self.config = self.load_config()
         self.node_ids = node_ids
 
-        # CORRECTED LINE: Access 'lstm_sequence_length' directly from config
         self.sequence_length = self.config.get('lstm_sequence_length', sequence_length)
+        self.anomaly_threshold_percentile_config = self.config.get('anomaly_threshold_percentile', 95) # New config for percentile
 
         self.node_detectors = {}
 
@@ -617,7 +643,7 @@ class CalculationAgent:
         return {
             "lstm_sequence_length": 10,
             "lstm_epochs": 20,
-            "anomaly_threshold": 0.05,
+            "anomaly_threshold_percentile": 95, # Changed to percentile
             "alert_debounce_interval": 10,
             "model_training_batch_size": 32,
             "train_on_startup": True,
@@ -647,7 +673,7 @@ class CalculationAgent:
                 node_id=node_id,
                 input_features_count=self.input_features_count,
                 sequence_length=self.sequence_length,
-                anomaly_threshold=self.config.get('anomaly_threshold', 0.05)
+                anomaly_threshold_percentile=self.anomaly_threshold_percentile_config # Pass percentile
             )
 
     async def _objective_function(self, params, node_id, X_train, y_train):
@@ -671,7 +697,8 @@ class CalculationAgent:
             node_id=f"temp_opt_{node_id}", # type: ignore
             input_features_count=self.input_features_count,
             sequence_length=self.sequence_length,
-            save_shap_plots=False
+            save_shap_plots=False,
+            anomaly_threshold_percentile=self.anomaly_threshold_percentile_config # Pass percentile
         )
 
         temp_detector.build_model(
@@ -690,7 +717,9 @@ class CalculationAgent:
             X_train_scaled = temp_detector.scaler.transform(X_train.reshape(-1, self.input_features_count)).reshape(X_train.shape)
             y_train_scaled = temp_detector.scaler.transform(y_train)
 
-            temp_detector.train_model(X_train_scaled, y_train_scaled, epochs=5, verbose=0) # Pass scaled data
+            # Note: For hyperparameter optimization, we usually don't need to calculate the
+            # dynamic threshold here, just the model's loss.
+            temp_detector.train_model(X_train_scaled, y_train_scaled, epochs=5, verbose=0)
 
             if not temp_detector.is_trained:
                 return float('inf')
@@ -708,6 +737,9 @@ class CalculationAgent:
         Optimizes LSTM hyperparameters for a specific node using the Salp Swarm Algorithm (SSA).
         """
         logger.info(f"Node {node_id}: Starting SSA optimization for LSTM hyperparameters...")
+        # Consider increasing n_salps and n_iterations for more thorough optimization
+        # Current values are very low for effective optimization.
+        # e.g., n_salps=30, n_iterations=100 for a more robust search.
         lower_bounds = [32, 0.0001, 2, 0.0]
         upper_bounds = [128, 0.005, 3, 0.3]
 
@@ -715,8 +747,8 @@ class CalculationAgent:
 
         ssa = SalpSwarmOptimizer(
             obj_func=obj_func_with_data,
-            n_salps=2,
-            n_iterations=1,
+            n_salps=2, # Recommend increasing, e.g., to 30
+            n_iterations=1, # Recommend increasing, e.g., to 100
             lower_bounds=lower_bounds,
             upper_bounds=upper_bounds
         )
@@ -736,6 +768,7 @@ class CalculationAgent:
             num_layers=optimized_num_layers,
             dropout_rate=optimized_dropout
         )
+        # Train the model with the optimized hyperparameters and calculate the dynamic threshold
         detector.train_model(X_train_data, y_train_data, epochs=self.config['lstm_epochs'], batch_size=self.config['model_training_batch_size'])
         logger.info(f"Node {node_id}: LSTM model updated with optimized parameters and fully retrained.")
 
@@ -874,9 +907,7 @@ class CalculationAgent:
             test_anomalies_detected = 0
             total_test_samples = 0
 
-            # Ensure self.all_features is correctly set before processing test data
-            # This should have been set during load_and_prepare_initial_training_data
-            if not self.all_features:
+            if not self.numerical_features_for_lstm:
                 logger.error("Features not initialized. Cannot perform pre-live testing. Exiting.")
                 return
 
@@ -889,7 +920,6 @@ class CalculationAgent:
                     logger.debug(f"No trained detector for {node_id} or model not loaded. Skipping test data point.")
                     continue
 
-                # Prepare the raw data point dictionary for the detector, using numerical_features_for_lstm
                 raw_data_point = {feature: row.get(feature, 0.0) for feature in self.numerical_features_for_lstm}
 
                 anomaly_results = await detector.predict_anomaly(raw_data_point, self.numerical_features_for_lstm)
@@ -902,7 +932,9 @@ class CalculationAgent:
                         f"Root Causes: {anomaly_results['root_cause_indicators']}"
                     )
                 else:
-                    logger.debug(f"PRE-LIVE TEST: No anomaly for {node_id} at sim_time {row.get('current_time', 'N/A')}.")
+                    logger.debug(f"PRE-LIVE TEST: No anomaly for {node_id} at sim_time {row.get('current_time', 'N/A')}. "
+                                 f"Recon Error: {anomaly_results.get('reconstruction_error', 'N/A')},"
+                                 f"Threshold: {detector.dynamic_anomaly_threshold:.6f}")
 
                 # Simulate processing time for realism
                 await asyncio.sleep(0.001)
@@ -930,7 +962,6 @@ class CalculationAgent:
         # Ensure detector is trained before attempting prediction
         if not detector.is_trained:
             logger.debug(f"Node {node_id}: Detector not trained yet. Skipping processing this data point.")
-            # Still push status to MCP for "Insufficient data" or "No model"
             await self.push_mcp_status(
                 node_id, "Insufficient data for prediction" if len(detector.data_buffer) < detector.sequence_length else "No model available",
                 0.0, raw_data_point_dict.get('current_time', 0.0)
@@ -949,10 +980,10 @@ class CalculationAgent:
                 detection_time=datetime.now(),
                 simulation_time=simulation_time_for_alert,
                 anomaly_score=anomaly_results['anomaly_score'],
-                threshold=detector.anomaly_threshold,
-                description=anomaly_results.get('explanation', f"Anomaly detected for node {node_id}"), # Use .get()
-                predicted_metrics=anomaly_results.get('predicted_metrics', {}), # Use .get()
-                actual_metrics=anomaly_results.get('actual_metrics', {}) # Use .get()
+                threshold=detector.dynamic_anomaly_threshold, # Use dynamic threshold
+                description=anomaly_results.get('explanation', f"Anomaly detected for node {node_id}"),
+                predicted_metrics=anomaly_results.get('predicted_metrics', {}),
+                actual_metrics=anomaly_results.get('actual_metrics', {})
             )
 
             message_to_healing = {
@@ -973,7 +1004,7 @@ class CalculationAgent:
                 await self.a2a_publisher_socket.send_json(message_to_healing)
                 logger.info(f"Node {node_id}: A2A: Published anomaly alert (Status: {anomaly_results['status']}, Score: {anomaly_results['anomaly_score']:.4f})")
             except Exception as e:
-                logger.error(f"Node {node_id}: Failed to send alert to Healing Agent: {e}", exc_info=True) # Added exc_info
+                logger.error(f"Node {node_id}: Failed to send alert to Healing Agent: {e}", exc_info=True)
         # Send status update to MCP Agent (always send status, not just anomalies)
         mcp_message = {
             "source": "CalculationAgent",
@@ -1018,9 +1049,7 @@ class CalculationAgent:
                                     for msg in batch_data['messages']:
                                         if 'content' in msg and 'metrics' in msg['content']:
                                             for node_id_from_msg, node_metrics_data in msg['content']['metrics'].items():
-                                                # Ensure node_id_from_msg is correctly formatted (e.g., 'node_00')
                                                 if node_id_from_msg.startswith('node_'):
-                                                    # Make sure 'current_time' is available for logging and alerts
                                                     if 'simulation_time' in msg['content']:
                                                         node_metrics_data['current_time'] = msg['content']['simulation_time']
                                                     asyncio.create_task(self.process_data_point(node_id_from_msg, node_metrics_data))
@@ -1056,7 +1085,6 @@ class CalculationAgent:
         """
         logger.info("Calculation Agent started. Performing initial setup (training/loading models for all nodes)...")
 
-        # Load initial training data from the specified training file
         node_training_data = await self.load_and_prepare_initial_training_data(self.config['training_data_file'])
 
         if self.input_features_count == 0 or not self.numerical_features_for_lstm:
@@ -1068,6 +1096,7 @@ class CalculationAgent:
         training_tasks = []
         for node_id in self.node_ids:
             detector = self.node_detectors[node_id]
+            # Try loading model first if not training on startup
             if not self.config['train_on_startup'] and detector.load_model():
                 logger.info(f"Node {node_id}: Loaded existing model. Skipping retraining.")
             else:
@@ -1081,23 +1110,17 @@ class CalculationAgent:
                     )
                 else:
                     logger.warning(f"Node {node_id}: No sufficient training data available. Detector for this node will not be trained.")
-                    # Mark as not trained if data is insufficient for initial setup
                     detector.is_trained = False
 
         if training_tasks:
             results = await asyncio.gather(*training_tasks, return_exceptions=True)
             for i, result in enumerate(results):
-                # We need to map the result back to the correct node_id.
-                # A more robust way might be to pass node_id with the task, or ensure order.
-                # For simplicity, assuming training_tasks order matches node_ids order here.
-                # If a task failed, its detector might not have been trained, check .is_trained
-                # after the gather.
-                current_node_id = self.node_ids[i] # This relies on `training_tasks` order
+                current_node_id = self.node_ids[i]
                 if isinstance(result, Exception):
                     logger.error(f"Error during training/optimization for node {current_node_id}: {result}", exc_info=True)
                 else:
                     detector = self.node_detectors[current_node_id]
-                    if detector.is_trained: # Only save if training was successful
+                    if detector.is_trained:
                         detector.save_model()
         else:
             logger.warning("No nodes had sufficient training data or models were loaded. Skipping mass training phase.")
@@ -1138,7 +1161,7 @@ if __name__ == "__main__":
         default_config = {
             "lstm_sequence_length": 10,
             "lstm_epochs": 20,
-            "anomaly_threshold": 0.05,
+            "anomaly_threshold_percentile": 99, # Default percentile
             "alert_debounce_interval": 5,
             "model_training_batch_size": 32,
             "train_on_startup": True,
