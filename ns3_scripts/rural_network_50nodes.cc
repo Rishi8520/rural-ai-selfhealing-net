@@ -669,7 +669,7 @@ void CompleteRuralNetworkSimulation::SetupRobustNetAnimVisualization()
             animInterface->UpdateNodeSize(allNodes.Get(i), 2.0, 2.0);
         } else {
             nodeDesc = "ACC-" + std::to_string(i-20);
-            animInterface->UpdateNodeColor(allNodes.Get(i), 255, 192, 203);
+            animInterface->UpdateNodeColor(allNodes.Get(i), 255, 105, 180);
             animInterface->UpdateNodeSize(allNodes.Get(i), 1.5, 1.5);
         }
         
