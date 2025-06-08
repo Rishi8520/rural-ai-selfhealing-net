@@ -1,4 +1,4 @@
-# mcp_agent.py 
+# mcp_agent.py
 import zmq
 import asyncio
 import json
@@ -10,78 +10,100 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class MCPAgent:
-    # IMPORTANT: The context is now passed from the orchestrator
-    def __init__(self, context: zmq.Context, 
+    def __init__(self, context: zmq.Context,
                  calc_agent_pull_address: str = "tcp://127.0.0.1:5557",
                  healing_agent_pull_address: str = "tcp://127.0.0.1:5558"):
-        
+
         self.context = context
         self.calc_agent_pull_address = calc_agent_pull_address
         self.healing_agent_pull_address = healing_agent_pull_address
 
         # Socket for pulling messages from Calculation Agent
         self.calc_pull_socket = self.context.socket(zmq.PULL)
-        # *** CRITICAL FIX: MCP Agent PULLs from Calculation Agent, so it CONNECTS ***
-        self.calc_pull_socket.connect(self.calc_agent_pull_address) 
-        logger.info(f"MCP Agent: Calculation Agent PULL connected to {self.calc_agent_pull_address}")
+        self.calc_pull_socket.bind(self.calc_agent_pull_address) # CORRECTED: .bind()
+        logger.info(f"MCP Agent: Calculation Agent PULL bound to {self.calc_agent_pull_address}")
 
         # Socket for pulling messages from Healing Agent
         self.healing_pull_socket = self.context.socket(zmq.PULL)
-        # *** CRITICAL FIX: MCP Agent PULLs from Healing Agent, so it CONNECTS ***
-        self.healing_pull_socket.connect(self.healing_agent_pull_address)
-        logger.info(f"MCP Agent: Healing Agent PULL connected to {self.healing_agent_pull_address}")
-
-        self.poller = zmq.Poller()
-        self.poller.register(self.calc_pull_socket, zmq.POLLIN)
-        self.poller.register(self.healing_pull_socket, zmq.POLLIN)
-
-        self.is_running = False
+        self.healing_pull_socket.bind(self.healing_agent_pull_address) # CORRECTED: .bind()
+        logger.info(f"MCP Agent: Healing Agent PULL bound to {self.healing_agent_pull_address}")
+        # List to store all raw received alerts (for get_all_received_alerts method)
         self.received_alerts: List[Dict[str, Any]] = []
 
+        # Dictionaries to temporarily store pending anomaly alerts and healing recommendations
+        # Keyed by alert_id to facilitate correlation
+        self.pending_anomaly_alerts: Dict[str, Dict[str, Any]] = {}
+        self.pending_healing_recommendations: Dict[str, Dict[str, Any]] = {}
+
+        logger.info("MCP Agent initialized.")
+
     async def start(self):
-        self.is_running = True
-        logger.info("MCP Agent started. Listening for alerts...")
-        await self.receive_alerts_loop()
+        logger.info("MCP Agent started, waiting for messages...")
+        await asyncio.gather(
+            self.receive_from_calculation_agent(),
+            self.receive_from_healing_agent()
+        )
 
     async def stop(self):
-        self.is_running = False
         logger.info("MCP Agent stopping...")
         self.calc_pull_socket.close()
         self.healing_pull_socket.close()
-        # The context.term() should be handled by the main orchestrator
+        logger.info("MCP Agent sockets closed.")
 
-    async def receive_alerts_loop(self):
-        while self.is_running:
+    async def receive_from_calculation_agent(self):
+        """Receives messages from the Calculation Agent."""
+        while True:
             try:
-                socks = dict(self.poller.poll(100)) # Poll with a timeout of 100ms
-
-                if self.calc_pull_socket in socks and socks[self.calc_pull_socket] == zmq.POLLIN:
-                    message_str = self.calc_pull_socket.recv_string()
-                    self._process_alert(message_str, "CalculationAgent")
-
-                if self.healing_pull_socket in socks and socks[self.healing_pull_socket] == zmq.POLLIN:
-                    message_str = self.healing_pull_socket.recv_string()
-                    self._process_alert(message_str, "HealingAgent")
-                
-                await asyncio.sleep(0.01) # Small sleep to yield control
-
-            except zmq.Again: # No messages received after timeout
-                await asyncio.sleep(0.1)
+                message = await self.calc_pull_socket.recv_string()
+                self.process_message("calculation_agent", message)
             except asyncio.CancelledError:
-                logger.info("MCP Agent receive loop cancelled.")
+                logger.info("MCP Agent: Calculation Agent receiver task cancelled.")
                 break
             except Exception as e:
-                logger.error(f"Error in MCP Agent receive loop: {e}", exc_info=True)
-                await asyncio.sleep(1) # Wait before retrying
+                logger.error(f"MCP Agent: Error receiving from Calculation Agent: {e}", exc_info=True)
+                await asyncio.sleep(1)
 
-    def _process_alert(self, message_str: str, source_agent: str):
+    async def receive_from_healing_agent(self):
+        """Receives messages from the Healing Agent."""
+        while True:
+            try:
+                message = await self.healing_pull_socket.recv_string()
+                self.process_message("healing_agent", message)
+            except asyncio.CancelledError:
+                logger.info("MCP Agent: Healing Agent receiver task cancelled.")
+                break
+            except Exception as e:
+                logger.error(f"MCP Agent: Error receiving from Healing Agent: {e}", exc_info=True)
+                await asyncio.sleep(1)
+
+    def process_message(self, source_agent: str, message_str: str):
+        """Processes incoming messages from different agents."""
         try:
-            alert_data = json.loads(message_str)
-            alert_data['received_at_mcp'] = datetime.now().isoformat()
-            alert_data['source_agent'] = source_agent
-            self.received_alerts.append(alert_data)
-            logger.info(f"MCP Agent received alert from {source_agent}: {alert_data.get('type', 'Unknown Type')} - {alert_data.get('alert_id', 'N/A')}")
-            self.display_alert(alert_data)
+            message_data = json.loads(message_str)
+            self.received_alerts.append(message_data)
+
+            if source_agent == "calculation_agent":
+                alert_data = message_data
+                alert_id = alert_data.get("alert_id")
+                if alert_id:
+                    self.pending_anomaly_alerts[alert_id] = alert_data
+                    logger.info(f"MCP Agent: Received anomaly alert {alert_id} from Calculation Agent.")
+                    self._check_and_display_correlated_alert(alert_id)
+                else:
+                    logger.warning(f"MCP Agent: Received calculation alert without alert_id: {alert_data}")
+            elif source_agent == "healing_agent":
+                recommendation_data = message_data
+                alert_id = recommendation_data.get("alert_id")
+                if alert_id:
+                    self.pending_healing_recommendations[alert_id] = recommendation_data
+                    logger.info(f"MCP Agent: Received healing recommendation for alert {alert_id} from Healing Agent.")
+                    self._check_and_display_correlated_alert(alert_id)
+                else:
+                    logger.warning(f"MCP Agent: Received healing recommendation without alert_id: {recommendation_data}")
+            else:
+                logger.warning(f"MCP Agent: Received message from unknown source: {source_agent}")
+                self.display_alert(message_data) # Fallback to generic display
+
         except json.JSONDecodeError:
             logger.error(f"MCP Agent: Failed to decode JSON message from {source_agent}: {message_str}")
         except Exception as e:
@@ -95,6 +117,37 @@ class MCPAgent:
                 logger.critical(f"  {key.replace('_', ' ').title()}: {value}")
         logger.critical("----------------------------------\n")
 
+    def _check_and_display_correlated_alert(self, alert_id: str):
+        """
+        Checks if both an anomaly alert and a healing recommendation for a given alert_id
+        are available and displays them together.
+        """
+        anomaly_alert = self.pending_anomaly_alerts.get(alert_id)
+        healing_recommendation = self.pending_healing_recommendations.get(alert_id)
+
+        if anomaly_alert and healing_recommendation:
+            node_id = anomaly_alert.get('node_id', 'N/A')
+            logger.critical(f"\n--- Correlated Alert & Healing Plan for Node {node_id} (Alert ID: {alert_id}) ---")
+
+            logger.critical("\n--- Calculation Agent Anomaly Output ---")
+            logger.critical(f"  Detection Time: {anomaly_alert.get('detection_time', 'N/A')}")
+            logger.critical(f"  Simulation Time: {anomaly_alert.get('simulation_time', 'N/A')}")
+            logger.critical(f"  Anomaly Score: {anomaly_alert.get('anomaly_score', 'N/A'):.4f}")
+            logger.critical(f"  Description: {anomaly_alert.get('description', 'N/A')}")
+            logger.critical(f"  Actual Metrics: {anomaly_alert.get('actual_metrics', {})}")
+            logger.critical(f"  Predicted Metrics: {anomaly_alert.get('predicted_metrics', {})}")
+
+            logger.critical("\n--- Healing Agent Recommendation Output ---")
+            logger.critical(f"  Recommendation: {healing_recommendation.get('recommendation', 'N/A')}")
+            logger.critical(f"  Confidence: {healing_recommendation.get('confidence', 'N/A')}")
+            logger.critical(f"  Justification: {healing_recommendation.get('justification', 'N/A')}")
+            logger.critical(f"  Timestamp: {healing_recommendation.get('timestamp', 'N/A')}")
+            logger.critical("------------------------------------------------------------------\n")
+
+            # Clean up the pending alerts after displaying
+            self.pending_anomaly_alerts.pop(alert_id, None)
+            self.pending_healing_recommendations.pop(alert_id, None)
+
     def get_all_received_alerts(self) -> List[Dict[str, Any]]:
         return self.received_alerts
 
@@ -102,13 +155,13 @@ class MCPAgent:
 if __name__ == "__main__":
     async def test_mcp_agent_standalone():
         context = zmq.Context()
-        mcp = MCPAgent(context) # Pass the context
+        mcp = MCPAgent(context)
         try:
             await mcp.start()
         except KeyboardInterrupt:
             await mcp.stop()
         finally:
-            context.term() # Terminate context when done
+            context.term()
 
-    logger.warning("MCP Agent is usually run via main_orchestrator.py. If running standalone, ensure other agents are binding to the specified addresses.")
+    logger.warning("MCP Agent is usually run via main_orchestrator.py. If running standalone, ensure other agents are pushing data to it.")
     # asyncio.run(test_mcp_agent_standalone()) # Uncomment to run standalone for testing

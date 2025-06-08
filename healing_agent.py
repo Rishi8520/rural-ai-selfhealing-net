@@ -3,14 +3,9 @@ import asyncio
 import json
 import numpy as np
 import zmq.asyncio
-from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.metrics.pairwise import cosine_similarity
-import sys # For sys.exit()
-import time # For time.time() in timestamps
-import logging # Added logging
-import platform
-if platform.system() == "Windows":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+import sys
+import time
+import logging
 # New imports for enhancements
 import os
 from dotenv import load_dotenv # For loading environment variables from .env
@@ -19,6 +14,12 @@ import google.api_core.exceptions # For Gemini API specific exceptions
 from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type # For robust error handling
 from sentence_transformers import SentenceTransformer # For advanced RAG
 import faiss # For efficient similarity search with dense vectors
+import sqlite3 # Added for database operations
+import platform # For Windows-specific event loop policy
+
+# Set Windows-specific event loop policy for ZeroMQ compatibility
+if platform.system() == "Windows":
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 # Load environment variables from .env file
 load_dotenv()
@@ -29,434 +30,744 @@ logger = logging.getLogger(__name__)
 # --- ADDED CODE FOR DEBUGGING GOOGLE_API_KEY ---
 api_key_status = os.getenv("GOOGLE_API_KEY")
 if api_key_status:
-    logger.info(f"GOOGLE_API_KEY is loaded: {api_key_status[:5]}...{api_key_status[-5:]}") # Prints first/last 5 chars for security
+    logger.info(f"GOOGLE_API_KEY is loaded: {api_key_status[:5]}...{api_key_status[-5:]}")
 else:
     logger.error("GOOGLE_API_KEY is NOT loaded. Please ensure it's set or in your .env file.")
-# --- END OF ADDED CODE ---
+
+# --- Database Manager Class ---
+class DatabaseManager:
+    def __init__(self, db_path='rag_knowledge_base.db'):
+        self.db_path = db_path
+        self.conn = None
+        self.cursor = None
+        self._connect()
+        self._ensure_tables() # Ensure tables exist when connected
+
+    def _connect(self):
+        try:
+            self.conn = sqlite3.connect(self.db_path)
+            self.cursor = self.conn.cursor()
+            logger.info(f"Connected to database: {self.db_path}")
+        except sqlite3.Error as e:
+            logger.error(f"Database connection failed: {e}")
+            raise
+
+    def _ensure_tables(self):
+        """Ensures that necessary tables exist in the database, including the new UserFeedback table."""
+        try:
+            # SQL statements to create tables if they don't exist
+            self.cursor.executescript("""
+                CREATE TABLE IF NOT EXISTS NetworkLayers (
+                    layer_id INTEGER PRIMARY KEY,
+                    layer_name VARCHAR(100) NOT NULL,
+                    description TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS NodeTypes (
+                    node_type_id INTEGER PRIMARY KEY,
+                    node_type_name VARCHAR(100) NOT NULL,
+                    description TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS Nodes (
+                    node_id VARCHAR(50) PRIMARY KEY,
+                    node_name VARCHAR(100),
+                    layer_id INTEGER,
+                    node_type_id INTEGER,
+                    ip_address VARCHAR(50),
+                    location VARCHAR(200),
+                    status VARCHAR(20),
+                    FOREIGN KEY (layer_id) REFERENCES NetworkLayers(layer_id),
+                    FOREIGN KEY (node_type_id) REFERENCES NodeTypes(node_type_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS Links (
+                    link_id VARCHAR(50) PRIMARY KEY,
+                    source_node_id VARCHAR(50) NOT NULL,
+                    target_node_id VARCHAR(50) NOT NULL,
+                    link_type VARCHAR(50),
+                    bandwidth_gbps REAL,
+                    latency_ms REAL,
+                    status VARCHAR(20),
+                    FOREIGN KEY (source_node_id) REFERENCES Nodes(node_id),
+                    FOREIGN KEY (target_node_id) REFERENCES Nodes(node_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS Anomalies (
+                    anomaly_id VARCHAR(50) PRIMARY KEY,
+                    timestamp INTEGER NOT NULL,
+                    node_id VARCHAR(50) NOT NULL,
+                    severity VARCHAR(50),
+                    description TEXT,
+                    FOREIGN KEY (node_id) REFERENCES Nodes(node_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS TrafficFlows (
+                    flow_id VARCHAR(50) PRIMARY KEY,
+                    source_node_id VARCHAR(50) NOT NULL,
+                    destination_node_id VARCHAR(50) NOT NULL,
+                    bandwidth_usage_gbps REAL,
+                    flow_type VARCHAR(50),
+                    FOREIGN KEY (source_node_id) REFERENCES Nodes(node_id),
+                    FOREIGN KEY (destination_node_id) REFERENCES Nodes(node_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS Policies (
+                    policy_id INTEGER PRIMARY KEY,
+                    policy_name VARCHAR(100) NOT NULL,
+                    policy_type VARCHAR(50),
+                    description TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS RecoveryTactics (
+                    tactic_id INTEGER PRIMARY KEY,
+                    tactic_name VARCHAR(100) NOT NULL,
+                    description TEXT,
+                    estimated_time_seconds INTEGER,
+                    priority VARCHAR(50)
+                );
+
+                -- NEW TABLE FOR USER FEEDBACK
+                CREATE TABLE IF NOT EXISTS UserFeedback (
+                    feedback_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    anomaly_id VARCHAR(50) NOT NULL,
+                    timestamp INTEGER NOT NULL,
+                    proposed_plan TEXT, -- Store JSON as text
+                    user_decision VARCHAR(20) NOT NULL, -- 'approved', 'disapproved', 'other'
+                    user_input TEXT, -- Raw text input from user
+                    classified_intent TEXT, -- LLM-classified intent of user_input
+                    extracted_entities TEXT, -- LLM-extracted entities from user_input (JSON as text)
+                    FOREIGN KEY (anomaly_id) REFERENCES Anomalies(anomaly_id)
+                );
+            """)
+            self.conn.commit()
+            logger.info("Database tables ensured (created if not exist).")
+        except sqlite3.Error as e:
+            logger.error(f"Error ensuring database tables: {e}")
+            self.conn.rollback()
+            raise
+
+    def _execute_query(self, query, params=()):
+        try:
+            self.cursor.execute(query, params)
+            self.conn.commit()
+            return self.cursor
+        except sqlite3.Error as e:
+            logger.error(f"Database query failed: {e}")
+            self.conn.rollback()
+            raise
+
+    def load_initial_data(self, data_files):
+        """
+        Loads initial data from SQL data files into the database.
+        It handles reference data and larger datasets.
+        """
+        try:
+            # Insert reference data directly, ensuring it's only added once
+            # This is crucial for tables like NetworkLayers and NodeTypes that might be small
+            # and required before other tables.
+            self.cursor.execute("SELECT COUNT(*) FROM NetworkLayers")
+            if self.cursor.fetchone()[0] == 0:
+                self.cursor.executescript("""
+                    INSERT INTO NetworkLayers VALUES (1, 'Core', 'High-capacity backbone routing and switching');
+                    INSERT INTO NetworkLayers VALUES (2, 'Distribution', 'Regional traffic aggregation and distribution');
+                    INSERT INTO NetworkLayers VALUES (3, 'Access', 'End-user connection points and edge access');
+                """)
+                logger.info("NetworkLayers reference data inserted.")
+
+            self.cursor.execute("SELECT COUNT(*) FROM NodeTypes")
+            if self.cursor.fetchone()[0] == 0:
+                self.cursor.executescript("""
+                    INSERT INTO NodeTypes VALUES (1, 'Core_Router', 'High-performance core network router');
+                    INSERT INTO NodeTypes VALUES (2, 'Distribution_Switch', 'Regional distribution switch');
+                    INSERT INTO NodeTypes VALUES (3, 'Access_Point', 'End-user access point');
+                """)
+                logger.info("NodeTypes reference data inserted.")
+
+            self.cursor.execute("SELECT COUNT(*) FROM Policies")
+            if self.cursor.fetchone()[0] == 0:
+                self.cursor.executescript("""
+                    INSERT INTO Policies VALUES (1, 'FCC_Rural_Broadband_Policy', 'Compliance', 'FCC regulations for rural broadband infrastructure');
+                """)
+                logger.info("Policies reference data inserted.")
+
+            self.cursor.execute("SELECT COUNT(*) FROM RecoveryTactics")
+            if self.cursor.fetchone()[0] == 0:
+                self.cursor.executescript("""
+                    INSERT INTO RecoveryTactics VALUES (1, 'Emergency_Reroute', 'Immediately reroute traffic through alternative paths', 30, 'medium');
+                    INSERT INTO RecoveryTactics VALUES (2, 'Physical_Repair', 'Dispatch repair team for physical fiber restoration', 7200, 'low');
+                    INSERT INTO RecoveryTactics VALUES (3, 'Backup_Power_Switch', 'Switch to backup power source', 120, 'medium');
+                """)
+                self.conn.commit() # Commit after all reference data inserts
+                logger.info("RecoveryTactics reference data inserted.")
+            self.conn.commit() # Commit any pending reference data inserts
+
+            # Load data from individual files (Nodes, Links, Anomalies, TrafficFlows)
+            # Only load if the respective table is empty to avoid duplicate data inserts
+            for data_file in data_files:
+                table_name_map = {
+                    'rag_training_database_nodes.sql': 'Nodes',
+                    'rag_training_database_links.sql': 'Links',
+                    'rag_training_database_anomalies.sql': 'Anomalies',
+                    'rag_training_database_traffic_flows.sql': 'TrafficFlows',
+                    'rag_training_database_policies.sql': 'Policies', # Include these for completeness, though they are also in direct inserts
+                    'rag_training_database_recovery_tactics.sql': 'RecoveryTactics' # Same as above
+                }
+
+                # Determine the actual table name from the file path
+                table_name = None
+                for file_path_key, mapped_table_name in table_name_map.items():
+                    if data_file.endswith(file_path_key):
+                        table_name = mapped_table_name
+                        break
+
+                if not table_name:
+                    logger.warning(f"Skipping unknown data file: {data_file}")
+                    continue
+
+                try:
+                    self.cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+                    if self.cursor.fetchone()[0] == 0:
+                        with open(data_file, 'r') as f:
+                            data_sql = f.read()
+                            self.cursor.executescript(data_sql)
+                            self.conn.commit()
+                            logger.info(f"Data loaded from {data_file} into {table_name}.")
+                    else:
+                        logger.info(f"Table '{table_name}' already contains data. Skipping loading from {data_file}.")
+                except sqlite3.Error as e:
+                    logger.error(f"Error loading data from {data_file} into {table_name}: {e}")
+                    self.conn.rollback()
 
 
-# --- Placeholder for RAG Knowledge Base ---
-# This knowledge base is structured per node, allowing for contextual retrieval.
-# In a real system, this would be loaded from a persistent database or configuration files.
-NODE_KNOWLEDGE_BASE = {
-    "node_00": [ # Changed to node_00 to match monitor_agent's formatting
-        {"doc_id": "doc_00_1", "content": "Node 00 is a core router. Common issues: high latency, CPU spikes. Healing: restart interface, check routing table, verify BGP sessions."},
-        {"doc_id": "doc_00_2", "content": "Node 00 firmware update policy: quarterly. Downtime window: 2 AM - 4 AM UTC. Critical service: VoIP."},
-        {"doc_id": "doc_00_3", "content": "Past incident: Node 00 packet loss due to faulty transceiver. Resolution: Replace transceiver, update firmware. Check optical power levels."},
-    ],
-    "node_01": [ # Changed to node_01
-        {"doc_id": "doc_01_1", "content": "Node 01 is a distribution switch. Issues: port errors, VLAN misconfigurations. Healing: clear counters, verify VLAN tags, check trunk links."},
-        {"doc_id": "doc_01_2", "content": "Node 01 power redundancy check: monthly. Battery backup capacity: 8 hours. Located in IDF 3."},
-        {"doc_id": "doc_01_3", "content": "Recent log: Node 01 received excessive broadcast traffic. Action: Implement broadcast storm control, review STP configuration."},
-    ],
-    "node_02": [
-        {"doc_id": "doc_02_1", "content": "Node 02 is a core firewall. Issues: high connection count, VPN tunnel drops. Healing: review ACLs, check session table limits, verify IKE/IPsec settings."},
-        {"doc_id": "doc_02_2", "content": "Node 02 maintenance window: 1st Saturday of month. Primary function: network segmentation, external access control."},
-        {"doc_id": "doc_02_3", "content": "Security alert: Node 02 detected port scan from external IP. Blocked source. Review IPS/IDS logs."},
-    ],
-    "node_03": [
-        {"doc_id": "doc_03_1", "content": "Node 03 is a core switch. Issues: spanning tree loops, high CPU utilization. Healing: verify STP root bridge, disable unused ports, monitor interface statistics."},
-        {"doc_id": "doc_03_2", "content": "Node 03 is part of datacenter core. Redundancy: HSRP configured. Last firmware version: 15.2(4)E7."},
-        {"doc_id": "doc_03_3", "content": "Performance issue: Node 03 experienced intermittent packet drops. Root cause: faulty SFP module. Replaced module."},
-    ],
-    "node_04": [
-        {"doc_id": "doc_04_1", "content": "Node 04 is a border router. Issues: BGP neighbor flaps, route inconsistencies. Healing: check peer configuration, verify AS path, clear BGP sessions."},
-        {"doc_id": "doc_04_2", "content": "Node 04 connects to ISP A and ISP B. Primary BGP route preference to ISP A. Located at main demarcation point."},
-        {"doc_id": "doc_04_3", "content": "Connectivity loss: Node 04 lost external routes for 5 minutes. Cause: ISP A maintenance. Failover to ISP B successful."},
-    ],
-    "node_05": [
-        {"doc_id": "doc_05_1", "content": "Node 05 is a distribution router. Issues: OSPF neighbor issues, routing table overflow. Healing: check OSPF area configuration, verify link state database, filter routes."},
-        {"doc_id": "doc_05_2", "content": "Node 05 serves the engineering department. IP addressing scheme: 10.5.0.0/16. Next-gen firewall integration pending."},
-        {"doc_id": "doc_05_3", "content": "High CPU: Node 05 CPU utilization spiked. Cause: large number of debug logs enabled. Disabled unnecessary debugs."},
-    ],
-    "node_06": [
-        {"doc_id": "doc_06_1", "content": "Node 06 is an access switch. Issues: client connectivity, PoE failures. Healing: check port status, power cycle PoE device, verify VLAN assignment."},
-        {"doc_id": "doc_06_2", "content": "Node 06 supports IP phones and wireless APs. PoE budget: 370W. Located in conference room area."},
-        {"doc_id": "doc_06_3", "content": "Client complaint: Node 06 users report slow Wi-Fi. Action: Check AP uplink, verify bandwidth utilization, reboot APs."},
-    ],
-    "node_07": [
-        {"doc_id": "doc_07_1", "content": "Node 07 is an access switch. Issues: authentication failures, port security violations. Healing: verify RADIUS/TACACS+ configuration, clear port security violations, check MAC address table."},
-        {"doc_id": "doc_07_2", "content": "Node 07 serves the sales department. Access control: 802.1X enabled. Guest VLAN: VLAN 500."},
-        {"doc_id": "doc_07_3", "content": "Security incident: Node 07 detected unauthorized device. Port disabled by port security. Investigate device."},
-    ],
-    "node_08": [
-        {"doc_id": "doc_08_1", "content": "Node 08 is a wireless controller. Issues: AP disassociations, client roaming problems. Healing: check controller-AP connectivity, review RF profiles, verify client database."},
-        {"doc_id": "doc_08_2", "content": "Node 08 manages 50 access points. Software version: 8.10.130.0. Redundancy: N+1 with Node 09."},
-        {"doc_id": "doc_08_3", "content": "Wi-Fi performance: Node 08 reports high channel utilization. Action: Adjust AP transmit power, optimize channel plan, disable lower data rates."},
-    ],
-    "node_09": [
-        {"doc_id": "doc_09_1", "content": "Node 09 is a load balancer. Issues: server down, health check failures. Healing: verify backend server status, check health monitor configuration, review load balancing algorithm."},
-        {"doc_id": "doc_09_2", "content": "Node 09 provides high availability for web servers. Persistence: Source IP. Algorithms: Least Connections."},
-        {"doc_id": "doc_09_3", "content": "Application slow: Node 09 reports high response times. Cause: one backend server overloaded. Removed server from pool, investigated issue."},
-    ],
-    "node_10": [
-        {"doc_id": "doc_10_1", "content": "Node 10 is a DNS server. Issues: name resolution failures, slow responses. Healing: check DNS service status, verify zone files, clear DNS cache."},
-        {"doc_id": "doc_10_2", "content": "Node 10 is primary internal DNS. Forwarders: public DNS servers. Replication with Node 11."},
-        {"doc_id": "doc_10_3", "content": "Service outage: Node 10 stopped responding. Cause: Disk full. Cleared logs, expanded disk space."},
-    ],
-    "node_11": [
-        {"doc_id": "doc_11_1", "content": "Node 11 is a DHCP server. Issues: IP address exhaustion, client lease failures. Healing: check DHCP pool usage, expand pool, verify helper addresses."},
-        {"doc_id": "doc_11_2", "content": "Node 11 serves the main corporate LAN. Lease duration: 8 hours. Reservations for critical servers."},
-        {"doc_id": "doc_11_3", "content": "Client reports: Node 11 not assigning IPs. Cause: incorrect helper address on switch. Corrected configuration."},
-    ],
-    "node_12": [
-        {"doc_id": "doc_12_1", "content": "Node 12 is a VPN concentrator. Issues: user authentication failures, tunnel instability. Healing: check user credentials, verify pre-shared key, review tunnel logs."},
-        {"doc_id": "doc_12_2", "content": "Node 12 supports remote access VPN. Max concurrent users: 500. Client software: AnyConnect."},
-        {"doc_id": "doc_12_3", "content": "Remote access issue: Node 12 showing high CPU. Cause: DDoS attack targeting VPN. Applied rate limiting, geo-blocking."},
-    ],
-    "node_13": [
-        {"doc_id": "doc_13_1", "content": "Node 13 is an IDS/IPS appliance. Issues: false positives, dropped legitimate traffic. Healing: fine-tune signatures, review bypass rules, update threat intelligence."},
-        {"doc_id": "doc_13_2", "content": "Node 13 monitors core traffic segment. Deployment mode: inline. Signature updates: daily."},
-        {"doc_id": "doc_13_3", "content": "Security event: Node 13 alerted on SQL injection. Blocked traffic. Confirmed application vulnerability patched."},
-    ],
-    "node_14": [
-        {"doc_id": "doc_14_1", "content": "Node 14 is a logging server (Syslog/SIEM). Issues: log ingestion failures, disk full. Healing: check log forwarders, prune old logs, expand storage."},
-        {"doc_id": "doc_14_2", "content": "Node 14 collects logs from all network devices. Retention policy: 90 days. Backups: daily to NAS."},
-        {"doc_id": "doc_14_3", "content": "Log gap: Node 14 not receiving logs from Node 20. Cause: incorrect logging configuration on Node 20. Corrected source IP."},
-    ],
-    "node_15": [
-        {"doc_id": "doc_15_1", "content": "Node 15 is a proxy server. Issues: slow Browse, content filtering bypass. Healing: check proxy service status, review caching policy, update content categories."},
-        {"doc_id": "doc_15_2", "content": "Node 15 handles all outbound HTTP/HTTPS traffic. Authentication: Active Directory. Bypass list for critical applications."},
-        {"doc_id": "doc_15_3", "content": "User reports: Node 15 is slow. Cause: high resource utilization due to large downloads. Implemented bandwidth limits, configured QoS."},
-    ],
-    "node_16": [
-        {"doc_id": "doc_16_1", "content": "Node 16 is a VoIP gateway. Issues: one-way audio, call drops. Healing: check SIP trunk status, verify codec negotiation, review QoS markings."},
-        {"doc_id": "doc_16_2", "content": "Node 16 connects internal VoIP to PSTN. Supported codecs: G.711, G.729. Max concurrent calls: 200."},
-        {"doc_id": "doc_16_3", "content": "Call quality: Node 16 users report choppy audio. Cause: network congestion on WAN link. Prioritized voice traffic with QoS."},
-    ],
-    "node_17": [
-        {"doc_id": "doc_17_1", "content": "Node 17 is a network management system (NMS). Issues: device unreachable, incorrect alerts. Healing: check SNMP/NetFlow configuration, verify device credentials, review alert thresholds."},
-        {"doc_id": "doc_17_2", "content": "Node 17 monitors 1000 devices. Polling interval: 5 minutes. Integration with ticketing system."},
-        {"doc_id": "doc_17_3", "content": "NMS alert storm: Node 17 generated excessive alerts due to flapping link. Suppressed alerts, investigated link stability."},
-    ],
-    "node_18": [
-        {"doc_id": "doc_18_1", "content": "Node 18 is a core application server. Issues: application unresponsive, database errors. Healing: restart application service, check database connectivity, review application logs."},
-        {"doc_id": "doc_18_2", "content": "Node 18 hosts critical ERP application. OS: Windows Server 2019. Database: SQL Server."},
-        {"doc_id": "doc_18_3", "content": "Application crash: Node 18 ERP crashed. Cause: out of memory. Increased RAM, optimized application config."},
-    ],
-    "node_19": [
-        {"doc_id": "doc_19_1", "content": "Node 19 is a backup server. Issues: backup failures, storage full. Healing: check backup job status, clear old backups, expand storage capacity."},
-        {"doc_id": "doc_19_2", "content": "Node 19 backs up all core servers nightly. Backup software: Veeam. Offsite replication to DR site."},
-        {"doc_id": "doc_19_3", "content": "Backup failed: Node 19 backup job failed for Node 02. Cause: firewall blocking communication. Opened necessary ports."},
-    ],
-    # Adding knowledge base entries for nodes 20-49 to cover the access layer
-    "node_20": [
-        {"doc_id": "doc_20_1", "content": "Node 20 is an access switch in building A, floor 1. Issues: port down, slow client access. Healing: check cable, power cycle device, verify VLAN."},
-    ],
-    "node_21": [
-        {"doc_id": "doc_21_1", "content": "Node 21 is an access switch in building A, floor 2. Common issues: PoE failure for IP cameras. Healing: verify PoE budget, reset port."},
-    ],
-    "node_22": [
-        {"doc_id": "doc_22_1", "content": "Node 22 is an access switch in building B, floor 1. Issues: broadcast storm, loop detection. Healing: enable loop guard, check STP on uplink."},
-    ],
-    "node_23": [
-        {"doc_id": "doc_23_1", "content": "Node 23 is an access point in building B, floor 2. Issues: low signal, client disconnects. Healing: check AP placement, adjust power, check channel interference."},
-    ],
-    "node_24": [
-        {"doc_id": "doc_24_1", "content": "Node 24 is an access switch in datacenter row 1. Critical for server rack connectivity. Healing: check link status, replace SFP."},
-    ],
-    "node_25": [
-        {"doc_id": "doc_25_1", "content": "Node 25 is an access switch in datacenter row 2. Issues: high temperature alerts, fan failure. Healing: check cooling, replace fan module."},
-    ],
-    "node_26": [
-        {"doc_id": "doc_26_1", "content": "Node 26 is an IoT gateway in manufacturing plant. Issues: device connectivity, sensor data loss. Healing: check gateway status, review network segment."},
-    ],
-    "node_27": [
-        {"doc_id": "doc_27_1", "content": "Node 27 is a surveillance camera NVR. Issues: video feed loss, storage full. Healing: check camera connection, clear old recordings."},
-    ],
-    "node_28": [
-        {"doc_id": "doc_28_1", "content": "Node 28 is an access switch in the cafeteria. Issues: Wi-Fi slow, high client count. Healing: check AP load, adjust bandwidth limits."},
-    ],
-    "node_29": [
-        {"doc_id": "doc_29_1", "content": "Node 29 is an access switch in the main lobby. Issues: guest network access, captive portal. Healing: verify portal service, check VLAN."},
-    ],
-    "node_30": [
-        {"doc_id": "doc_30_1", "content": "Node 30 is an access switch serving remote office 1. Issues: WAN latency, VPN drops. Healing: check WAN link, optimize VPN tunnel."},
-    ],
-    "node_31": [
-        {"doc_id": "doc_31_1", "content": "Node 31 is an access switch serving remote office 2. Issues: VoIP quality, RTP packet loss. Healing: check QoS configuration, prioritize voice."},
-    ],
-    "node_32": [
-        {"doc_id": "doc_32_1", "content": "Node 32 is an access switch in the executive floor. High priority for critical services. Healing: verify uplink, check dedicated VLANs."},
-    ],
-    "node_33": [
-        {"doc_id": "doc_33_1", "content": "Node 33 is an access point in auditorium. Issues: poor coverage, many clients. Healing: add more APs, adjust power, optimize channel."},
-    ],
-    "node_34": [
-        {"doc_id": "doc_34_1", "content": "Node 34 is an access switch in IT department. Issues: SSH/RDP connectivity, management VLAN. Healing: check ACLs, verify management interface."},
-    ],
-    "node_35": [
-        {"doc_id": "doc_35_1", "content": "Node 35 is an access switch in training room. Issues: projector connectivity, multicast. Healing: check IGMP snooping, verify AV setup."},
-    ],
-    "node_36": [
-        {"doc_id": "doc_36_1", "content": "Node 36 is an access switch in laboratory. Issues: specific device communication, industrial protocols. Healing: check protocol forwarding, verify firewall rules."},
-    ],
-    "node_37": [
-        {"doc_id": "doc_37_1", "content": "Node 37 is an access switch in warehouse. Issues: scanner connectivity, barcode readers. Healing: check wireless signal, verify network access."},
-    ],
-    "node_38": [
-        {"doc_id": "doc_38_1", "content": "Node 38 is an access point in outdoor area. Issues: environmental factors, weather damage. Healing: check physical integrity, verify enclosure."},
-    ],
-    "node_39": [
-        {"doc_id": "doc_39_1", "content": "Node 39 is an access switch in retail store 1. Issues: POS system connectivity, credit card processing. Healing: check PCI compliance, verify secure network."},
-    ],
-    "node_40": [
-        {"doc_id": "doc_40_1", "content": "Node 40 is an access switch in retail store 2. Issues: inventory system access, slow database. Healing: check local server connection, network performance."},
-    ],
-    "node_41": [
-        {"doc_id": "doc_41_1", "content": "Node 41 is an access switch in the data analysis center. High bandwidth requirements. Healing: check link aggregation, monitor traffic."},
-    ],
-    "node_42": [
-        {"doc_id": "doc_42_1", "content": "Node 42 is an access switch in the design studio. Issues: large file transfers, network drive access. Healing: optimize SMB settings, check storage connectivity."},
-    ],
-    "node_43": [
-        {"doc_id": "doc_43_1", "content": "Node 43 is an access switch in the security operations center. Issues: SIEM data feed, security tool access. Healing: ensure high priority, verify dedicated links."},
-    ],
-    "node_44": [
-        {"doc_id": "doc_44_1", "content": "Node 44 is an access point in the recreation area. Issues: public Wi-Fi access, bandwidth hogging. Healing: implement fair usage policy, prioritize business traffic."},
-    ],
-    "node_45": [
-        {"doc_id": "doc_45_1", "content": "Node 45 is an access switch in the cafeteria kitchen. Issues: specific appliance connectivity, network isolation. Healing: verify VLAN segmentation, check power source."},
-    ],
-    "node_46": [
-        {"doc_id": "doc_46_1", "content": "Node 46 is an access switch in the building management system room. Issues: HVAC control, sensor data. Healing: check Modbus/BACnet integration, network reliability."},
-    ],
-    "node_47": [
-        {"doc_id": "doc_47_1", "content": "Node 47 is an access switch in the employee lounge. Issues: streaming services, personal devices. Healing: implement guest policies, manage bandwidth."},
-    ],
-    "node_48": [
-        {"doc_id": "doc_48_1", "content": "Node 48 is an access switch in the shipping/receiving area. Issues: printer connectivity, barcode scanners. Healing: verify printer network settings, check local LAN."},
-    ],
-    "node_49": [
-        {"doc_id": "doc_49_1", "content": "Node 49 is an access switch in the server testing lab. Issues: isolated network, test environment access. Healing: check VLAN segregation, review test network configuration."},
-    ]
-}
+            logger.info("Initial database data loading process completed.")
 
+        except FileNotFoundError as e:
+            logger.error(f"Error loading initial data: File not found - {e}")
+        except sqlite3.Error as e:
+            logger.error(f"Error executing SQL during data load: {e}")
+            self.conn.rollback()
+        except Exception as e:
+            logger.error(f"An unexpected error occurred during data loading: {e}")
 
-# Function to load knowledge base from a JSON file (or database in a real scenario)
-def load_knowledge_base_from_file(file_path: str) -> dict:
-    """
-    Loads the knowledge base from a specified JSON file.
-    Includes error handling for file operations.
-    """
-    try:
-        if not os.path.exists(file_path):
-            logger.error(f"Knowledge base file not found: {file_path}")
-            return {}
-        with open(file_path, 'r') as f:
-            kb = json.load(f)
-            logger.info(f"Knowledge base loaded successfully from {file_path}")
-            return kb
-    except json.JSONDecodeError as e:
-        logger.error(f"Error decoding JSON from knowledge base file {file_path}: {e}")
-        return {}
-    except Exception as e:
-        logger.error(f"An unexpected error occurred while loading knowledge base from {file_path}: {e}")
-        return {}
+    def fetch_all_nodes(self):
+        """Fetches all nodes from the Nodes table."""
+        try:
+            self.cursor.execute("""
+                SELECT n.node_id, n.node_name, nl.layer_name, nt.node_type_name, n.ip_address, n.location, n.status
+                FROM Nodes n
+                JOIN NetworkLayers nl ON n.layer_id = nl.layer_id
+                JOIN NodeTypes nt ON n.node_type_id = nt.node_type_id
+            """)
+            columns = [description[0] for description in self.cursor.description]
+            return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
+        except sqlite3.Error as e:
+            logger.error(f"Error fetching all nodes: {e}")
+            return []
 
+    def fetch_node_by_id(self, node_id):
+        """Fetches a single node by its ID."""
+        try:
+            self.cursor.execute("""
+                SELECT n.node_id, n.node_name, nl.layer_name, nt.node_type_name, n.ip_address, n.location, n.status
+                FROM Nodes n
+                JOIN NetworkLayers nl ON n.layer_id = nl.layer_id
+                JOIN NodeTypes nt ON n.node_type_id = nt.node_type_id
+                WHERE n.node_id = ?
+            """, (node_id,))
+            columns = [description[0] for description in self.cursor.description]
+            row = self.cursor.fetchone()
+            return dict(zip(columns, row)) if row else None
+        except sqlite3.Error as e:
+            logger.error(f"Error fetching node by ID {node_id}: {e}")
+            return None
 
+    def fetch_links_for_node(self, node_id):
+        """Fetches links connected to a given node."""
+        try:
+            self.cursor.execute("""
+                SELECT link_id, source_node_id, target_node_id, link_type, bandwidth_gbps, latency_ms, status
+                FROM Links
+                WHERE source_node_id = ? OR target_node_id = ?
+            """, (node_id, node_id))
+            columns = [description[0] for description in self.cursor.description]
+            return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
+        except sqlite3.Error as e:
+            logger.error(f"Error fetching links for node {node_id}: {e}")
+            return []
+
+    def fetch_anomalies_for_node(self, node_id):
+        """Fetches anomalies associated with a given node."""
+        try:
+            self.cursor.execute("""
+                SELECT anomaly_id, timestamp, node_id, severity, description
+                FROM Anomalies
+                WHERE node_id = ?
+                ORDER BY timestamp DESC
+                LIMIT 5
+            """, (node_id,)) # Limit to last 5 anomalies for brevity in RAG
+            columns = [description[0] for description in self.cursor.description]
+            return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
+        except sqlite3.Error as e:
+            logger.error(f"Error fetching anomalies for node {node_id}: {e}")
+            return []
+
+    def fetch_traffic_flows_for_node(self, node_id):
+        """Fetches traffic flows involving a given node as source or destination."""
+        try:
+            self.cursor.execute("""
+                SELECT flow_id, source_node_id, destination_node_id, bandwidth_usage_gbps, flow_type
+                FROM TrafficFlows
+                WHERE source_node_id = ? OR destination_node_id = ?
+                LIMIT 5
+            """, (node_id, node_id)) # Limit to last 5 flows for brevity
+            columns = [description[0] for description in self.cursor.description]
+            return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
+        except sqlite3.Error as e:
+            logger.error(f"Error fetching traffic flows for node {node_id}: {e}")
+            return []
+
+    def fetch_policies_for_node(self, node_id):
+        """Fetches policies applicable to a given node."""
+        # This is a simplified example; in a real system, policy application might be more complex.
+        # Here, we assume a direct mapping or that all policies are relevant.
+        try:
+            self.cursor.execute("""
+                SELECT policy_id, policy_name, policy_type, description
+                FROM Policies
+                LIMIT 5
+            """) # Fetch some policies, assuming they might be generally relevant or specific to nodes
+            columns = [description[0] for description in self.cursor.description]
+            return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
+        except sqlite3.Error as e:
+            logger.error(f"Error fetching policies for node {node_id}: {e}")
+            return []
+
+    def fetch_recovery_tactics_for_node(self, node_id):
+        """Fetches potential recovery tactics relevant to a given node (simplified)."""
+        try:
+            self.cursor.execute("""
+                SELECT tactic_id, tactic_name, description, estimated_time_seconds, priority
+                FROM RecoveryTactics
+                LIMIT 5
+            """) # Fetch some tactics, assuming general relevance or specific to nodes
+            columns = [description[0] for description in self.cursor.description]
+            return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
+        except sqlite3.Error as e:
+            logger.error(f"Error fetching recovery tactics for node {node_id}: {e}")
+            return []
+
+    def store_user_feedback(self, anomaly_id, proposed_plan, user_decision, user_input, classified_intent, extracted_entities):
+        """
+        Stores user feedback into the UserFeedback table.
+        """
+        try:
+            self.cursor.execute(
+                """
+                INSERT INTO UserFeedback (anomaly_id, timestamp, proposed_plan, user_decision, user_input, classified_intent, extracted_entities)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (anomaly_id, int(time.time()), json.dumps(proposed_plan), user_decision, user_input, classified_intent, json.dumps(extracted_entities))
+            )
+            self.conn.commit()
+            logger.info(f"User feedback stored for anomaly {anomaly_id}. Decision: {user_decision}")
+        except sqlite3.Error as e:
+            logger.error(f"Error storing user feedback for anomaly {anomaly_id}: {e}")
+            self.conn.rollback()
+            raise
+
+    def close(self):
+        """Closes the database connection."""
+        if self.conn:
+            self.conn.close()
+            logger.info("Database connection closed.")
+
+# --- HealingAgent Class ---
 class HealingAgent:
-    def __init__(self, context: zmq.asyncio.Context, sub_socket_address_a2a: str, push_socket_address_mcp: str):
-        logger.info("Healing Agent: Initializing...")
+    def __init__(self, context, sub_socket_address_a2a, push_socket_address_mcp):
         self.context = context
         self.a2a_subscriber_socket = self.context.socket(zmq.SUB)
         self.a2a_subscriber_socket.connect(sub_socket_address_a2a)
-        self.a2a_subscriber_socket.setsockopt_string(zmq.SUBSCRIBE, "")  # Subscribe to all messages
-
+        self.a2a_subscriber_socket.setsockopt_string(zmq.SUBSCRIBE, "")
         self.mcp_push_socket = self.context.socket(zmq.PUSH)
         self.mcp_push_socket.connect(push_socket_address_mcp)
+        self.llm = self._initialize_llm()
+        self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+        logger.info("Load pretrained SentenceTransformer: all-MiniLM-L6-v2")
+        self.db_manager = DatabaseManager() # Initialize DatabaseManager
+        self.rag_index = None
+        self.rag_documents = []
+        self._load_rag_data() # Load RAG data from database
+        self.anomaly_queue = asyncio.Queue()
+        self.in_progress_anomalies = {}
+        self.processed_anomaly_ids = set()
+        logger.info("LLM (Gemini) initialized successfully.")
+        logger.info("Healing Agent started. Listening for anomalies...")
 
-        # Initialize LLM and RAG components
-        # Original RAG components (TF-IDF based)
-        self.vectorizer = TfidfVectorizer()
-        self.node_corpus = {node_id: [doc["content"] for doc in docs] for node_id, docs in NODE_KNOWLEDGE_BASE.items()}
-        self.node_tfidf_matrices = {} # Will store TF-IDF matrix for each node's KB
 
-        # Advanced RAG components (Sentence-Transformers + FAISS)
-        self.rag_model = SentenceTransformer('all-MiniLM-L6-v2') # Smaller, faster model for embeddings
-        self.rag_index = {} # FAISS index per node
-        self.rag_documents = {} # Original documents per node
-
-        # Ensure that GOOGLE_API_KEY is retrieved after load_dotenv()
-        self.google_api_key = os.getenv("GOOGLE_API_KEY")
-        if not self.google_api_key:
-            raise ValueError("GOOGLE_API_KEY environment variable not set. Cannot initialize LLM.")
-        genai.configure(api_key=self.google_api_key)
-        self.llm = genai.GenerativeModel('gemini-pro')
-        self.last_rag_update = time.time()
-        self.rag_update_interval = 300 # Update every 5 minutes for dynamic KB
-
-        logger.info("Healing Agent: Initialized.")
-
-    async def _prepare_rag_knowledge_base(self):
-        """
-        Dynamically loads and prepares the RAG knowledge base, including FAISS indexing.
-        This function should be called periodically or upon KB updates.
-        """
-        logger.info("RAG: Preparing Advanced knowledge base...")
-
-        # For this simulation, we'll use the fixed NODE_KNOWLEDGE_BASE directly for simplicity.
-        # In a real system, this would be updated from a source.
-
-        for node_id, docs in NODE_KNOWLEDGE_BASE.items():
-            if not docs:
-                logger.warning(f"No documents found for node {node_id} in knowledge base. Skipping RAG preparation for this node.")
-                continue
-
-            # Store original documents
-            self.rag_documents[node_id] = docs
-            corpus = [doc["content"] for doc in docs]
-
-            if not corpus:
-                logger.warning(f"Corpus is empty for node {node_id}. Skipping FAISS index creation.")
-                continue
-
-            # Generate embeddings
-            corpus_embeddings = self.rag_model.encode(corpus)
-            dimension = corpus_embeddings.shape[1]
-
-            # Create FAISS index
-            index = faiss.IndexFlatL2(dimension)
-            index.add(np.array(corpus_embeddings).astype('float32'))
-            self.rag_index[node_id] = index
-            logger.info(f"RAG: Prepared FAISS index for '{node_id}' with {len(docs)} documents.")
-        logger.info("RAG: Advanced knowledge base preparation complete.")
-        self.last_rag_update = time.time()
-
+    def _initialize_llm(self):
+        """Initializes the GenerativeModel with the API key."""
+        google_api_key = os.getenv("GOOGLE_API_KEY")
+        if not google_api_key:
+            logger.error("GOOGLE_API_KEY not found in environment variables.")
+            raise ValueError("GOOGLE_API_KEY is not set. Please set it in your .env file or environment.")
+        genai.configure(api_key=google_api_key)
+        # Use a model that supports function calling if needed, e.g., 'gemini-1.5-pro'
+        # For general text generation, 'gemini-pro' is also suitable.
+        return genai.GenerativeModel('gemini-pro')
 
     @retry(wait=wait_exponential(multiplier=1, min=4, max=10), stop=stop_after_attempt(3),
            retry=retry_if_exception_type(google.api_core.exceptions.ResourceExhausted))
-    async def _call_llm(self, prompt: str) -> str:
-        """
-        Calls the LLM with a given prompt, including retry logic for specific errors.
-        """
+    async def _send_llm_request(self, prompt, temperature=0.7, max_output_tokens=1024):
+        """Sends a request to the LLM with retry logic."""
         try:
-            response = await self.llm.generate_content_async(prompt)
-            if response and response.candidates:
-                if response.candidates[0].content and response.candidates[0].content.parts:
-                    generated_text = "".join([part.text for part in response.candidates[0].content.parts])
-                    return generated_text
-            logger.warning("LLM response did not contain usable text content.")
-            return "No specific healing action recommended by LLM."
+            response = self.llm.generate_content(
+                prompt,
+                generation_config=genai.types.GenerationConfig(
+                    temperature=temperature,
+                    max_output_tokens=max_output_tokens,
+                ),
+                safety_settings=[
+                    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+                    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+                ]
+            )
+            # Access the text attribute if response.text is not directly available
+            if hasattr(response, 'text'):
+                return response.text
+            elif hasattr(response, 'candidates') and response.candidates:
+                # Assuming the first candidate's content.parts[0].text holds the response
+                return response.candidates[0].content.parts[0].text
+            else:
+                logger.error(f"LLM response did not contain expected text content: {response}")
+                return None
         except google.api_core.exceptions.ResourceExhausted as e:
-            logger.error(f"LLM call failed due to resource exhaustion: {e}. Retrying...")
+            logger.warning(f"ResourceExhausted error from LLM, retrying: {e}")
             raise # Re-raise to trigger tenacity retry
-        except google.api_core.exceptions.GoogleAPIError as e:
-            logger.error(f"Google API error during LLM call: {e}. Attempting to retry if configured.")
-            raise # Re-raise to trigger tenacity retry for generic API errors
         except Exception as e:
-            logger.error(f"An unexpected error occurred during LLM call: {e}")
-            return "Error calling LLM for healing action."
+            logger.error(f"Error calling LLM: {e}")
+            return None
 
+    async def _handle_anomaly(self, anomaly_message):
+        anomaly_id = anomaly_message.get('anomaly_id')
+        if anomaly_id in self.processed_anomaly_ids:
+            logger.info(f"Anomaly {anomaly_id} already processed. Skipping.")
+            return
 
-    async def _retrieve_rag_context(self, node_id: str, query: str, top_k: int = 2) -> str:
-        """
-        Retrieves relevant context from the RAG knowledge base for a given node and query.
-        """
-        if node_id not in self.rag_index or not self.rag_documents.get(node_id):
-            logger.warning(f"RAG: No knowledge base or index found for node {node_id}. Cannot retrieve context.")
-            return ""
+        if anomaly_id in self.in_progress_anomalies:
+            logger.info(f"Anomaly {anomaly_id} is already being processed. Skipping duplicate.")
+            return
 
-        query_embedding = self.rag_model.encode([query])
-        # Ensure query_embedding is float32 for FAISS
-        D, I = self.rag_index[node_id].search(np.array(query_embedding).astype('float32'), top_k)
+        self.in_progress_anomalies[anomaly_id] = time.time()
+        logger.info(f"Received anomaly: {anomaly_message}")
 
-        context = []
-        for i in range(len(I[0])):
-            doc_index = I[0][i]
-            if doc_index < len(self.rag_documents[node_id]):
-                context.append(self.rag_documents[node_id][doc_index]["content"])
-        logger.info(f"RAG: Retrieved {len(context)} documents for node {node_id} query: '{query[:50]}...'")
-        return "\n".join(context)
+        node_id = anomaly_message.get('node_id')
+        if not node_id:
+            logger.error(f"Anomaly message {anomaly_id} missing 'node_id'. Cannot process.")
+            del self.in_progress_anomalies[anomaly_id]
+            return
 
+        # Step 1: Contextualization using RAG
+        context_info = self._get_rag_context(node_id, anomaly_message.get('description', ''))
 
-    async def _determine_healing_action(self, node_id: str, anomaly_description: str) -> str:
-        """
-        Determines the appropriate healing action using RAG and LLM.
-        """
-        logger.info(f"Healing Agent: Determining action for Node {node_id} - Anomaly: {anomaly_description}")
+        # Step 2: Anomaly Analysis and Healing Plan Generation with LLM
+        prompt = self._construct_llm_prompt(anomaly_message, context_info)
+        healing_plan_json = await self._send_llm_request(prompt)
 
-        # Ensure RAG knowledge base is prepared (and potentially updated)
-        if not self.rag_index or (time.time() - self.last_rag_update) > self.rag_update_interval:
-            await self._prepare_rag_knowledge_base()
+        if healing_plan_json:
+            try:
+                healing_plan = json.loads(healing_plan_json)
+                logger.info(f"Generated Healing Plan for {anomaly_id}: {healing_plan}")
 
-        # Retrieve relevant context using RAG
-        context = await self._retrieve_rag_context(node_id, anomaly_description)
+                # --- NEW: User Confirmation Step ---
+                print(f"\n--- PROPOSED HEALING PLAN for Anomaly {anomaly_id} ---")
+                print(json.dumps(healing_plan, indent=2))
+                user_response = input("Do you approve this plan? (yes/no/other input for feedback): ").strip().lower()
 
-        if context:
-            prompt = (f"Based on the following knowledge about node {node_id} and the anomaly description:\n\n"
-                      f"Node Knowledge: {context}\n\n"
-                      f"Anomaly Description for Node {node_id}: {anomaly_description}\n\n"
-                      f"Recommend a concise, specific healing action. If no specific action is clear, suggest 'Investigate further'.")
+                if user_response == 'yes':
+                    logger.info(f"User approved healing plan for anomaly {anomaly_id}. Sending to MCP.")
+                    await self._send_to_mcp(healing_plan)
+                    self.db_manager.store_user_feedback(anomaly_id, healing_plan, 'approved', 'User approved the plan.', None, None)
+                    self.processed_anomaly_ids.add(anomaly_id) # Mark as processed
+                else:
+                    logger.info(f"User did not approve healing plan for anomaly {anomaly_id}. Processing feedback.")
+                    await self._process_user_feedback(anomaly_message, healing_plan, user_response)
+                    # We don't mark as processed if not approved, allowing for re-evaluation or manual intervention
+                    # depending on the desired workflow after feedback.
+                    # self.processed_anomaly_ids.add(anomaly_id) # Only uncomment if disapproved also means 'processed'
+                # --- END NEW: User Confirmation Step ---
+
+            except json.JSONDecodeError as e:
+                logger.error(f"Failed to parse healing plan JSON for {anomaly_id}: {e}. Raw response: {healing_plan_json[:500]}...")
+            except Exception as e:
+                logger.error(f"An unexpected error occurred while processing healing plan for {anomaly_id}: {e}")
         else:
-            prompt = (f"Anomaly Description for Node {node_id}: {anomaly_description}\n\n"
-                      f"Based on general network knowledge, recommend a concise, specific healing action for node {node_id}. If no specific action is clear, suggest 'Investigate further'.")
+            logger.warning(f"No healing plan generated for anomaly {anomaly_id}.")
 
-        llm_response = await self._call_llm(prompt)
-        logger.info(f"LLM: Generated healing action for Node {node_id}: {llm_response[:100]}...") # Log first 100 chars
-        return llm_response
+        del self.in_progress_anomalies[anomaly_id]
 
+    async def _process_user_feedback(self, original_anomaly_message, proposed_healing_plan, user_raw_input):
+        """
+        Processes user feedback, classifying its intent and extracting entities,
+        then stores it in the database. This is the 'intent translation' part for user feedback.
+        """
+        logger.info(f"User feedback received: '{user_raw_input}' for anomaly {original_anomaly_message.get('anomaly_id')}")
+
+        classified_intent = "unclassified"
+        extracted_entities = {}
+        user_decision = "disapproved" # Default if not 'yes'
+
+        if user_raw_input.lower() == 'no':
+            user_decision = "disapproved"
+            classified_intent = "explicit_disapproval"
+            logger.info("User explicitly disapproved the plan.")
+        else:
+            user_decision = "other_input"
+            # Use LLM to classify intent and extract entities from user's free-form input
+            feedback_prompt = (
+                f"You are an AI assistant tasked with understanding user feedback on proposed network healing plans. "
+                f"Given the user's input, classify its primary intent and extract any relevant entities.\n\n"
+                f"Possible Intents:\n"
+                f"- 'correction': User suggests a specific change or alternative action.\n"
+                f"- 'request_more_info': User wants more details or context.\n"
+                f"- 'new_information': User provides new data relevant to the anomaly.\n"
+                f"- 'general_disapproval': User disapproves without a specific alternative.\n"
+                f"- 'other': Any other type of input.\n\n"
+                f"Extract Entities (if applicable): node_id, link_id, alternative_tactic, desired_info, etc.\n\n"
+                f"Original Anomaly: {original_anomaly_message.get('description')}\n"
+                f"Proposed Plan: {json.dumps(proposed_healing_plan)}\n"
+                f"User Input: '{user_raw_input}'\n\n"
+                f"Provide your response as a JSON object with 'intent' and 'entities' (an object).\n"
+                f"Example: {{ \"intent\": \"correction\", \"entities\": {{ \"alternative_tactic\": \"restart_device_firmware\" }} }}"
+            )
+
+            feedback_classification_json = await self._send_llm_request(feedback_prompt)
+            if feedback_classification_json:
+                try:
+                    feedback_data = json.loads(feedback_classification_json)
+                    classified_intent = feedback_data.get('intent', 'unclassified')
+                    extracted_entities = feedback_data.get('entities', {})
+                    logger.info(f"User feedback classified as intent: '{classified_intent}' with entities: {extracted_entities}")
+                except json.JSONDecodeError as e:
+                    logger.error(f"Failed to parse feedback classification JSON: {e}. Raw response: {feedback_classification_json[:500]}")
+                    classified_intent = "parse_error"
+                    extracted_entities = {"raw_json_error": feedback_classification_json}
+            else:
+                logger.warning("LLM failed to classify user feedback.")
+                classified_intent = "llm_failure"
+
+        # Store the feedback in the database
+        try:
+            self.db_manager.store_user_feedback(
+                original_anomaly_message.get('anomaly_id'),
+                proposed_healing_plan,
+                user_decision,
+                user_raw_input,
+                classified_intent,
+                extracted_entities
+            )
+        except Exception as e:
+            logger.error(f"Failed to store user feedback: {e}")
+
+
+    async def _send_to_mcp(self, healing_plan):
+        """Sends the healing plan to the MCP via ZeroMQ PUSH socket."""
+        try:
+            message = json.dumps(healing_plan).encode('utf-8')
+            await self.mcp_push_socket.send(message)
+            logger.info(f"Healing plan sent to MCP for anomaly: {healing_plan.get('anomaly_id')}")
+        except Exception as e:
+            logger.error(f"Failed to send healing plan to MCP: {e}")
+
+    def _get_rag_context(self, node_id, anomaly_description):
+        """
+        Retrieves relevant context from the RAG knowledge base using embeddings.
+        """
+        if not self.rag_index or not self.rag_documents:
+            logger.warning("RAG index not built or documents empty. Providing limited context.")
+            # Fallback to basic node info if RAG is not available
+            node_info = self.db_manager.fetch_node_by_id(node_id)
+            if node_info:
+                return f"Basic node information for {node_id}: {node_info}"
+            return "No additional context available."
+
+        query_text = f"Information about node {node_id} and anomaly: {anomaly_description}"
+        query_embedding = self.embedding_model.encode([query_text]).astype('float32')
+
+        D, I = self.rag_index.search(query_embedding, k=3) # Search for top 3 relevant documents
+
+        context_docs = [self.rag_documents[i] for i in I[0] if i != -1]
+
+        if context_docs:
+            logger.info(f"Retrieved {len(context_docs)} RAG context documents for node {node_id}.")
+            return "\n\n".join(context_docs)
+        else:
+            logger.info(f"No specific RAG context found for node {node_id}. Fetching basic node info.")
+            node_info = self.db_manager.fetch_node_by_id(node_id)
+            if node_info:
+                return f"Basic node information for {node_id}: {node_info}"
+            return "No relevant context found in RAG."
+
+    def _construct_llm_prompt(self, anomaly_message, context_info):
+        """
+        Constructs a detailed prompt for the LLM based on the anomaly and RAG context.
+        """
+        prompt = (
+            f"You are an AI-powered network healing agent. Your task is to analyze network anomalies "
+            f"and propose a detailed healing plan in JSON format. "
+            f"The goal is to restore network health with minimal disruption.\n\n"
+            f"Anomaly Details:\n"
+            f"Anomaly ID: {anomaly_message.get('anomaly_id')}\n"
+            f"Timestamp: {anomaly_message.get('timestamp')}\n"
+            f"Node ID: {anomaly_message.get('node_id')}\n"
+            f"Severity: {anomaly_message.get('severity')}\n"
+            f"Description: {anomaly_message.get('description')}\n\n"
+            f"Relevant Network Context (RAG):\n"
+            f"{context_info}\n\n"
+            f"Based on the anomaly details and network context, generate a healing plan. "
+            f"The plan should be a JSON object with the following structure:\n"
+            f"{{\n"
+            f"  \"anomaly_id\": \"<anomaly_id_from_message>\",\n"
+            f"  \"healing_actions\": [\n"
+            f"    {{\n"
+            f"      \"action_id\": \"<unique_action_id>\",\n"
+            f"      \"type\": \"<type_of_action>\", (e.g., 'reroute_traffic', 'restart_device', 'escalate_human', 'apply_policy')\n"
+            f"      \"target_node_id\": \"<node_id_affected_by_action>\", (Optional, if action is node-specific)\n"
+            f"      \"target_link_id\": \"<link_id_affected_by_action>\", (Optional, if action is link-specific)\n"
+            f"      \"description\": \"<brief_description_of_action>\",\n"
+            f"      \"priority\": \"<priority>\", (e.g., 'high', 'medium', 'low')\n"
+            f"      \"estimated_time_seconds\": <estimated_time_in_seconds> (integer),\n"
+            f"      \"reasoning\": \"<brief_explanation_for_this_action>\"\n"
+            f"    }}\n"
+            f"    // ... potentially more actions\n"
+            f"  ],\n"
+            f"  \"overall_strategy\": \"<brief_summary_of_the_overall_healing_approach>\"\n"
+            f"}}\n\n"
+            f"Ensure the JSON is valid and directly parsable. Do not include any additional text or formatting outside the JSON object."
+        )
+        return prompt
+
+    def _load_rag_data(self):
+        """
+        Loads knowledge base data from the database and builds the RAG index.
+        """
+        logger.info("Rebuilding RAG index from database...")
+
+        # --- MODIFIED CALL TO LOAD INITIAL DATA ---
+        # schema_file is no longer needed as schema is created in _ensure_tables
+        data_files = [
+            'rag_training_database_nodes.sql',
+            'rag_training_database_links.sql',
+            'rag_training_database_anomalies.sql',
+            'rag_training_database_traffic_flows.sql',
+            'rag_training_database_policies.sql',
+            'rag_training_database_recovery_tactics.sql'
+        ]
+        try:
+            self.db_manager.load_initial_data(data_files)
+        except Exception as e:
+            logger.error(f"Failed to load initial database data: {e}")
+            # Decide if you want to stop or continue with an empty RAG
+            # For now, we continue and the RAG will be empty, leading to the warning below.
+        # --- END OF MODIFIED CALL ---
+
+        try:
+            nodes = self.db_manager.fetch_all_nodes()
+            if not nodes:
+                logger.warning("No knowledge entries found in the database to build RAG index. RAG will not be effective without knowledge.")
+                return
+
+            self.rag_documents = []
+            for node in nodes:
+                node_id = node['node_id']
+                # Construct a comprehensive document for each node
+                doc_parts = [
+                    f"Node ID: {node['node_id']}",
+                    f"Node Name: {node['node_name']}",
+                    f"Layer: {node['layer_name']}",
+                    f"Type: {node['node_type_name']}",
+                    f"IP Address: {node['ip_address']}",
+                    f"Location: {node['location']}",
+                    f"Status: {node['status']}"
+                ]
+
+                # Fetch and add related information (links, anomalies, policies, traffic flows, recovery tactics)
+                links = self.db_manager.fetch_links_for_node(node_id)
+                if links:
+                    doc_parts.append("Connected Links:")
+                    for link in links:
+                        doc_parts.append(f"  - Link ID: {link['link_id']}, From: {link['source_node_id']}, To: {link['target_node_id']}, Type: {link['link_type']}, Bandwidth: {link['bandwidth_gbps']} Gbps, Latency: {link['latency_ms']} ms, Status: {link['status']}")
+
+                anomalies = self.db_manager.fetch_anomalies_for_node(node_id)
+                if anomalies:
+                    doc_parts.append("Known Anomalies:")
+                    for anomaly in anomalies:
+                        doc_parts.append(f"  - Anomaly ID: {anomaly['anomaly_id']}, Timestamp: {anomaly['timestamp']}, Severity: {anomaly['severity']}, Description: {anomaly['description']}")
+
+                traffic_flows = self.db_manager.fetch_traffic_flows_for_node(node_id)
+                if traffic_flows:
+                    doc_parts.append("Associated Traffic Flows:")
+                    for flow in traffic_flows:
+                        doc_parts.append(f"  - Flow ID: {flow['flow_id']}, Source: {flow['source_node_id']}, Destination: {flow['destination_node_id']}, Bandwidth: {flow['bandwidth_usage_gbps']} Gbps, Type: {flow['flow_type']}")
+
+                policies = self.db_manager.fetch_policies_for_node(node_id)
+                if policies:
+                    doc_parts.append("Applicable Policies:")
+                    for policy in policies:
+                        doc_parts.append(f"  - Policy ID: {policy['policy_id']}, Name: {policy['policy_name']}, Type: {policy['policy_type']}, Description: {policy['description']}")
+
+                recovery_tactics = self.db_manager.fetch_recovery_tactics_for_node(node_id)
+                if recovery_tactics:
+                    doc_parts.append("Potential Recovery Tactics:")
+                    for tactic in recovery_tactics:
+                        doc_parts.append(f"  - Tactic ID: {tactic['tactic_id']}, Name: {tactic['tactic_name']}, Description: {tactic['description']}, Est. Time: {tactic['estimated_time_seconds']}s, Priority: {tactic['priority']}")
+
+                self.rag_documents.append(" ".join(doc_parts))
+
+            # Generate embeddings and build FAISS index
+            if self.rag_documents:
+                logger.info(f"Generating embeddings for {len(self.rag_documents)} RAG documents...")
+                document_embeddings = self.embedding_model.encode(self.rag_documents, show_progress_bar=True)
+                self.rag_index = faiss.IndexFlatL2(document_embeddings.shape[1])
+                self.rag_index.add(np.array(document_embeddings).astype('float32'))
+                logger.info("RAG index built successfully.")
+            else:
+                logger.warning("No documents to build RAG index after fetching from database.")
+
+        except Exception as e:
+            logger.error(f"Error rebuilding RAG index: {e}")
 
     async def start(self):
-        logger.info("Healing Agent: Starting...")
-        await self._prepare_rag_knowledge_base() # Initial preparation
+        """Starts the anomaly listening and processing loop."""
+        logger.info("Starting Healing Agent anomaly listener...")
+        await self._listen_for_anomalies()
 
+    async def _listen_for_anomalies(self):
+        """Listens for anomaly messages from the A2A channel."""
         while True:
             try:
-                # Polling for messages from the A2A (Anomaly to Action) channel
-                message = await self.a2a_subscriber_socket.recv_string()
-                timestamp = time.time() # Capture reception time
-
-                # Assume message is a JSON string with 'node_id' and 'anomaly_description'
-                anomaly_data = json.loads(message)
-                node_id = anomaly_data.get("node_id")
-                anomaly_description = anomaly_data.get("anomaly_description")
-
-                if node_id and anomaly_description:
-                    logger.info(f"Healing Agent: Received anomaly for Node {node_id}: {anomaly_description}")
-                    healing_action = await self._determine_healing_action(node_id, anomaly_description)
-
-                    # Prepare message for MCP Agent
-                    mcp_message = {
-                        "timestamp": timestamp,
-                        "source_agent": "HealingAgent",
-                        "target_agent": "MCPAgent",
-                        "node_id": node_id,
-                        "action": healing_action,
-                        "anomaly_description": anomaly_description # Include original anomaly for context
-                    }
-                    mcp_message_str = json.dumps(mcp_message)
-                    await self.mcp_push_socket.send_string(mcp_message_str)
-                    logger.info(f"Healing Agent: Sent action to MCP Agent for Node {node_id}: {healing_action[:50]}...")
+                message = await self.a2a_subscriber_socket.recv_json()
+                logger.debug(f"Raw anomaly message received: {message}")
+                if 'anomaly_id' in message:
+                    await self._handle_anomaly(message)
                 else:
-                    logger.warning(f"Healing Agent: Received malformed anomaly message: {message}")
-
-                # Periodically update RAG knowledge base
-                if (time.time() - self.last_rag_update) > self.rag_update_interval:
-                    await self._prepare_rag_knowledge_base()
-
-                await asyncio.sleep(0.1) # Small delay to prevent busy-looping
-            except zmq.error.Again:
-                # No message received, continue loop after a small delay
-                await asyncio.sleep(0.1)
-            except json.JSONDecodeError as e:
-                logger.error(f"Healing Agent: Error decoding JSON message: {e}. Message: {message[:100]}...")
-                await asyncio.sleep(1) # Wait before retrying on bad message
+                    logger.warning(f"Received message without 'anomaly_id': {message}")
+            except zmq.Again:
+                # No message received yet, continue listening
+                await asyncio.sleep(0.1) # Small delay to prevent busy-waiting
             except Exception as e:
-                logger.error(f"Healing Agent: Unexpected error during message processing: {e}. Retrying in 1 second...")
-                await asyncio.sleep(1) # Wait before retrying on general error
+                logger.exception(f"Error receiving anomaly message: {e}")
 
 
-# --- Main function to run the Healing Agent (for standalone testing) ---
-if __name__ == "__main__":
-    logger.info("Running standalone test for Healing Agent...")
+# --- Main execution for standalone testing ---
+async def main():
+    # Define socket addresses
+    test_sub_address_a2a = "tcp://127.0.0.1:5556"
+    test_push_address_mcp = "tcp://127.0.0.1:5558"
 
-    # Define ZeroMQ addresses for standalone testing
-    # These should match the addresses used by Calculation Agent and MCP Agent
-    test_sub_address_a2a = "tcp://127.0.0.1:5556" # Matches Calculation Agent's PUB address
-    test_push_address_mcp = "tcp://127.0.0.1:5558" # Matches MCP Agent's PULL address
-
-    # Initialize and start the Healing Agent
+    # Create a ZeroMQ context and Healing Agent instance
     # For standalone testing, create a local context
     local_context = zmq.asyncio.Context()
     healing_agent = HealingAgent(
@@ -466,27 +777,26 @@ if __name__ == "__main__":
     )
 
     try:
-        asyncio.run(healing_agent.start())
+        await healing_agent.start() # Await the start method
     except KeyboardInterrupt:
         logger.info("\nHealing Agent standalone test stopped by user (KeyboardInterrupt).")
-        # Clean up ZeroMQ context and sockets on shutdown
+    except Exception as e:
+        logger.exception(f"An unhandled exception occurred during Healing Agent runtime: {e}")
+    finally:
+        # Ensure cleanup ZeroMQ context and sockets on shutdown
         if healing_agent.a2a_subscriber_socket:
             healing_agent.a2a_subscriber_socket.close()
             logger.info("A2A subscriber socket closed.")
         if healing_agent.mcp_push_socket:
             healing_agent.mcp_push_socket.close()
             logger.info("MCP push socket closed.")
+        if healing_agent.db_manager:
+            healing_agent.db_manager.close()
         if local_context:
             local_context.term()
             logger.info("ZeroMQ context terminated.")
         sys.exit(0)
-    except Exception as e:
-        logger.exception(f"An unhandled exception occurred during Healing Agent runtime: {e}")
-        # Ensure cleanup even on other exceptions
-        if healing_agent.a2a_subscriber_socket:
-            healing_agent.a2a_subscriber_socket.close()
-        if healing_agent.mcp_push_socket:
-            healing_agent.mcp_push_socket.close()
-        if local_context:
-            local_context.term()
-        sys.exit(1) # Exit with error code
+
+
+if __name__ == '__main__':
+    asyncio.run(main())

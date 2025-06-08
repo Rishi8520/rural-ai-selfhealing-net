@@ -121,7 +121,7 @@ class LSTMAnomalyDetector:
     Manages the LSTM model, data preprocessing, training, and anomaly prediction
     for a single network node.
     """
-    def __init__(self, node_id, input_features_count, sequence_length=5, anomaly_threshold_percentile=95, save_shap_plots=True, plot_dir="shap_plots"):
+    def __init__(self, node_id, input_features_count, sequence_length=5, anomaly_threshold_percentile=99, save_shap_plots=True, plot_dir="shap_plots"):
         self.node_id = node_id
         self.input_features_count = input_features_count
         self.sequence_length = sequence_length
@@ -197,7 +197,6 @@ class LSTMAnomalyDetector:
 
                 # Re-initialize SHAP explainer if loading a trained model
                 # Use a small subset of training data (if available) for background
-                # This assumes X_train_scaled for background data would be available from a prior run or needs to be re-created
                 # For a robust solution, you might save/load a small background dataset or generate on the fly
                 if self.shap_background_data is not None: # Check if background data was already set during init/training
                     try:
@@ -602,7 +601,7 @@ class CalculationAgent:
         self.node_ids = node_ids
 
         self.sequence_length = self.config.get('lstm_sequence_length', sequence_length)
-        self.anomaly_threshold_percentile_config = self.config.get('anomaly_threshold_percentile', 95) # New config for percentile
+        self.anomaly_threshold_percentile_config = self.config.get('anomaly_threshold_percentile', 99) # New config for percentile
 
         self.node_detectors = {}
 
@@ -613,12 +612,13 @@ class CalculationAgent:
         self.context = zmq.asyncio.Context()
 
         self.a2a_publisher_socket = self.context.socket(zmq.PUB)
-        self.a2a_publisher_socket.bind(pub_socket_address_a2a)
+        self.a2a_publisher_socket.connect(pub_socket_address_a2a)
         logger.info(f"Calculation Agent: A2A Publisher bound to {pub_socket_address_a2a}")
 
-        self.mcp_push_socket = self.context.socket(zmq.PUSH)
-        self.mcp_push_socket.bind(push_socket_address_mcp)
-        logger.info(f"Calculation Agent: MCP PUSH bound to {push_socket_address_mcp}")
+        # Renamed self.mcp_push_status to self._mcp_push_socket
+        self._mcp_push_socket = self.context.socket(zmq.PUSH)
+        self._mcp_push_socket.connect(push_socket_address_mcp)
+        logger.info(f"Calculation Agent: MCP PUSH socket connected to {push_socket_address_mcp}")
 
         self.monitor_data_file_path = MONITOR_DATA_STREAM_FILE
         self.last_read_file_position = 0
@@ -643,7 +643,7 @@ class CalculationAgent:
         return {
             "lstm_sequence_length": 10,
             "lstm_epochs": 20,
-            "anomaly_threshold_percentile": 95, # Changed to percentile
+            "anomaly_threshold_percentile": 99, # Changed to percentile
             "alert_debounce_interval": 10,
             "model_training_batch_size": 32,
             "train_on_startup": True,
@@ -949,6 +949,18 @@ class CalculationAgent:
             logger.error(f"Error during pre-live testing phase: {e}", exc_info=True)
 
 
+    # New method to handle pushing status to MCP
+    async def mcp_push_status_update(self, status_data: dict):
+        """
+        Sends status updates to the MCP Agent via the PUSH socket.
+        """
+        try:
+            # Ensure the data is JSON-serializable if using send_json
+            await self._mcp_push_socket.send_json(status_data)
+            logging.debug(f"Calculation Agent: Sent status to MCP: {status_data}")
+        except Exception as e:
+            logging.error(f"Calculation Agent: Error sending status to MCP: {e}")
+
     async def process_data_point(self, node_id: str, raw_data_point_dict: Dict[str, Any]):
         """
         Receives a single raw data point for a node, processes it,
@@ -962,9 +974,17 @@ class CalculationAgent:
         # Ensure detector is trained before attempting prediction
         if not detector.is_trained:
             logger.debug(f"Node {node_id}: Detector not trained yet. Skipping processing this data point.")
-            await self.push_mcp_status(
-                node_id, "Insufficient data for prediction" if len(detector.data_buffer) < detector.sequence_length else "No model available",
-                0.0, raw_data_point_dict.get('current_time', 0.0)
+            # Changed this line to use send_json correctly
+            await self.mcp_push_status_update( # Using the new helper method
+                {
+                    "source": "CalculationAgent",
+                    "type": "status_update",
+                    "node_id": node_id,
+                    "timestamp": datetime.now().isoformat(),
+                    "simulation_time": raw_data_point_dict.get('current_time', 0.0),
+                    "status": "Insufficient data for prediction" if len(detector.data_buffer) < detector.sequence_length else "No model available",
+                    "details": {"anomaly_score": 0.0} # Placeholder details
+                }
             )
             return
 
@@ -1016,7 +1036,8 @@ class CalculationAgent:
             "details": anomaly_results
         }
         try:
-            await self.mcp_push_socket.send_json(mcp_message)
+            # Changed this line to use the new helper method
+            await self.mcp_push_status_update(mcp_message)
             logger.info(f"Node {node_id}: MCP: Pushed status update (Status: {anomaly_results['status']}, Score: {anomaly_results['anomaly_score']:.4f}).")
         except Exception as e:
             logger.error(f"Node {node_id}: Failed to push status to MCP: {e}", exc_info=True)
@@ -1144,7 +1165,8 @@ class CalculationAgent:
         logger.info("Calculation Agent: Stopping...")
         self.is_running = False
         self.a2a_publisher_socket.close()
-        self.mcp_push_socket.close()
+        # Changed this line to close the renamed socket attribute
+        self._mcp_push_socket.close()
         self.context.term()
         logger.info("Calculation Agent: Stopped.")
 
@@ -1160,7 +1182,7 @@ if __name__ == "__main__":
     if not os.path.exists(CONFIG_FILE):
         default_config = {
             "lstm_sequence_length": 10,
-            "lstm_epochs": 20,
+            "lstm_epochs": 5,
             "anomaly_threshold_percentile": 99, # Default percentile
             "alert_debounce_interval": 5,
             "model_training_batch_size": 32,
@@ -1198,3 +1220,4 @@ if __name__ == "__main__":
     finally:
         if 'calc_agent' in locals() and hasattr(calc_agent, 'is_running') and calc_agent.is_running:
             asyncio.run(calc_agent.stop())
+
