@@ -1,0 +1,532 @@
+---
+- name: "Nokia Build-a-thon: Emergency Routing Setup Playbook"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    playbook_version: "1.0.0"
+    playbook_type: "emergency_routing"
+    execution_timestamp: "{{ ansible_date_time.iso8601 }}"
+    routing_convergence_timeout: 120  # seconds
+    emergency_priority: 1
+    
+  tasks:
+    - name: "Initialize Emergency Routing Workflow"
+      debug:
+        msg: |
+          ============================================================
+          Nokia Build-a-thon AI Self-Healing Network
+          Emergency Routing Setup Playbook v{{ playbook_version }}
+          Execution Time: {{ execution_timestamp }}
+          Source Node: {{ source_node }}
+          Target Node: {{ target_node }}
+          Alternative Nodes: {{ alternative_nodes | join(', ') }}
+          Emergency Mode: {{ emergency_mode | default(true) }}
+          Capacity Target: {{ capacity_target | default(0.8) }}
+          ============================================================
+      tags: [initialization]
+
+    - name: "Validate Emergency Routing Parameters"
+      assert:
+        that:
+          - source_node is defined
+          - target_node is defined
+          - alternative_nodes is defined
+          - alternative_nodes | length > 0
+          - source_node | regex_search('^node_[0-4][0-9]$')
+          - target_node | regex_search('^node_[0-4][0-9]$')
+          - emergency_mode | default(false) | bool
+          - capacity_target | default(0.8) | float <= 1.0
+          - capacity_target | default(0.8) | float >= 0.1
+        fail_msg: "Invalid parameters for emergency routing setup"
+        success_msg: "Emergency routing parameters validated successfully"
+      tags: [validation]
+
+    - name: "Generate Emergency Workflow ID"
+      set_fact:
+        emergency_workflow_id: "EMRG_{{ source_node }}_{{ target_node }}_{{ ansible_date_time.epoch }}"
+        failed_link_id: "link_{{ source_node }}_{{ target_node }}"
+      tags: [initialization]
+
+    - name: "Assess Current Network Topology"
+      uri:
+        url: "http://localhost:8080/api/v1/network/topology"
+        method: GET
+        headers:
+          Content-Type: "application/json"
+          X-Emergency-Context: "{{ emergency_workflow_id }}"
+        timeout: 15
+      register: current_topology
+      tags: [topology_assessment]
+
+    - name: "Analyze Failed Link Impact"
+      uri:
+        url: "http://localhost:8080/api/v1/network/impact/analyze"
+        method: POST
+        body_format: json
+        body:
+          failed_link:
+            source: "{{ source_node }}"
+            target: "{{ target_node }}"
+            link_id: "{{ failed_link_id }}"
+          analysis_type: "emergency"
+          include_cascading_effects: true
+          include_traffic_analysis: true
+        headers:
+          X-Emergency-Workflow: "{{ emergency_workflow_id }}"
+        timeout: 20
+      register: impact_analysis
+      tags: [impact_analysis]
+
+    - name: "Calculate Alternative Path Options"
+      uri:
+        url: "http://localhost:8080/api/v1/routing/calculate"
+        method: POST
+        body_format: json
+        body:
+          source_node: "{{ source_node }}"
+          target_node: "{{ target_node }}"
+          alternative_nodes: "{{ alternative_nodes }}"
+          constraints:
+            emergency_mode: true
+            min_capacity: "{{ capacity_target }}"
+            max_hops: 5
+            avoid_congested_links: true
+          algorithms:
+            - "dijkstra_shortest_path"
+            - "widest_path_first"
+            - "emergency_optimized"
+          optimization_goals:
+            - "minimize_latency"
+            - "maximize_capacity"
+            - "maximize_reliability"
+        headers:
+          X-Emergency-Priority: "{{ emergency_priority }}"
+        timeout: 30
+      register: path_calculation
+      tags: [path_calculation]
+
+    - name: "Select Optimal Emergency Routes"
+      set_fact:
+        primary_emergency_route: "{{ path_calculation.json.routes[0] | default({}) }}"
+        backup_emergency_route: "{{ path_calculation.json.routes[1] | default({}) }}"
+        total_available_routes: "{{ path_calculation.json.routes | length }}"
+        emergency_route_quality: "{{ path_calculation.json.overall_quality | default(0.0) }}"
+      tags: [route_selection]
+
+    - name: "Validate Emergency Route Quality"
+      assert:
+        that:
+          - primary_emergency_route != {}
+          - primary_emergency_route.capacity | default(0) | float >= (capacity_target | float * 0.8)
+          - primary_emergency_route.path | default([]) | length > 0
+          - emergency_route_quality | float > 0.6
+        fail_msg: "Emergency route quality insufficient for reliable service"
+        success_msg: "Emergency routes meet quality requirements"
+      tags: [route_validation]
+
+    - name: "Isolate Failed Network Segment"
+      uri:
+        url: "http://localhost:8080/api/v1/network/isolate"
+        method: POST
+        body_format: json
+        body:
+          isolation_scope:
+            failed_link: "{{ failed_link_id }}"
+            affected_nodes: ["{{ source_node }}", "{{ target_node }}"]
+          isolation_strategy: "graceful_traffic_migration"
+          preserve_services: true
+          migration_timeout: 60
+          emergency_context: "{{ emergency_workflow_id }}"
+        timeout: 45
+      register: network_isolation
+      tags: [network_isolation]
+
+    - name: "Configure Primary Emergency Route"
+      uri:
+        url: "http://localhost:8080/api/v1/routing/configure"
+        method: PUT
+        body_format: json
+        body:
+          route_id: "{{ emergency_workflow_id }}_primary"
+          route_type: "emergency_primary"
+          path: "{{ primary_emergency_route.path }}"
+          configuration:
+            bandwidth_allocation: "{{ (primary_emergency_route.capacity | float * 0.9) | round(2) }}"
+            priority: "{{ emergency_priority }}"
+            load_balancing: false  # Single path for emergency
+            qos_class: "emergency"
+            monitoring_interval: 5
+            failover_enabled: true
+            backup_route: "{{ emergency_workflow_id }}_backup"
+          traffic_policies:
+            - policy: "emergency_traffic_only"
+              action: "prioritize"
+            - policy: "non_critical_traffic"
+              action: "delay"
+        headers:
+          X-Emergency-Route: "primary"
+          X-Workflow-ID: "{{ emergency_workflow_id }}"
+        timeout: 30
+      register: primary_route_config
+      tags: [primary_route_setup]
+
+    - name: "Configure Backup Emergency Route"
+      uri:
+        url: "http://localhost:8080/api/v1/routing/configure"
+        method: PUT
+        body_format: json
+        body:
+          route_id: "{{ emergency_workflow_id }}_backup"
+          route_type: "emergency_backup"
+          path: "{{ backup_emergency_route.path }}"
+          configuration:
+            bandwidth_allocation: "{{ (backup_emergency_route.capacity | default(0.5) | float * 0.8) | round(2) }}"
+            priority: "{{ emergency_priority + 1 }}"
+            load_balancing: false
+            qos_class: "emergency_backup"
+            monitoring_interval: 10
+            standby_mode: true
+          activation_triggers:
+            - "primary_route_failure"
+            - "primary_route_congestion_threshold_90"
+            - "manual_activation"
+        timeout: 25
+      register: backup_route_config
+      when: backup_emergency_route != {}
+      tags: [backup_route_setup]
+
+    - name: "Update Routing Tables Across Network"
+      uri:
+        url: "http://localhost:8080/api/v1/routing/tables/update"
+        method: POST
+        body_format: json
+        body:
+          update_scope: "{{ alternative_nodes + [source_node, target_node] }}"
+          routing_updates:
+            - destination: "{{ target_node }}"
+              next_hop_updates:
+                primary: "{{ primary_emergency_route.path[1] | default(target_node) }}"
+                backup: "{{ backup_emergency_route.path[1] | default(target_node) }}"
+              metric_updates:
+                primary_cost: "{{ primary_emergency_route.cost | default(1) }}"
+                backup_cost: "{{ backup_emergency_route.cost | default(2) }}"
+          propagation_method: "flooding"
+          convergence_timeout: "{{ routing_convergence_timeout }}"
+          emergency_propagation: true
+        headers:
+          X-Update-Priority: "emergency"
+          X-Convergence-Required: "true"
+        timeout: "{{ routing_convergence_timeout + 30 }}"
+      register: routing_table_update
+      tags: [routing_table_update]
+
+    - name: "Activate Emergency Traffic Rerouting"
+      uri:
+        url: "http://localhost:8080/api/v1/traffic/reroute"
+        method: POST
+        body_format: json
+        body:
+          rerouting_context: "{{ emergency_workflow_id }}"
+          source_flows:
+            - source: "{{ source_node }}"
+              destinations: ["{{ target_node }}"]
+              traffic_types: ["all"]
+          target_routes:
+            primary: "{{ emergency_workflow_id }}_primary"
+            backup: "{{ emergency_workflow_id }}_backup"
+          rerouting_strategy: "immediate_cutover"
+          validation_required: true
+          rollback_on_failure: true
+        timeout: 45
+      register: traffic_rerouting
+      tags: [traffic_rerouting]
+
+    - name: "Monitor Emergency Route Convergence"
+      uri:
+        url: "http://localhost:8080/api/v1/routing/convergence/status"
+        method: GET
+        headers:
+          X-Monitor-Routes: "{{ emergency_workflow_id }}_primary,{{ emergency_workflow_id }}_backup"
+        timeout: 10
+      register: convergence_status
+      retries: "{{ (routing_convergence_timeout / 10) | int }}"
+      delay: 10
+      until: convergence_status.json.convergence_achieved | default(false)
+      tags: [convergence_monitoring]
+
+    - name: "Validate Emergency Route Performance"
+      uri:
+        url: "http://localhost:8080/api/v1/routing/performance/test"
+        method: POST
+        body_format: json
+        body:
+          test_routes: 
+            - route_id: "{{ emergency_workflow_id }}_primary"
+              test_type: "comprehensive"
+              duration: 30
+          test_criteria:
+            max_latency: 100  # ms
+            min_throughput: "{{ (capacity_target | float * 0.8) }}"
+            max_packet_loss: 0.05  # 5%
+            max_jitter: 20  # ms
+          emergency_validation: true
+        timeout: 60
+      register: performance_validation
+      tags: [performance_validation]
+
+    - name: "Calculate Emergency Routing Effectiveness"
+      set_fact:
+        routing_effectiveness: >-
+          {%- set latency_score = (100 - (performance_validation.json.primary_route.latency | default(50) / 2)) | max(0) -%}
+          {%- set throughput_score = (performance_validation.json.primary_route.throughput | default(0.5) / capacity_target * 100) | min(100) -%}
+          {%- set reliability_score = ((1 - performance_validation.json.primary_route.packet_loss | default(0.1)) * 100) | max(0) -%}
+          {{ ((latency_score + throughput_score + reliability_score) / 3) | round(2) }}
+        route_establishment_time: "{{ (ansible_date_time.epoch | int) - (execution_timestamp | to_datetime('%Y-%m-%dT%H:%M:%S.%fZ') | int) }}"
+      tags: [effectiveness_calculation]
+
+    - name: "Setup Emergency Route Monitoring"
+      uri:
+        url: "http://localhost:8080/api/v1/monitoring/emergency"
+        method: POST
+        body_format: json
+        body:
+          monitoring_context: "{{ emergency_workflow_id }}"
+          monitored_routes:
+            - route_id: "{{ emergency_workflow_id }}_primary"
+              monitoring_interval: 5
+              alert_thresholds:
+                latency_max: 80
+                throughput_min: "{{ capacity_target | float * 0.7 }}"
+                packet_loss_max: 0.03
+                availability_min: 0.98
+            - route_id: "{{ emergency_workflow_id }}_backup"
+              monitoring_interval: 15
+              standby_monitoring: true
+          escalation_rules:
+            - condition: "primary_route_degradation"
+              action: "activate_backup_route"
+              threshold: "latency > 100 OR packet_loss > 0.05"
+            - condition: "both_routes_degraded"
+              action: "escalate_to_manual"
+              notification: "immediate"
+          monitoring_duration: 3600  # 1 hour of intensive monitoring
+        timeout: 20
+      register: emergency_monitoring
+      tags: [emergency_monitoring]
+
+    - name: "Generate Emergency Routing Report"
+      copy:
+        content: |
+          Nokia Build-a-thon AI Self-Healing Network
+          Emergency Routing Setup Report
+          =====================================
+          
+          Emergency Context:
+          - Workflow ID: {{ emergency_workflow_id }}
+          - Failed Link: {{ failed_link_id }}
+          - Source Node: {{ source_node }}
+          - Target Node: {{ target_node }}
+          - Execution Time: {{ execution_timestamp }}
+          - Route Establishment Time: {{ route_establishment_time }}s
+          
+          Network Impact Analysis:
+          - Affected Services: {{ impact_analysis.json.affected_services | default([]) | length }}
+          - Traffic Volume Impact: {{ impact_analysis.json.traffic_impact | default('unknown') }}
+          - Cascading Effects: {{ impact_analysis.json.cascading_risk | default('low') }}
+          - Service Continuity: {{ impact_analysis.json.service_continuity | default('maintained') }}
+          
+          Emergency Route Configuration:
+          - Primary Route Path: {{ primary_emergency_route.path | default([]) | join(' -> ') }}
+          - Primary Route Capacity: {{ primary_emergency_route.capacity | default('N/A') }}
+          - Backup Route Available: {{ 'Yes' if backup_emergency_route != {} else 'No' }}
+          {% if backup_emergency_route != {} %}
+          - Backup Route Path: {{ backup_emergency_route.path | join(' -> ') }}
+          - Backup Route Capacity: {{ backup_emergency_route.capacity }}
+          {% endif %}
+          
+          Performance Metrics:
+          - Route Effectiveness: {{ routing_effectiveness }}%
+          - Primary Route Latency: {{ performance_validation.json.primary_route.latency | default('N/A') }}ms
+          - Primary Route Throughput: {{ performance_validation.json.primary_route.throughput | default('N/A') }}
+          - Packet Loss Rate: {{ performance_validation.json.primary_route.packet_loss | default('N/A') }}%
+          - Convergence Time: {{ convergence_status.json.convergence_time | default('N/A') }}s
+          
+          Traffic Rerouting Status:
+          - Rerouting Success: {{ traffic_rerouting.json.success | default('unknown') }}
+          - Traffic Migrated: {{ traffic_rerouting.json.traffic_migrated | default('unknown') }}%
+          - Service Interruption: {{ traffic_rerouting.json.interruption_duration | default('unknown') }}s
+          
+          Emergency Monitoring:
+          - Monitoring Active: {{ emergency_monitoring.json.monitoring_active | default('unknown') }}
+          - Alert Rules Configured: {{ emergency_monitoring.json.alert_rules_count | default(0) }}
+          - Escalation Rules: {{ emergency_monitoring.json.escalation_rules_count | default(0) }}
+          
+          Quality Assessment:
+          {% if routing_effectiveness | float >= 85 %}
+          - Emergency routing setup EXCELLENT
+          - All performance criteria met
+          - High reliability achieved
+          {% elif routing_effectiveness | float >= 70 %}
+          - Emergency routing setup GOOD
+          - Most performance criteria met
+          - Acceptable service levels maintained
+          {% elif routing_effectiveness | float >= 50 %}
+          - Emergency routing setup ACCEPTABLE
+          - Basic connectivity restored
+          - Some performance degradation expected
+          {% else %}
+          - Emergency routing setup POOR
+          - Significant performance limitations
+          - Consider manual intervention
+          {% endif %}
+          
+          Recommendations:
+          {% if routing_effectiveness | float < 70 %}
+          - Consider additional alternative paths
+          - Review capacity allocation strategies
+          - Plan permanent infrastructure repair
+          {% endif %}
+          {% if total_available_routes | int < 2 %}
+          - Limited redundancy available
+          - Priority repair of failed link recommended
+          {% endif %}
+          - Monitor emergency routes closely
+          - Plan permanent solution implementation
+          - Schedule post-incident review
+          
+          Next Actions:
+          - Continue emergency monitoring for {{ emergency_monitoring.json.monitoring_duration | default(3600) }} seconds
+          - Prepare permanent repair plan
+          - Schedule infrastructure assessment
+          - Update network resilience documentation
+          
+          Generated: {{ execution_timestamp }}
+          Report ID: ERR_{{ emergency_workflow_id }}
+        dest: "/tmp/emergency_routing_report_{{ emergency_workflow_id }}.txt"
+        mode: '0644'
+      tags: [reporting]
+
+    - name: "Update Network Emergency Registry"
+      uri:
+        url: "http://localhost:8080/api/v1/network/emergency/register"
+        method: POST
+        body_format: json
+        body:
+          emergency_id: "{{ emergency_workflow_id }}"
+          emergency_type: "fiber_cut_emergency_routing"
+          affected_infrastructure:
+            failed_link: "{{ failed_link_id }}"
+            source_node: "{{ source_node }}"
+            target_node: "{{ target_node }}"
+            alternative_nodes: "{{ alternative_nodes }}"
+          emergency_response:
+            primary_route: "{{ emergency_workflow_id }}_primary"
+            backup_route: "{{ emergency_workflow_id }}_backup"
+            establishment_time: "{{ route_establishment_time }}"
+            effectiveness: "{{ routing_effectiveness }}"
+          status: "active"
+          monitoring_enabled: true
+          estimated_duration: "{{ emergency_monitoring.json.monitoring_duration | default(3600) }}"
+        timeout: 15
+      register: emergency_registry
+      tags: [registry_update]
+
+    - name: "Notify Orchestration Agent"
+      uri:
+        url: "http://localhost:9090/api/v1/healing/emergency/status"
+        method: POST
+        body_format: json
+        body:
+          workflow_type: "emergency_routing_setup"
+          emergency_id: "{{ emergency_workflow_id }}"
+          status: "{{ 'COMPLETED' if routing_effectiveness | float > 60 else 'DEGRADED' }}"
+          effectiveness: "{{ routing_effectiveness }}"
+          execution_time: "{{ execution_timestamp }}"
+          route_establishment_time: "{{ route_establishment_time }}"
+          primary_route: "{{ primary_emergency_route.path | default([]) }}"
+          backup_route: "{{ backup_emergency_route.path | default([]) }}"
+          monitoring_active: true
+          recommendations: 
+            - "Monitor emergency routes continuously"
+            - "Plan permanent infrastructure repair"
+            - "Review network resilience"
+        headers:
+          Content-Type: "application/json"
+          X-Emergency-Workflow: "{{ emergency_workflow_id }}"
+          X-Healing-Context: "fiber_cut_emergency"
+        timeout: 15
+      register: orchestrator_notification
+      ignore_errors: true
+      tags: [orchestrator_notification]
+
+    - name: "Log Emergency Routing Completion"
+      debug:
+        msg: |
+          ============================================================
+          Emergency Routing Setup Completed
+          ============================================================
+          Emergency ID: {{ emergency_workflow_id }}
+          Failed Link: {{ source_node }} <-> {{ target_node }}
+          Primary Route: {{ primary_emergency_route.path | default([]) | join(' -> ') }}
+          Effectiveness: {{ routing_effectiveness }}%
+          Establishment Time: {{ route_establishment_time }}s
+          Status: {{ 'SUCCESS' if routing_effectiveness | float > 60 else 'DEGRADED' }}
+          Monitoring: Active for {{ emergency_monitoring.json.monitoring_duration | default(3600) }}s
+          Report: /tmp/emergency_routing_report_{{ emergency_workflow_id }}.txt
+          ============================================================
+      tags: [completion]
+
+  handlers:
+    - name: "Emergency Route Rollback"
+      uri:
+        url: "http://localhost:8080/api/v1/routing/emergency/rollback"
+        method: POST
+        body_format: json
+        body:
+          emergency_id: "{{ emergency_workflow_id }}"
+          rollback_reason: "playbook_failure"
+          preserve_logs: true
+        timeout: 30
+      listen: "emergency_rollback"
+      ignore_errors: true
+
+    - name: "Cleanup Emergency Resources"
+      uri:
+        url: "http://localhost:8080/api/v1/emergency/cleanup"
+        method: DELETE
+        body_format: json
+        body:
+          emergency_id: "{{ emergency_workflow_id }}"
+          cleanup_scope: "temporary_resources"
+        timeout: 20
+      listen: "cleanup_emergency"
+      ignore_errors: true
+
+# Emergency routing completion summary
+- name: "Emergency Routing Setup Summary"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: "Emergency Setup Summary"
+      debug:
+        msg: |
+          Nokia Build-a-thon AI Self-Healing Network
+          Emergency Routing Setup Playbook Execution Complete
+          
+          Summary:
+          - Emergency ID: {{ emergency_workflow_id | default('N/A') }}
+          - Failed Link: {{ source_node | default('N/A') }} <-> {{ target_node | default('N/A') }}
+          - Primary Route Established: {{ 'Yes' if primary_route_config is succeeded else 'No' }}
+          - Backup Route Available: {{ 'Yes' if backup_route_config is succeeded else 'No' }}
+          - Routing Effectiveness: {{ routing_effectiveness | default('N/A') }}%
+          - Route Establishment Time: {{ route_establishment_time | default('N/A') }}s
+          
+          Integration Status:
+          - Emergency Registry Updated: {{ 'Yes' if emergency_registry is succeeded else 'No' }}
+          - Monitoring Activated: {{ 'Yes' if emergency_monitoring is succeeded else 'No' }}
+          - Orchestrator Notified: {{ 'Yes' if orchestrator_notification is succeeded else 'No' }}
+          - Report Generated: Yes
+          
+          This playbook demonstrates advanced emergency response capabilities
+          for the Nokia Build-a-thon AI Self-Healing Network project.
+      tags: [summary]

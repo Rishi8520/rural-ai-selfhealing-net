@@ -1,0 +1,438 @@
+---
+- name: "Nokia Build-a-thon: Power Stabilization Healing Playbook"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    playbook_version: "1.0.0"
+    playbook_type: "power_stabilization"
+    execution_timestamp: "{{ ansible_date_time.iso8601 }}"
+    
+  tasks:
+    - name: "Initialize Power Stabilization Workflow"
+      debug:
+        msg: |
+          ============================================================
+          Nokia Build-a-thon AI Self-Healing Network
+          Power Stabilization Healing Playbook v{{ playbook_version }}
+          Execution Time: {{ execution_timestamp }}
+          Target Node: {{ node_id }}
+          Current Voltage: {{ current_voltage }}V
+          Target Voltage: {{ target_voltage }}V
+          Severity: {{ severity }}
+          ============================================================
+      tags: [initialization]
+
+    - name: "Validate Input Parameters"
+      assert:
+        that:
+          - node_id is defined
+          - node_id | regex_search('^node_[0-4][0-9]$')
+          - current_voltage is defined
+          - current_voltage | float > 0
+          - target_voltage is defined
+          - target_voltage | float > 0
+          - severity is defined
+          - severity in ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL']
+        fail_msg: "Invalid input parameters for power stabilization"
+        success_msg: "Input parameters validated successfully"
+      tags: [validation]
+
+    - name: "Calculate Voltage Deviation"
+      set_fact:
+        voltage_deviation: "{{ ((current_voltage | float - target_voltage | float) / target_voltage | float * 100) | abs }}"
+        voltage_status: "{{ 'UNSTABLE' if ((current_voltage | float - target_voltage | float) | abs > 10) else 'STABLE' }}"
+      tags: [analysis]
+
+    - name: "Determine Stabilization Strategy"
+      set_fact:
+        stabilization_strategy: >-
+          {%- if voltage_deviation | float > 20 -%}
+            emergency_stabilization
+          {%- elif voltage_deviation | float > 10 -%}
+            active_stabilization
+          {%- elif voltage_deviation | float > 5 -%}
+            gentle_stabilization
+          {%- else -%}
+            monitoring_only
+          {%- endif -%}
+        backup_power_required: "{{ voltage_deviation | float > 15 or severity == 'CRITICAL' }}"
+      tags: [strategy]
+
+    - name: "Log Stabilization Strategy Decision"
+      debug:
+        msg: |
+          Voltage Analysis Results:
+          - Current Voltage: {{ current_voltage }}V
+          - Target Voltage: {{ target_voltage }}V
+          - Deviation: {{ voltage_deviation }}%
+          - Status: {{ voltage_status }}
+          - Strategy: {{ stabilization_strategy }}
+          - Backup Power Required: {{ backup_power_required }}
+      tags: [logging]
+
+    - name: "Initialize Network State Collector"
+      uri:
+        url: "http://localhost:8080/api/v1/network/state"
+        method: GET
+        headers:
+          Content-Type: "application/json"
+          X-Healing-Context: "power_stabilization"
+        timeout: 10
+      register: network_state_response
+      ignore_errors: true
+      tags: [network_state]
+
+    - name: "Extract Current Network Metrics"
+      set_fact:
+        network_metrics: "{{ network_state_response.json | default({}) }}"
+        node_status: "{{ network_state_response.json.nodes[node_id] | default({'status': 'unknown'}) }}"
+      when: network_state_response is succeeded
+      tags: [network_state]
+
+    - name: "Emergency Voltage Stabilization (Critical Cases)"
+      block:
+        - name: "Activate Emergency Power Systems"
+          uri:
+            url: "http://localhost:8080/api/v1/power/emergency"
+            method: POST
+            body_format: json
+            body:
+              node_id: "{{ node_id }}"
+              action: "activate_emergency_power"
+              target_voltage: "{{ target_voltage }}"
+              emergency_level: "{{ severity }}"
+              timestamp: "{{ execution_timestamp }}"
+            headers:
+              Content-Type: "application/json"
+              X-Healing-Action: "emergency_power_activation"
+            timeout: 30
+          register: emergency_power_result
+          
+        - name: "Configure Voltage Regulators"
+          uri:
+            url: "http://localhost:8080/api/v1/power/regulate"
+            method: PUT
+            body_format: json
+            body:
+              node_id: "{{ node_id }}"
+              regulation_mode: "emergency"
+              target_voltage: "{{ target_voltage }}"
+              max_adjustment_rate: 5.0  # V/second
+              safety_limits:
+                min_voltage: "{{ (target_voltage | float * 0.8) | round(1) }}"
+                max_voltage: "{{ (target_voltage | float * 1.2) | round(1) }}"
+            timeout: 20
+          register: voltage_regulation_result
+          
+        - name: "Monitor Emergency Stabilization Progress"
+          uri:
+            url: "http://localhost:8080/api/v1/power/status/{{ node_id }}"
+            method: GET
+            timeout: 5
+          register: power_status
+          retries: 12  # 1 minute of monitoring
+          delay: 5
+          until: power_status.json.voltage_stable | default(false)
+          
+      when: stabilization_strategy == 'emergency_stabilization'
+      tags: [emergency_stabilization]
+
+    - name: "Active Voltage Stabilization (High Deviation)"
+      block:
+        - name: "Activate Backup Power Systems"
+          uri:
+            url: "http://localhost:8080/api/v1/power/backup"
+            method: POST
+            body_format: json
+            body:
+              node_id: "{{ node_id }}"
+              action: "activate"
+              capacity_percentage: 80
+              switchover_mode: "smooth"
+            timeout: 20
+          register: backup_power_result
+          when: backup_power_required | bool
+          
+        - name: "Adjust Power Distribution"
+          uri:
+            url: "http://localhost:8080/api/v1/power/distribute"
+            method: PUT
+            body_format: json
+            body:
+              node_id: "{{ node_id }}"
+              distribution_strategy: "voltage_optimization"
+              target_voltage: "{{ target_voltage }}"
+              load_balancing: true
+              efficiency_optimization: true
+            timeout: 15
+          register: power_distribution_result
+          
+        - name: "Fine-tune Voltage Control"
+          uri:
+            url: "http://localhost:8080/api/v1/power/fine_tune"
+            method: PATCH
+            body_format: json
+            body:
+              node_id: "{{ node_id }}"
+              fine_tuning_parameters:
+                step_size: 0.5  # Voltage adjustment step
+                convergence_threshold: 2.0  # Acceptable deviation %
+                adjustment_frequency: 10  # seconds
+                safety_monitoring: true
+            timeout: 10
+          register: fine_tuning_result
+          
+      when: stabilization_strategy == 'active_stabilization'
+      tags: [active_stabilization]
+
+    - name: "Gentle Voltage Stabilization (Moderate Deviation)"
+      block:
+        - name: "Gradual Voltage Adjustment"
+          uri:
+            url: "http://localhost:8080/api/v1/power/adjust"
+            method: PATCH
+            body_format: json
+            body:
+              node_id: "{{ node_id }}"
+              adjustment_mode: "gradual"
+              target_voltage: "{{ target_voltage }}"
+              adjustment_rate: 1.0  # V/minute
+              monitoring_interval: 15  # seconds
+            timeout: 10
+          register: gradual_adjustment_result
+          
+        - name: "Monitor Stabilization Progress"
+          uri:
+            url: "http://localhost:8080/api/v1/power/monitor"
+            method: GET
+            url_username: "{{ node_id }}"
+          register: stabilization_progress
+          retries: 6  # 1.5 minutes of monitoring
+          delay: 15
+          until: |
+            stabilization_progress.json.voltage_deviation | default(100) | float < 5.0
+            
+      when: stabilization_strategy == 'gentle_stabilization'
+      tags: [gentle_stabilization]
+
+    - name: "Enhanced Monitoring Only (Stable Voltage)"
+      block:
+        - name: "Activate Enhanced Monitoring"
+          uri:
+            url: "http://localhost:8080/api/v1/power/monitor/enhanced"
+            method: POST
+            body_format: json
+            body:
+              node_id: "{{ node_id }}"
+              monitoring_frequency: 5  # seconds
+              alert_thresholds:
+                voltage_min: "{{ (target_voltage | float * 0.95) | round(1) }}"
+                voltage_max: "{{ (target_voltage | float * 1.05) | round(1) }}"
+                deviation_max: 3.0  # percentage
+              duration: 300  # 5 minutes
+            timeout: 5
+          register: enhanced_monitoring_result
+          
+      when: stabilization_strategy == 'monitoring_only'
+      tags: [monitoring]
+
+    - name: "Validate Stabilization Success"
+      uri:
+        url: "http://localhost:8080/api/v1/power/validate/{{ node_id }}"
+        method: GET
+        timeout: 10
+      register: final_validation
+      retries: 3
+      delay: 10
+      tags: [validation]
+
+    - name: "Calculate Stabilization Effectiveness"
+      set_fact:
+        stabilization_effectiveness: >-
+          {%- set final_voltage = final_validation.json.current_voltage | default(current_voltage) | float -%}
+          {%- set final_deviation = ((final_voltage - target_voltage | float) / target_voltage | float * 100) | abs -%}
+          {%- set initial_deviation = voltage_deviation | float -%}
+          {%- if initial_deviation > 0 -%}
+            {{ ((initial_deviation - final_deviation) / initial_deviation * 100) | round(2) }}
+          {%- else -%}
+            100.0
+          {%- endif -%}
+        final_voltage_status: >-
+          {%- set final_voltage = final_validation.json.current_voltage | default(current_voltage) | float -%}
+          {%- set final_deviation = ((final_voltage - target_voltage | float) / target_voltage | float * 100) | abs -%}
+          {%- if final_deviation < 2.0 -%}
+            EXCELLENT
+          {%- elif final_deviation < 5.0 -%}
+            GOOD
+          {%- elif final_deviation < 10.0 -%}
+            ACCEPTABLE
+          {%- else -%}
+            POOR
+          {%- endif -%}
+      tags: [effectiveness]
+
+    - name: "Update Network Configuration Registry"
+      uri:
+        url: "http://localhost:8080/api/v1/network/config/update"
+        method: PUT
+        body_format: json
+        body:
+          node_id: "{{ node_id }}"
+          configuration_updates:
+            power_stabilization:
+              strategy_applied: "{{ stabilization_strategy }}"
+              target_voltage: "{{ target_voltage }}"
+              stabilization_timestamp: "{{ execution_timestamp }}"
+              effectiveness: "{{ stabilization_effectiveness }}"
+              final_status: "{{ final_voltage_status }}"
+            backup_power:
+              activated: "{{ backup_power_required }}"
+              timestamp: "{{ execution_timestamp if backup_power_required else omit }}"
+        timeout: 10
+      register: config_update_result
+      tags: [configuration]
+
+    - name: "Generate Power Stabilization Report"
+      copy:
+        content: |
+          Nokia Build-a-thon AI Self-Healing Network
+          Power Stabilization Healing Report
+          ==========================================
+          
+          Execution Details:
+          - Workflow ID: power_stabilization_{{ node_id }}_{{ ansible_date_time.epoch }}
+          - Target Node: {{ node_id }}
+          - Execution Time: {{ execution_timestamp }}
+          - Playbook Version: {{ playbook_version }}
+          
+          Voltage Analysis:
+          - Initial Voltage: {{ current_voltage }}V
+          - Target Voltage: {{ target_voltage }}V
+          - Initial Deviation: {{ voltage_deviation }}%
+          - Severity Level: {{ severity }}
+          
+          Stabilization Strategy:
+          - Strategy Applied: {{ stabilization_strategy }}
+          - Backup Power Required: {{ backup_power_required }}
+          - Backup Power Activated: {{ backup_power_result.json.activated | default('N/A') }}
+          
+          Results:
+          - Final Voltage: {{ final_validation.json.current_voltage | default('N/A') }}V
+          - Final Status: {{ final_voltage_status }}
+          - Effectiveness: {{ stabilization_effectiveness }}%
+          - Stabilization Time: {{ final_validation.json.stabilization_duration | default('N/A') }}s
+          
+          Network Impact:
+          - Node Status: {{ final_validation.json.node_status | default('unknown') }}
+          - Service Continuity: {{ final_validation.json.service_continuity | default('unknown') }}
+          - Performance Impact: {{ final_validation.json.performance_impact | default('unknown') }}
+          
+          Recommendations:
+          {% if stabilization_effectiveness | float < 70 %}
+          - Consider hardware inspection for {{ node_id }}
+          - Review power infrastructure capacity
+          - Schedule preventive maintenance
+          {% elif stabilization_effectiveness | float < 90 %}
+          - Monitor power quality trends
+          - Consider power conditioning equipment
+          {% else %}
+          - Power stabilization successful
+          - Continue normal monitoring
+          {% endif %}
+          
+          Next Actions:
+          - Enhanced monitoring for {{ final_validation.json.recommended_monitoring_duration | default(300) }} seconds
+          - Schedule follow-up assessment in {{ final_validation.json.followup_schedule | default('24 hours') }}
+          {% if backup_power_required %}
+          - Plan backup power system optimization
+          {% endif %}
+          
+          Generated: {{ execution_timestamp }}
+          Report ID: PSR_{{ node_id }}_{{ ansible_date_time.epoch }}
+        dest: "/tmp/power_stabilization_report_{{ node_id }}_{{ ansible_date_time.epoch }}.txt"
+        mode: '0644'
+      tags: [reporting]
+
+    - name: "Send Healing Status to Orchestration Agent"
+      uri:
+        url: "http://localhost:9090/api/v1/healing/status"
+        method: POST
+        body_format: json
+        body:
+          workflow_type: "power_stabilization"
+          node_id: "{{ node_id }}"
+          status: "{{ 'COMPLETED' if stabilization_effectiveness | float > 70 else 'PARTIAL' }}"
+          effectiveness: "{{ stabilization_effectiveness }}"
+          execution_time: "{{ execution_timestamp }}"
+          strategy_applied: "{{ stabilization_strategy }}"
+          recommendations: "{{ final_validation.json.recommendations | default([]) }}"
+          next_actions: "{{ final_validation.json.next_actions | default([]) }}"
+        headers:
+          Content-Type: "application/json"
+          X-Healing-Workflow: "power_stabilization"
+          X-Node-ID: "{{ node_id }}"
+        timeout: 10
+      register: orchestrator_notification
+      ignore_errors: true
+      tags: [notification]
+
+    - name: "Log Final Status"
+      debug:
+        msg: |
+          ============================================================
+          Power Stabilization Workflow Completed
+          ============================================================
+          Node: {{ node_id }}
+          Strategy: {{ stabilization_strategy }}
+          Effectiveness: {{ stabilization_effectiveness }}%
+          Final Status: {{ final_voltage_status }}
+          Report Generated: /tmp/power_stabilization_report_{{ node_id }}_{{ ansible_date_time.epoch }}.txt
+          ============================================================
+      tags: [completion]
+
+  handlers:
+    - name: "Emergency Power Shutdown"
+      uri:
+        url: "http://localhost:8080/api/v1/power/emergency/shutdown"
+        method: POST
+        body_format: json
+        body:
+          node_id: "{{ node_id }}"
+          reason: "playbook_failure"
+          timestamp: "{{ ansible_date_time.iso8601 }}"
+        timeout: 10
+      listen: "emergency_shutdown"
+      ignore_errors: true
+
+    - name: "Cleanup Temporary Resources"
+      file:
+        path: "/tmp/power_stabilization_{{ node_id }}_*"
+        state: absent
+      listen: "cleanup_resources"
+      ignore_errors: true
+
+# Playbook completion
+- name: "Power Stabilization Playbook Summary"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: "Playbook Execution Summary"
+      debug:
+        msg: |
+          Nokia Build-a-thon AI Self-Healing Network
+          Power Stabilization Healing Playbook Execution Complete
+          
+          Summary:
+          - Target Node: {{ node_id | default('N/A') }}
+          - Execution Result: {{ 'SUCCESS' if stabilization_effectiveness | default(0) | float > 70 else 'PARTIAL' }}
+          - Strategy Applied: {{ stabilization_strategy | default('N/A') }}
+          - Effectiveness: {{ stabilization_effectiveness | default('N/A') }}%
+          
+          Integration Status:
+          - Network Config Updated: {{ 'Yes' if config_update_result is succeeded else 'No' }}
+          - Orchestrator Notified: {{ 'Yes' if orchestrator_notification is succeeded else 'No' }}
+          - Report Generated: Yes
+          
+          This playbook is part of the Nokia Build-a-thon AI Self-Healing Network project
+          demonstrating advanced TOSCA orchestration with xOpera integration.
+      tags: [summary]

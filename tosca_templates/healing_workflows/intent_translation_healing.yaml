@@ -1,0 +1,651 @@
+tosca_definitions_version: tosca_simple_yaml_1_3
+
+metadata:
+  title: "Rural Network Intent Translation and Configuration Healing Workflow"
+  description: "TOSCA template for AI-driven intent-based network healing and configuration optimization"
+  author: "Nokia Build-a-thon AI Self-Healing Network"
+  version: "1.0.0"
+  created: "2024-12-08"
+  template_type: "intelligent_healing_workflow"
+  use_case: "intent_based_network_optimization"
+  criticality: "MEDIUM"
+  ai_powered: true
+
+imports:
+  - ../node_types/rural_network_node_types.yaml
+  - ../node_types/healing_interface_types.yaml
+
+topology_template:
+  inputs:
+    healing_intent:
+      type: string
+      description: "High-level healing intent (e.g., 'optimize network performance', 'reduce latency')"
+      required: true
+      
+    target_nodes:
+      type: list
+      description: "List of nodes to apply intent-based healing"
+      entry_schema:
+        type: string
+        constraints:
+          - pattern: "node_[0-4][0-9]"
+      required: true
+      
+    performance_objectives:
+      type: map
+      description: "Specific performance objectives to achieve"
+      entry_schema:
+        type: float
+      default:
+        latency_target: 50.0  # milliseconds
+        throughput_target: 1000.0  # Mbps
+        availability_target: 99.9  # percentage
+        packet_loss_target: 0.01  # percentage
+        energy_efficiency_target: 0.8  # ratio
+      
+    optimization_scope:
+      type: string
+      description: "Scope of optimization (local, regional, global)"
+      constraints:
+        - valid_values: ["local", "regional", "global"]
+      default: "regional"
+      
+    ai_model_preferences:
+      type: map
+      description: "AI model preferences for intent translation"
+      entry_schema:
+        type: string
+      default:
+        primary_model: "lstm_predictor"
+        fallback_model: "classical_optimizer"
+        learning_mode: "online"
+        confidence_threshold: 0.85
+        
+    configuration_constraints:
+      type: map
+      description: "Configuration constraints and boundaries"
+      entry_schema:
+        type: float
+      default:
+        max_power_increase: 0.2  # 20% increase limit
+        max_bandwidth_allocation: 0.9  # 90% of total
+        max_routing_changes: 10  # maximum route modifications
+        max_optimization_time: 300  # seconds
+        
+    rollback_policy:
+      type: string
+      description: "Rollback policy if intent translation fails"
+      constraints:
+        - valid_values: ["automatic", "manual", "none"]
+      default: "automatic"
+      
+    learning_enabled:
+      type: boolean
+      description: "Enable machine learning from healing outcomes"
+      default: true
+      
+    validation_required:
+      type: boolean
+      description: "Require validation before applying changes"
+      default: true
+
+  node_templates:
+    # Intent Analysis and Translation Service
+    intent_translation_service:
+      type: rural_network.IntentTranslationService
+      properties:
+        healing_intent: { get_input: healing_intent }
+        target_infrastructure: { get_input: target_nodes }
+        ai_model_config: { get_input: ai_model_preferences }
+        performance_targets: { get_input: performance_objectives }
+        optimization_scope: { get_input: optimization_scope }
+        translation_algorithm: "neural_network_based"
+        context_awareness: true
+        historical_learning: { get_input: learning_enabled }
+      attributes:
+        translated_actions: []
+        confidence_score: 0.0
+        estimated_improvement: 0.0
+        risk_assessment: ""
+        alternative_strategies: []
+        learning_feedback: ""
+      interfaces:
+        Standard:
+          create:
+            implementation: ../playbooks/analyze_healing_intent.yml
+            inputs:
+              intent_text: { get_input: healing_intent }
+              target_nodes: { get_input: target_nodes }
+              context_data: "current_network_state"
+          configure:
+            implementation: ../playbooks/translate_intent_to_actions.yml
+            inputs:
+              performance_objectives: { get_input: performance_objectives }
+              constraints: { get_input: configuration_constraints }
+              ai_model: { get_input: ai_model_preferences }
+          start:
+            implementation: ../playbooks/validate_translated_actions.yml
+            inputs:
+              validation_enabled: { get_input: validation_required }
+              confidence_threshold: 0.85
+
+    # Network State Analysis Service
+    network_state_analyzer:
+      type: rural_network.NetworkStateAnalysisService
+      properties:
+        analysis_scope: { get_input: target_nodes }
+        analysis_depth: "comprehensive"
+        real_time_monitoring: true
+        historical_analysis: true
+        performance_baseline_calculation: true
+        anomaly_detection: true
+        trend_analysis: true
+        predictive_modeling: true
+      attributes:
+        current_performance_metrics: {}
+        baseline_metrics: {}
+        performance_gaps: {}
+        optimization_opportunities: []
+        predicted_outcomes: {}
+        network_health_score: 0.0
+      interfaces:
+        Standard:
+          create:
+            implementation: ../playbooks/analyze_current_network_state.yml
+            inputs:
+              nodes_to_analyze: { get_input: target_nodes }
+              metrics_collection_duration: 60
+          start:
+            implementation: ../playbooks/identify_optimization_opportunities.yml
+            inputs:
+              performance_targets: { get_input: performance_objectives }
+              historical_data_depth: 7  # days
+
+    # Configuration Optimization Service
+    configuration_optimizer:
+      type: rural_network.ConfigurationOptimizerService
+      properties:
+        optimization_algorithm: "multi_objective_genetic_algorithm"
+        constraints: { get_input: configuration_constraints }
+        optimization_objectives: { get_input: performance_objectives }
+        safety_checks: true
+        incremental_optimization: true
+        rollback_preparation: true
+        impact_simulation: true
+      attributes:
+        optimized_configurations: {}
+        expected_improvements: {}
+        risk_factors: {}
+        rollback_plan: {}
+        simulation_results: {}
+        optimization_confidence: 0.0
+      interfaces:
+        Standard:
+          create:
+            implementation: ../playbooks/prepare_configuration_optimization.yml
+            inputs:
+              current_configurations: { get_attribute: [network_state_analyzer, current_performance_metrics] }
+              optimization_goals: { get_input: performance_objectives }
+          configure:
+            implementation: ../playbooks/generate_optimized_configurations.yml
+            inputs:
+              constraints: { get_input: configuration_constraints }
+              safety_validation: true
+          start:
+            implementation: ../playbooks/simulate_configuration_impact.yml
+            inputs:
+              simulation_duration: 60
+              risk_assessment: true
+
+    # Intelligent Routing Optimizer
+    routing_optimization_service:
+      type: rural_network.IntelligentRoutingService
+      properties:
+        target_nodes: { get_input: target_nodes }
+        routing_algorithm: "ai_enhanced_shortest_path"
+        load_balancing_strategy: "predictive_load_distribution"
+        qos_optimization: true
+        adaptive_routing: true
+        congestion_prediction: true
+        route_learning: { get_input: learning_enabled }
+      attributes:
+        optimized_routes: []
+        load_distribution: {}
+        predicted_congestion: {}
+        route_efficiency_improvement: 0.0
+        qos_metrics_improvement: {}
+      interfaces:
+        Standard:
+          create:
+            implementation: ../playbooks/analyze_routing_patterns.yml
+            inputs:
+              nodes: { get_input: target_nodes }
+              traffic_analysis_duration: 120
+          configure:
+            implementation: ../playbooks/optimize_routing_tables.yml
+            inputs:
+              performance_targets: { get_input: performance_objectives }
+              load_balancing: true
+          start:
+            implementation: ../playbooks/implement_routing_optimization.yml
+            inputs:
+              gradual_implementation: true
+              monitoring_required: true
+
+    # AI-Powered Performance Tuning Service
+    ai_performance_tuner:
+      type: rural_network.AIPerformanceTuningService
+      properties:
+        tuning_scope: { get_input: target_nodes }
+        ai_model_type: "deep_reinforcement_learning"
+        performance_objectives: { get_input: performance_objectives }
+        adaptive_learning: true
+        real_time_optimization: true
+        multi_objective_optimization: true
+        feedback_learning: { get_input: learning_enabled }
+      attributes:
+        tuning_recommendations: {}
+        performance_predictions: {}
+        learning_progress: 0.0
+        optimization_history: []
+        adaptation_rate: 0.0
+      interfaces:
+        Standard:
+          create:
+            implementation: ../playbooks/initialize_ai_performance_tuning.yml
+            inputs:
+              baseline_metrics: { get_attribute: [network_state_analyzer, baseline_metrics] }
+              objectives: { get_input: performance_objectives }
+          configure:
+            implementation: ../playbooks/train_performance_models.yml
+            inputs:
+              historical_data: true
+              online_learning: { get_input: learning_enabled }
+          start:
+            implementation: ../playbooks/apply_ai_performance_tuning.yml
+            inputs:
+              incremental_application: true
+              safety_monitoring: true
+
+    # Intent Execution Coordinator
+    intent_execution_coordinator:
+      type: rural_network.IntentExecutionCoordinatorService
+      properties:
+        intent_workflow_id: { concat: ["intent_healing_", { get_property: [SELF, execution_timestamp] }] }
+        healing_intent: { get_input: healing_intent }
+        execution_strategy: "coordinated_gradual_implementation"
+        validation_required: { get_input: validation_required }
+        rollback_policy: { get_input: rollback_policy }
+        learning_integration: { get_input: learning_enabled }
+        success_criteria:
+          performance_improvement: true
+          stability_maintained: true
+          objectives_achieved: 0.8  # 80% of objectives
+          no_degradation: true
+      attributes:
+        execution_timestamp: ""
+        coordination_status: "initializing"
+        execution_progress: 0
+        objectives_achieved: 0
+        improvements_realized: {}
+        lessons_learned: []
+      interfaces:
+        Standard:
+          create:
+            implementation: ../playbooks/initialize_intent_execution.yml
+          start:
+            implementation: ../playbooks/coordinate_intent_implementation.yml
+          delete:
+            implementation: ../playbooks/finalize_intent_execution.yml
+
+    # Continuous Learning Service
+    continuous_learning_service:
+      type: rural_network.ContinuousLearningService
+      properties:
+        learning_scope: { get_input: target_nodes }
+        learning_algorithms: ["reinforcement_learning", "supervised_learning", "unsupervised_clustering"]
+        feedback_integration: true
+        model_updating: true
+        knowledge_base_enhancement: true
+        pattern_recognition: true
+        enabled: { get_input: learning_enabled }
+      attributes:
+        learning_progress: 0.0
+        model_accuracy_improvements: {}
+        knowledge_patterns_discovered: []
+        feedback_integration_rate: 0.0
+      interfaces:
+        Standard:
+          create:
+            implementation: ../playbooks/setup_continuous_learning.yml
+          start:
+            implementation: ../playbooks/execute_learning_algorithms.yml
+          delete:
+            implementation: ../playbooks/integrate_learning_outcomes.yml
+
+  # Relationship Templates
+  relationships:
+    - type: rural_network.IntentCoordinatedBy
+      source: intent_translation_service
+      target: intent_execution_coordinator
+      
+    - type: rural_network.IntentCoordinatedBy
+      source: configuration_optimizer
+      target: intent_execution_coordinator
+      
+    - type: rural_network.IntentCoordinatedBy
+      source: routing_optimization_service
+      target: intent_execution_coordinator
+      
+    - type: rural_network.IntentCoordinatedBy
+      source: ai_performance_tuner
+      target: intent_execution_coordinator
+      
+    - type: rural_network.AnalyzedBy
+      source: intent_execution_coordinator
+      target: network_state_analyzer
+      
+    - type: rural_network.LearnsFrom
+      source: continuous_learning_service
+      target: intent_execution_coordinator
+      
+    - type: rural_network.DependsOn
+      source: configuration_optimizer
+      target: network_state_analyzer
+      
+    - type: rural_network.DependsOn
+      source: ai_performance_tuner
+      target: intent_translation_service
+
+  # Intent-Based Healing Workflow
+  workflows:
+    intent_translation_healing:
+      description: "AI-powered intent-based network healing and optimization workflow"
+      metadata:
+        workflow_type: "intelligent_optimization"
+        estimated_duration: 450  # 7.5 minutes
+        success_rate: 0.88
+        rollback_supported: true
+        ai_powered: true
+        learning_enabled: true
+      inputs:
+        optimization_timeout:
+          type: integer
+          default: { get_input: configuration_constraints.max_optimization_time }
+        learning_mode:
+          type: boolean
+          default: { get_input: learning_enabled }
+        validation_mode:
+          type: boolean
+          default: { get_input: validation_required }
+      steps:
+        # Step 1: Initialize Intent-Based Healing (0-30 seconds)
+        initialize_intent_healing:
+          target: intent_execution_coordinator
+          activities:
+            - call_operation: Standard.create
+            - set_state: created
+          on_success:
+            - parallel_analysis_and_setup
+          on_failure:
+            - escalate_intent_failure
+
+        # Step 2: Parallel Analysis and Setup (30-90 seconds)
+        parallel_analysis_and_setup:
+          target: network_state_analyzer
+          activities:
+            - call_operation: Standard.create
+            - call_operation: Standard.start
+            - set_state: started
+          parallel:
+            - analyze_healing_intent
+            - setup_continuous_learning
+          on_success:
+            - translate_intent_to_actions
+          on_failure:
+            - attempt_basic_analysis
+
+        # Step 3: Analyze Healing Intent (Parallel)
+        analyze_healing_intent:
+          target: intent_translation_service
+          activities:
+            - call_operation: Standard.create
+              inputs:
+                intent_complexity_analysis: true
+                context_integration: true
+            - set_state: created
+
+        # Step 4: Setup Continuous Learning (Parallel)
+        setup_continuous_learning:
+          target: continuous_learning_service
+          activities:
+            - call_operation: Standard.create
+            - set_state: created
+          condition: { get_input: learning_enabled }
+
+        # Step 5: Translate Intent to Actions (90-150 seconds)
+        translate_intent_to_actions:
+          target: intent_translation_service
+          activities:
+            - call_operation: Standard.configure
+            - call_operation: Standard.start
+            - set_state: started
+          on_success:
+            - parallel_optimization_preparation
+          on_failure:
+            - attempt_simplified_translation
+
+        # Step 6: Parallel Optimization Preparation (150-240 seconds)
+        parallel_optimization_preparation:
+          target: configuration_optimizer
+          activities:
+            - call_operation: Standard.create
+            - call_operation: Standard.configure
+            - set_state: configured
+          parallel:
+            - prepare_routing_optimization
+            - initialize_ai_performance_tuning
+          on_success:
+            - execute_configuration_optimization
+          on_failure:
+            - attempt_individual_optimizations
+
+        # Step 7: Prepare Routing Optimization (Parallel)
+        prepare_routing_optimization:
+          target: routing_optimization_service
+          activities:
+            - call_operation: Standard.create
+            - call_operation: Standard.configure
+            - set_state: configured
+
+        # Step 8: Initialize AI Performance Tuning (Parallel)
+        initialize_ai_performance_tuning:
+          target: ai_performance_tuner
+          activities:
+            - call_operation: Standard.create
+            - call_operation: Standard.configure
+            - set_state: configured
+
+        # Step 9: Execute Configuration Optimization (240-300 seconds)
+        execute_configuration_optimization:
+          target: configuration_optimizer
+          activities:
+            - call_operation: Standard.start
+              inputs:
+                simulation_first: true
+                safety_validation: true
+            - set_state: started
+          on_success:
+            - execute_routing_optimization
+          on_failure:
+            - attempt_conservative_optimization
+
+        # Step 10: Execute Routing Optimization (300-360 seconds)
+        execute_routing_optimization:
+          target: routing_optimization_service
+          activities:
+            - call_operation: Standard.start
+              inputs:
+                gradual_implementation: true
+                impact_monitoring: true
+            - set_state: started
+          parallel:
+            - execute_ai_performance_tuning
+          on_success:
+            - coordinate_final_optimization
+          on_failure:
+            - rollback_routing_changes
+
+        # Step 11: Execute AI Performance Tuning (Parallel)
+        execute_ai_performance_tuning:
+          target: ai_performance_tuner
+          activities:
+            - call_operation: Standard.start
+              inputs:
+                adaptive_tuning: true
+                real_time_feedback: true
+            - set_state: started
+
+        # Step 12: Coordinate Final Optimization (360-420 seconds)
+        coordinate_final_optimization:
+          target: intent_execution_coordinator
+          activities:
+            - call_operation: Standard.start
+              inputs:
+                validation_duration: 60
+                comprehensive_testing: true
+                success_criteria:
+                  performance_improved: true
+                  objectives_met: 0.8
+                  stability_verified: true
+          on_success:
+            - integrate_learning_outcomes
+          on_failure:
+            - attempt_partial_rollback
+
+        # Step 13: Integrate Learning Outcomes (420-450 seconds)
+        integrate_learning_outcomes:
+          target: continuous_learning_service
+          activities:
+            - call_operation: Standard.start
+              inputs:
+                outcome_integration: true
+                model_updating: true
+            - call_operation: Standard.delete
+            - set_state: deleted
+          condition: { get_input: learning_enabled }
+          on_success:
+            - finalize_intent_execution
+          on_failure:
+            - finalize_without_learning
+
+        # Step 14: Finalize Intent Execution
+        finalize_intent_execution:
+          target: intent_execution_coordinator
+          activities:
+            - call_operation: Standard.delete
+              inputs:
+                preserve_optimizations: true
+                generate_improvement_report: true
+                update_knowledge_base: { get_input: learning_enabled }
+                schedule_performance_monitoring: true
+            - set_state: deleted
+
+  # Intent Translation Outputs
+  outputs:
+    intent_workflow_id:
+      description: "Unique intent-based healing workflow identifier"
+      value: { get_attribute: [intent_execution_coordinator, intent_workflow_id] }
+      
+    intent_translation_confidence:
+      description: "Confidence score of intent translation (0.0-1.0)"
+      value: { get_attribute: [intent_translation_service, confidence_score] }
+      
+    performance_improvements:
+      description: "Achieved performance improvements"
+      value: { get_attribute: [intent_execution_coordinator, improvements_realized] }
+      
+    objectives_achievement_rate:
+      description: "Percentage of objectives successfully achieved"
+      value: { get_attribute: [intent_execution_coordinator, objectives_achieved] }
+      
+    configuration_optimizations:
+      description: "Applied configuration optimizations"
+      value: { get_attribute: [configuration_optimizer, optimized_configurations] }
+      
+    routing_improvements:
+      description: "Routing optimization results"
+      value: { get_attribute: [routing_optimization_service, route_efficiency_improvement] }
+      
+    ai_tuning_results:
+      description: "AI-based performance tuning outcomes"
+      value: { get_attribute: [ai_performance_tuner, performance_predictions] }
+      
+    learning_progress:
+      description: "Continuous learning progress and insights"
+      value: { get_attribute: [continuous_learning_service, learning_progress] }
+      
+    network_health_improvement:
+      description: "Overall network health score improvement"
+      value: { get_attribute: [network_state_analyzer, network_health_score] }
+      
+    lessons_learned:
+      description: "Key lessons learned from intent-based healing"
+      value: { get_attribute: [intent_execution_coordinator, lessons_learned] }
+      
+    optimization_sustainability:
+      description: "Sustainability assessment of applied optimizations"
+      value: { get_attribute: [continuous_learning_service, model_accuracy_improvements] }
+
+  # Intent-Based Policies
+  policies:
+    - intent_execution_timeout:
+        type: rural_network.IntentTimeoutPolicy
+        targets: [intent_translation_healing]
+        properties:
+          timeout: { get_input: configuration_constraints.max_optimization_time }
+          action: "graceful_degradation"
+          partial_success_acceptable: true
+          
+    - ai_confidence_policy:
+        type: rural_network.AIConfidencePolicy
+        targets: [intent_translation_service, ai_performance_tuner]
+        properties:
+          minimum_confidence: { get_input: ai_model_preferences.confidence_threshold }
+          fallback_action: "conservative_optimization"
+          human_intervention_threshold: 0.6
+          
+    - performance_improvement_policy:
+        type: rural_network.PerformanceImprovementPolicy
+        targets: [configuration_optimizer, routing_optimization_service]
+        properties:
+          minimum_improvement_threshold: 0.05  # 5%
+          degradation_tolerance: 0.02  # 2%
+          rollback_on_degradation: { get_input: rollback_policy }
+          
+    - learning_integration_policy:
+        type: rural_network.LearningIntegrationPolicy
+        targets: [continuous_learning_service]
+        properties:
+          learning_rate: 0.1
+          knowledge_retention: 30  # days
+          model_update_frequency: "weekly"
+          feedback_integration: true
+
+  # Intent-Based Groups
+  groups:
+    ai_optimization_services:
+      type: rural_network.AIOptimizationGroup
+      members: [intent_translation_service, ai_performance_tuner, continuous_learning_service]
+      properties:
+        coordination_mode: "intelligent"
+        learning_enabled: { get_input: learning_enabled }
+        adaptive_behavior: true
+        
+    network_optimization_services:
+      type: rural_network.NetworkOptimizationGroup
+      members: [configuration_optimizer, routing_optimization_service, network_state_analyzer]
+      properties:
+        optimization_coordination: true
+        safety_first: true
+        incremental_implementation: true

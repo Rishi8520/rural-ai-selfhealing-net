@@ -1,0 +1,597 @@
+---
+- name: "Nokia Build-a-thon: Intent Analysis and Translation Playbook"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    playbook_version: "1.0.0"
+    playbook_type: "intent_analysis_translation"
+    execution_timestamp: "{{ ansible_date_time.iso8601 }}"
+    ai_confidence_threshold: 0.8
+    intent_processing_timeout: 180  # 3 minutes
+    
+  tasks:
+    - name: "Initialize Intent Analysis Workflow"
+      debug:
+        msg: |
+          ============================================================
+          Nokia Build-a-thon AI Self-Healing Network
+          Intent Analysis and Translation Playbook v{{ playbook_version }}
+          Execution Time: {{ execution_timestamp }}
+          Intent Text: "{{ intent_text }}"
+          Target Nodes: {{ target_nodes | join(', ') }}
+          Context Awareness: {{ context_awareness | default(true) }}
+          AI Model: {{ ai_model | default('ensemble') }}
+          Historical Learning: {{ historical_learning | default(true) }}
+          ============================================================
+      tags: [initialization]
+
+    - name: "Validate Intent Analysis Parameters"
+      assert:
+        that:
+          - intent_text is defined
+          - intent_text | length > 5
+          - target_nodes is defined
+          - target_nodes | length > 0
+          - ai_confidence_threshold | default(0.8) | float <= 1.0
+          - ai_confidence_threshold | default(0.8) | float >= 0.1
+        fail_msg: "Invalid parameters for intent analysis"
+        success_msg: "Intent analysis parameters validated successfully"
+      tags: [validation]
+
+    - name: "Generate Intent Analysis Workflow ID"
+      set_fact:
+        intent_analysis_id: "INTENT_{{ ansible_date_time.epoch }}_{{ (intent_text | hash('md5'))[:8] }}"
+        analysis_start_time: "{{ ansible_date_time.epoch | int }}"
+      tags: [initialization]
+
+    - name: "Collect Network Context Data"
+      uri:
+        url: "http://localhost:8080/api/v1/network/context/collect"
+        method: POST
+        body_format: json
+        body:
+          context_scope: "{{ target_nodes }}"
+          context_types:
+            - "topology"
+            - "performance_metrics"
+            - "health_status"
+            - "historical_patterns"
+            - "current_traffic"
+            - "resource_utilization"
+          context_depth: "comprehensive"
+          real_time_data: true
+          historical_period: 168  # 7 days
+        headers:
+          X-Intent-Analysis: "{{ intent_analysis_id }}"
+        timeout: 45
+      register: network_context
+      when: context_awareness | default(true)
+      tags: [context_collection]
+
+    - name: "Preprocess Intent Text"
+      uri:
+        url: "http://localhost:8080/api/v1/nlp/preprocess"
+        method: POST
+        body_format: json
+        body:
+          text: "{{ intent_text }}"
+          preprocessing_tasks:
+            - "tokenization"
+            - "lemmatization"
+            - "entity_recognition"
+            - "intent_classification"
+            - "sentiment_analysis"
+            - "technical_term_extraction"
+          language: "en"
+          domain: "telecommunications"
+          context_hints: "{{ network_context.json.context_summary | default({}) }}"
+        timeout: 30
+      register: preprocessed_intent
+      tags: [text_preprocessing]
+
+    - name: "Load AI Models for Intent Analysis"
+      uri:
+        url: "http://localhost:8080/api/v1/ai/models/load"
+        method: POST
+        body_format: json
+        body:
+          model_ensemble:
+            primary_model:
+              type: "transformer"
+              name: "intent_transformer_v2"
+              specialization: "network_healing_intents"
+            secondary_models:
+              - type: "lstm"
+                name: "sequence_analyzer_v1"
+                specialization: "temporal_intent_patterns"
+              - type: "random_forest"
+                name: "context_classifier_v1"
+                specialization: "network_context_classification"
+          load_configuration:
+            gpu_acceleration: true
+            batch_processing: false
+            confidence_calculation: true
+            uncertainty_quantification: true
+        timeout: 60
+      register: ai_models_loaded
+      tags: [ai_model_loading]
+
+    - name: "Perform Primary Intent Analysis"
+      uri:
+        url: "http://localhost:8080/api/v1/ai/analyze/intent"
+        method: POST
+        body_format: json
+        body:
+          analysis_context: "{{ intent_analysis_id }}"
+          input_data:
+            preprocessed_text: "{{ preprocessed_intent.json }}"
+            network_context: "{{ network_context.json | default({}) }}"
+            target_infrastructure: "{{ target_nodes }}"
+          analysis_configuration:
+            model_ensemble: "{{ ai_models_loaded.json.ensemble_id }}"
+            confidence_threshold: "{{ ai_confidence_threshold }}"
+            multi_intent_detection: true
+            context_integration: "{{ context_awareness | default(true) }}"
+            uncertainty_bounds: true
+          output_requirements:
+            - "intent_classification"
+            - "action_extraction"
+            - "parameter_identification"
+            - "priority_assessment"
+            - "feasibility_estimation"
+            - "risk_evaluation"
+        timeout: 90
+      register: primary_intent_analysis
+      tags: [primary_analysis]
+
+    - name: "Validate Intent Analysis Confidence"
+      assert:
+        that:
+          - primary_intent_analysis.json.confidence_score | default(0) | float >= ai_confidence_threshold
+          - primary_intent_analysis.json.intent_clarity | default('unclear') != 'unclear'
+          - primary_intent_analysis.json.extracted_actions | default([]) | length > 0
+        fail_msg: "Intent analysis confidence below threshold or unclear intent"
+        success_msg: "Intent analysis meets confidence requirements"
+      tags: [confidence_validation]
+
+    - name: "Extract Structured Intent Components"
+      set_fact:
+        intent_classification: "{{ primary_intent_analysis.json.intent_classification }}"
+        extracted_actions: "{{ primary_intent_analysis.json.extracted_actions }}"
+        identified_parameters: "{{ primary_intent_analysis.json.identified_parameters }}"
+        priority_level: "{{ primary_intent_analysis.json.priority_assessment }}"
+        feasibility_score: "{{ primary_intent_analysis.json.feasibility_estimation }}"
+        risk_assessment: "{{ primary_intent_analysis.json.risk_evaluation }}"
+        confidence_score: "{{ primary_intent_analysis.json.confidence_score }}"
+      tags: [component_extraction]
+
+    - name: "Perform Contextual Intent Refinement"
+      uri:
+        url: "http://localhost:8080/api/v1/ai/refine/intent"
+        method: POST
+        body_format: json
+        body:
+          refinement_context: "{{ intent_analysis_id }}"
+          base_analysis: "{{ primary_intent_analysis.json }}"
+          contextual_factors:
+            network_state: "{{ network_context.json.current_state | default({}) }}"
+            historical_patterns: "{{ network_context.json.historical_patterns | default([]) }}"
+            resource_constraints: "{{ network_context.json.resource_constraints | default({}) }}"
+            operational_policies: "{{ network_context.json.policies | default([]) }}"
+          refinement_objectives:
+            - "improve_action_specificity"
+            - "optimize_parameter_values"
+            - "enhance_feasibility_assessment"
+            - "refine_risk_evaluation"
+            - "suggest_alternatives"
+        timeout: 60
+      register: refined_intent_analysis
+      tags: [intent_refinement]
+
+    - name: "Translate Intent to Actionable Steps"
+      uri:
+        url: "http://localhost:8080/api/v1/ai/translate/actions"
+        method: POST
+        body_format: json
+        body:
+          translation_context: "{{ intent_analysis_id }}"
+          refined_intent: "{{ refined_intent_analysis.json }}"
+          target_infrastructure: "{{ target_nodes }}"
+          translation_parameters:
+            granularity_level: "executable"
+            include_prerequisites: true
+            include_validation_steps: true
+            include_rollback_procedures: true
+            temporal_ordering: true
+            dependency_resolution: true
+          output_format: "tosca_workflow_compatible"
+          safety_constraints:
+            preserve_service_continuity: true
+            avoid_cascading_failures: true
+            respect_maintenance_windows: true
+            comply_with_policies: true
+        timeout: 90
+      register: actionable_translation
+      tags: [action_translation]
+
+    - name: "Generate Alternative Strategies"
+      uri:
+        url: "http://localhost:8080/api/v1/ai/generate/alternatives"
+        method: POST
+        body_format: json
+        body:
+          strategy_context: "{{ intent_analysis_id }}"
+          primary_strategy: "{{ actionable_translation.json.primary_strategy }}"
+          generation_parameters:
+            num_alternatives: 3
+            diversity_factor: 0.7
+            risk_tolerance: "moderate"
+            resource_efficiency: "high"
+            innovation_level: "balanced"
+          alternative_criteria:
+            - "different_risk_profile"
+            - "alternative_resource_usage"
+            - "varied_execution_time"
+            - "different_complexity_level"
+        timeout: 45
+      register: alternative_strategies
+      tags: [alternative_generation]
+
+    - name: "Perform Intent Feasibility Assessment"
+      uri:
+        url: "http://localhost:8080/api/v1/assessment/feasibility"
+        method: POST
+        body_format: json
+        body:
+          assessment_context: "{{ intent_analysis_id }}"
+          primary_strategy: "{{ actionable_translation.json.primary_strategy }}"
+          alternative_strategies: "{{ alternative_strategies.json.alternatives }}"
+          assessment_criteria:
+            resource_availability: true
+            technical_feasibility: true
+            operational_impact: true
+            risk_assessment: true
+            time_constraints: true
+            policy_compliance: true
+          network_state: "{{ network_context.json.current_state | default({}) }}"
+          target_nodes: "{{ target_nodes }}"
+        timeout: 60
+      register: feasibility_assessment
+      tags: [feasibility_assessment]
+
+    - name: "Calculate Intent Translation Quality"
+      set_fact:
+        translation_quality: >-
+          {%- set confidence_score = confidence_score | float -%}
+          {%- set feasibility_score = feasibility_assessment.json.overall_feasibility | default(0.5) | float -%}
+          {%- set action_completeness = (extracted_actions | length / 5) | min(1.0) -%}
+          {%- set risk_score = (1.0 - risk_assessment.severity | default(0.5) | float) -%}
+          {{ ((confidence_score + feasibility_score + action_completeness + risk_score) / 4 * 100) | round(2) }}
+        analysis_duration: "{{ (ansible_date_time.epoch | int) - (analysis_start_time | int) }}"
+        recommended_strategy: "{{ feasibility_assessment.json.recommended_strategy | default('primary') }}"
+      tags: [quality_calculation]
+
+    - name: "Store Intent Analysis Results"
+      uri:
+        url: "http://localhost:8080/api/v1/intent/store"
+        method: POST
+        body_format: json
+        body:
+          intent_id: "{{ intent_analysis_id }}"
+          original_intent: "{{ intent_text }}"
+          analysis_results:
+            intent_classification: "{{ intent_classification }}"
+            extracted_actions: "{{ extracted_actions }}"
+            identified_parameters: "{{ identified_parameters }}"
+            confidence_score: "{{ confidence_score }}"
+            translation_quality: "{{ translation_quality }}"
+            recommended_strategy: "{{ recommended_strategy }}"
+          actionable_translation: "{{ actionable_translation.json }}"
+          alternative_strategies: "{{ alternative_strategies.json.alternatives | default([]) }}"
+          feasibility_assessment: "{{ feasibility_assessment.json }}"
+          network_context: "{{ network_context.json | default({}) }}"
+          execution_metadata:
+            analysis_duration: "{{ analysis_duration }}"
+            ai_models_used: "{{ ai_models_loaded.json.models_info | default([]) }}"
+            target_nodes: "{{ target_nodes }}"
+        timeout: 30
+      register: intent_storage
+      tags: [result_storage]
+
+    - name: "Update Machine Learning Models"
+      uri:
+        url: "http://localhost:8080/api/v1/ai/models/update"
+        method: POST
+        body_format: json
+        body:
+          update_context: "{{ intent_analysis_id }}"
+          learning_data:
+            intent_text: "{{ intent_text }}"
+            analysis_results: "{{ primary_intent_analysis.json }}"
+            translation_quality: "{{ translation_quality }}"
+            network_context: "{{ network_context.json | default({}) }}"
+          update_strategy: "online_learning"
+          model_improvement_targets:
+            - "intent_classification_accuracy"
+            - "action_extraction_precision"
+            - "parameter_identification_recall"
+            - "feasibility_prediction_accuracy"
+        timeout: 45
+      register: model_update
+      when: historical_learning | default(true)
+      tags: [model_learning]
+
+    - name: "Generate Intent Analysis Report"
+      copy:
+        content: |
+          Nokia Build-a-thon AI Self-Healing Network
+          Intent Analysis and Translation Report
+          ====================================
+          
+          Analysis Context:
+          - Intent Analysis ID: {{ intent_analysis_id }}
+          - Original Intent: "{{ intent_text }}"
+          - Target Nodes: {{ target_nodes | join(', ') }}
+          - Execution Time: {{ execution_timestamp }}
+          - Analysis Duration: {{ analysis_duration }}s
+          - AI Model Used: {{ ai_model | default('ensemble') }}
+          
+          Intent Understanding:
+          - Intent Classification: {{ intent_classification.category | default('unknown') }}
+          - Intent Type: {{ intent_classification.type | default('unknown') }}
+          - Intent Scope: {{ intent_classification.scope | default('unknown') }}
+          - Confidence Score: {{ confidence_score }}
+          - Clarity Level: {{ primary_intent_analysis.json.intent_clarity | default('unknown') }}
+          
+          Extracted Components:
+          - Primary Actions: {{ extracted_actions | length }}
+          {% for action in extracted_actions | default([]) %}
+          - {{ action.name }}: {{ action.description }}
+            Priority: {{ action.priority | default('medium') }}
+            Estimated Duration: {{ action.estimated_duration | default('unknown') }}
+          {% endfor %}
+          
+          Identified Parameters:
+          {% for param in identified_parameters | default([]) %}
+          - {{ param.name }}: {{ param.value | default('auto-detected') }}
+            Type: {{ param.type | default('unknown') }}
+            Validation: {{ param.validation_status | default('pending') }}
+          {% endfor %}
+          
+          Translation Results:
+          - Translation Quality: {{ translation_quality }}%
+          - Recommended Strategy: {{ recommended_strategy }}
+          - Primary Strategy Actions: {{ actionable_translation.json.primary_strategy.actions | default([]) | length }}
+          - Alternative Strategies: {{ alternative_strategies.json.alternatives | default([]) | length }}
+          
+          Feasibility Assessment:
+          - Overall Feasibility: {{ feasibility_assessment.json.overall_feasibility | default('unknown') }}
+          - Resource Availability: {{ feasibility_assessment.json.resource_feasibility | default('unknown') }}
+          - Technical Feasibility: {{ feasibility_assessment.json.technical_feasibility | default('unknown') }}
+          - Risk Level: {{ risk_assessment.level | default('unknown') }}
+          - Estimated Success Rate: {{ feasibility_assessment.json.success_probability | default('unknown') }}
+          
+          Primary Strategy Details:
+          {% set primary_strategy = actionable_translation.json.primary_strategy | default({}) %}
+          - Strategy Name: {{ primary_strategy.name | default('N/A') }}
+          - Execution Time: {{ primary_strategy.estimated_duration | default('N/A') }}
+          - Resource Requirements: {{ primary_strategy.resource_requirements | default('N/A') }}
+          - Prerequisites: {{ primary_strategy.prerequisites | default([]) | length }} items
+          - Validation Steps: {{ primary_strategy.validation_steps | default([]) | length }} checks
+          - Rollback Procedures: {{ 'Available' if primary_strategy.rollback_procedures | default([]) | length > 0 else 'Not Available' }}
+          
+          Alternative Strategies:
+          {% for alt in alternative_strategies.json.alternatives | default([]) %}
+          {{ loop.index }}. {{ alt.name }}
+             Risk Profile: {{ alt.risk_profile | default('unknown') }}
+             Resource Usage: {{ alt.resource_efficiency | default('unknown') }}
+             Execution Time: {{ alt.estimated_duration | default('unknown') }}
+             Feasibility: {{ alt.feasibility_score | default('unknown') }}
+          {% endfor %}
+          
+          Network Context Analysis:
+          - Context Awareness: {{ 'Enabled' if context_awareness else 'Disabled' }}
+          - Current Network Health: {{ network_context.json.overall_health | default('unknown') }}
+          - Performance Baseline: {{ network_context.json.performance_baseline | default('unknown') }}
+          - Resource Utilization: {{ network_context.json.resource_utilization | default('unknown') }}
+          - Historical Patterns: {{ network_context.json.historical_patterns | default([]) | length }} patterns identified
+          
+          AI Model Performance:
+          - Primary Model Confidence: {{ primary_intent_analysis.json.model_confidence | default('unknown') }}
+          - Ensemble Agreement: {{ primary_intent_analysis.json.ensemble_agreement | default('unknown') }}
+          - Uncertainty Bounds: {{ primary_intent_analysis.json.uncertainty_bounds | default('unknown') }}
+          - Model Learning: {{ 'Active' if historical_learning else 'Disabled' }}
+          
+          Quality Assessment:
+          {% if translation_quality | float >= 90 %}
+          - Intent translation EXCELLENT
+          - High confidence and clarity
+          - Comprehensive action extraction
+          - Strong feasibility assessment
+          {% elif translation_quality | float >= 75 %}
+          - Intent translation GOOD
+          - Acceptable confidence level
+          - Most actions identified
+          - Good feasibility prospects
+          {% elif translation_quality | float >= 60 %}
+          - Intent translation ACCEPTABLE
+          - Moderate confidence
+          - Basic actions extracted
+          - Some feasibility concerns
+          {% else %}
+          - Intent translation POOR
+          - Low confidence or unclear intent
+          - Limited action extraction
+          - Significant feasibility issues
+          {% endif %}
+          
+          Recommendations:
+          {% if translation_quality | float < 75 %}
+          - Consider rephrasing the intent for clarity
+          - Provide additional context information
+          - Review and validate extracted actions
+          {% endif %}
+          {% if feasibility_assessment.json.overall_feasibility | default(0) | float < 0.7 %}
+          - Consider alternative strategies
+          - Review resource requirements
+          - Assess risk mitigation options
+          {% endif %}
+          {% if confidence_score | float < ai_confidence_threshold %}
+          - Manual review recommended
+          - Consider expert consultation
+          - Validate AI recommendations
+          {% endif %}
+          - Proceed with {{ recommended_strategy }} strategy
+          - Monitor execution closely
+          - Collect feedback for model improvement
+          
+          Next Actions:
+          - Execute {{ recommended_strategy }} strategy
+          - Validate prerequisites before execution
+          - Prepare rollback procedures
+          - Monitor execution progress
+          - Collect outcome data for learning
+          
+          Generated: {{ execution_timestamp }}
+          Report ID: IAR_{{ intent_analysis_id }}
+        dest: "/tmp/intent_analysis_report_{{ intent_analysis_id }}.txt"
+        mode: '0644'
+      tags: [reporting]
+
+    - name: "Prepare Intent Execution Context"
+      set_fact:
+        intent_execution_context:
+          intent_id: "{{ intent_analysis_id }}"
+          original_intent: "{{ intent_text }}"
+          recommended_strategy: "{{ recommended_strategy }}"
+          execution_plan: "{{ actionable_translation.json[recommended_strategy + '_strategy'] | default(actionable_translation.json.primary_strategy) }}"
+          alternative_plans: "{{ alternative_strategies.json.alternatives | default([]) }}"
+          confidence_score: "{{ confidence_score }}"
+          translation_quality: "{{ translation_quality }}"
+          target_nodes: "{{ target_nodes }}"
+          network_context: "{{ network_context.json | default({}) }}"
+          risk_assessment: "{{ risk_assessment }}"
+          feasibility_score: "{{ feasibility_assessment.json.overall_feasibility | default(0.5) }}"
+      tags: [execution_context]
+
+    - name: "Update Intent Knowledge Base"
+      uri:
+        url: "http://localhost:8080/api/v1/knowledge/intent/update"
+        method: POST
+        body_format: json
+        body:
+          knowledge_update:
+            intent_pattern: "{{ preprocessed_intent.json.pattern_signature | default('') }}"
+            successful_translation: "{{ translation_quality | float > 70 }}"
+            context_factors: "{{ network_context.json.context_factors | default([]) }}"
+            effective_strategies: "{{ [recommended_strategy] + (alternative_strategies.json.alternatives | default([]) | map(attribute='name') | list) }}"
+          learning_feedback:
+            translation_effectiveness: "{{ translation_quality }}"
+            feasibility_accuracy: "{{ feasibility_assessment.json.assessment_accuracy | default(0.8) }}"
+            strategy_success_rate: "{{ feasibility_assessment.json.success_probability | default(0.7) }}"
+        timeout: 30
+      register: knowledge_update
+      when: historical_learning | default(true)
+      tags: [knowledge_update]
+
+    - name: "Notify Intent Execution Coordinator"
+      uri:
+        url: "http://localhost:9090/api/v1/intent/execution/ready"
+        method: POST
+        body_format: json
+        body:
+          workflow_type: "intent_analysis_translation"
+          intent_id: "{{ intent_analysis_id }}"
+          status: "ANALYSIS_COMPLETE"
+          translation_quality: "{{ translation_quality }}"
+          confidence_score: "{{ confidence_score }}"
+          execution_context: "{{ intent_execution_context }}"
+          recommended_strategy: "{{ recommended_strategy }}"
+          feasibility_assessment: "{{ feasibility_assessment.json }}"
+          ready_for_execution: "{{ translation_quality | float > 60 and confidence_score | float >= ai_confidence_threshold }}"
+        headers:
+          Content-Type: "application/json"
+          X-Intent-Analysis: "{{ intent_analysis_id }}"
+          X-Translation-Quality: "{{ translation_quality }}"
+        timeout: 15
+      register: coordinator_notification
+      ignore_errors: true
+      tags: [coordinator_notification]
+
+    - name: "Log Intent Analysis Completion"
+      debug:
+        msg: |
+          ============================================================
+          Intent Analysis and Translation Completed
+          ============================================================
+          Intent ID: {{ intent_analysis_id }}
+          Original Intent: "{{ intent_text }}"
+          Translation Quality: {{ translation_quality }}%
+          Confidence Score: {{ confidence_score }}
+          Recommended Strategy: {{ recommended_strategy }}
+          Analysis Duration: {{ analysis_duration }}s
+          Ready for Execution: {{ translation_quality | float > 60 and confidence_score | float >= ai_confidence_threshold }}
+          Report: /tmp/intent_analysis_report_{{ intent_analysis_id }}.txt
+          ============================================================
+      tags: [completion]
+
+  handlers:
+    - name: "AI Model Cleanup"
+      uri:
+        url: "http://localhost:8080/api/v1/ai/models/unload"
+        method: POST
+        body_format: json
+        body:
+          ensemble_id: "{{ ai_models_loaded.json.ensemble_id | default('') }}"
+          cleanup_memory: true
+        timeout: 30
+      listen: "cleanup_ai_models"
+      ignore_errors: true
+
+    - name: "Emergency Intent Fallback"
+      set_fact:
+        intent_execution_context:
+          intent_id: "{{ intent_analysis_id }}_fallback"
+          fallback_mode: true
+          manual_review_required: true
+          low_confidence_analysis: true
+      listen: "intent_fallback"
+
+# Intent analysis completion summary
+- name: "Intent Analysis Summary"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: "Analysis Execution Summary"
+      debug:
+        msg: |
+          Nokia Build-a-thon AI Self-Healing Network
+          Intent Analysis and Translation Playbook Execution Complete
+          
+          Summary:
+          - Intent ID: {{ intent_analysis_id | default('N/A') }}
+          - Original Intent: "{{ intent_text | default('N/A') }}"
+          - Translation Quality: {{ translation_quality | default('N/A') }}%
+          - Confidence Score: {{ confidence_score | default('N/A') }}
+          - Analysis Duration: {{ analysis_duration | default('N/A') }}s
+          
+          Results:
+          - Intent Classification: {{ intent_classification.category | default('N/A') }}
+          - Actions Extracted: {{ extracted_actions | default([]) | length }}
+          - Parameters Identified: {{ identified_parameters | default([]) | length }}
+          - Recommended Strategy: {{ recommended_strategy | default('N/A') }}
+          - Alternative Strategies: {{ alternative_strategies.json.alternatives | default([]) | length if alternative_strategies is succeeded else 0 }}
+          
+          Quality Metrics:
+          - Feasibility Score: {{ feasibility_assessment.json.overall_feasibility | default('N/A') if feasibility_assessment is succeeded else 'N/A' }}
+          - Ready for Execution: {{ translation_quality | default(0) | float > 60 and confidence_score | default(0) | float >= ai_confidence_threshold }}
+          
+          Integration Status:
+          - Knowledge Base Updated: {{ 'Yes' if knowledge_update is succeeded else 'No' }}
+          - Models Updated: {{ 'Yes' if model_update is succeeded else 'No' }}
+          - Coordinator Notified: {{ 'Yes' if coordinator_notification is succeeded else 'No' }}
+          - Report Generated: Yes
+          
+          This playbook demonstrates advanced AI-driven intent analysis capabilities
+          for the Nokia Build-a-thon AI Self-Healing Network project.
+      tags: [summary]

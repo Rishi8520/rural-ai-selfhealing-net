@@ -1,0 +1,626 @@
+tosca_definitions_version: tosca_simple_yaml_1_3
+
+metadata:
+  title: "Rural Network Node Failure Complete Healing Workflow"
+  description: "TOSCA template for comprehensive node failure detection, isolation, and recovery"
+  author: "Nokia Build-a-thon AI Self-Healing Network"
+  version: "1.0.0"
+  created: "2024-12-08"
+  template_type: "critical_healing_workflow"
+  use_case: "complete_node_failure_recovery"
+  criticality: "CRITICAL"
+
+imports:
+  - ../node_types/rural_network_node_types.yaml
+  - ../node_types/healing_interface_types.yaml
+
+topology_template:
+  inputs:
+    failed_node_id:
+      type: string
+      description: "ID of the completely failed node"
+      constraints:
+        - pattern: "node_[0-4][0-9]"
+      required: true
+      
+    node_type:
+      type: string
+      description: "Type of the failed node (core, distribution, access)"
+      constraints:
+        - valid_values: ["core", "distribution", "access"]
+      required: true
+      
+    failure_type:
+      type: string
+      description: "Type of node failure detected"
+      constraints:
+        - valid_values: ["hardware_failure", "software_crash", "power_failure", "connectivity_loss", "complete_failure"]
+      required: true
+      
+    connected_nodes:
+      type: list
+      description: "List of nodes directly connected to the failed node"
+      entry_schema:
+        type: string
+        constraints:
+          - pattern: "node_[0-4][0-9]"
+      required: true
+      
+    backup_node_candidates:
+      type: list
+      description: "List of nodes that can serve as backup/replacement"
+      entry_schema:
+        type: string
+        constraints:
+          - pattern: "node_[0-4][0-9]"
+      default: []
+      
+    services_hosted:
+      type: list
+      description: "List of critical services hosted on the failed node"
+      entry_schema:
+        type: string
+      default: []
+      
+    failure_detection_timestamp:
+      type: string
+      description: "When the failure was first detected"
+      required: true
+      
+    recovery_priority:
+      type: integer
+      description: "Recovery priority based on node criticality (1=critical, 5=low)"
+      constraints:
+        - in_range: [1, 5]
+      default: 1
+      
+    max_recovery_time:
+      type: integer
+      description: "Maximum allowable recovery time (seconds)"
+      default: 600  # 10 minutes
+      constraints:
+        - greater_than: 60
+        
+    enable_redundancy_activation:
+      type: boolean
+      description: "Whether to activate redundant systems"
+      default: true
+      
+    automatic_service_migration:
+      type: boolean
+      description: "Enable automatic service migration to backup nodes"
+      default: true
+      
+    isolation_required:
+      type: boolean
+      description: "Whether the failed node needs network isolation"
+      default: true
+
+  node_templates:
+    # Node Failure Assessment Service
+    failure_assessment_service:
+      type: rural_network.NodeFailureAssessmentService
+      properties:
+        failed_node: { get_input: failed_node_id }
+        failure_type: { get_input: failure_type }
+        assessment_depth: "comprehensive"
+        recovery_feasibility_analysis: true
+        impact_analysis_required: true
+        connected_infrastructure: { get_input: connected_nodes }
+        hosted_services: { get_input: services_hosted }
+      attributes:
+        failure_severity: ""
+        recovery_feasibility: ""
+        estimated_recovery_time: 0
+        impact_scope: []
+        recovery_strategy_recommendation: ""
+        cascading_failure_risk: 0.0
+      interfaces:
+        Standard:
+          create:
+            implementation: ../playbooks/assess_node_failure.yml
+            inputs:
+              node_id: { get_input: failed_node_id }
+              failure_type: { get_input: failure_type }
+              connected_nodes: { get_input: connected_nodes }
+              analysis_depth: "full"
+          start:
+            implementation: ../playbooks/analyze_recovery_options.yml
+            inputs:
+              backup_candidates: { get_input: backup_node_candidates }
+              service_migration_feasibility: { get_input: automatic_service_migration }
+
+    # Node Isolation Service
+    node_isolation_service:
+      type: rural_network.NodeIsolationService
+      properties:
+        target_node: { get_input: failed_node_id }
+        isolation_strategy: "complete_isolation"
+        connected_nodes: { get_input: connected_nodes }
+        graceful_shutdown: false  # Node already failed
+        traffic_redirection: true
+        service_preservation: true
+        isolation_verification: true
+      attributes:
+        isolation_completed: false
+        traffic_redirected: false
+        services_preserved: 0
+        isolation_effectiveness: 0.0
+      interfaces:
+        Standard:
+          create:
+            implementation: ../playbooks/initiate_node_isolation.yml
+            inputs:
+              failed_node: { get_input: failed_node_id }
+              emergency_isolation: true
+          configure:
+            implementation: ../playbooks/configure_isolation_parameters.yml
+            inputs:
+              preserve_data: true
+              redirect_traffic: true
+          start:
+            implementation: ../playbooks/execute_node_isolation.yml
+            inputs:
+              verification_required: true
+
+    # Service Migration Service
+    service_migration_service:
+      type: rural_network.ServiceMigrationService
+      properties:
+        source_node: { get_input: failed_node_id }
+        services_to_migrate: { get_input: services_hosted }
+        backup_candidates: { get_input: backup_node_candidates }
+        migration_strategy: "load_balanced_distribution"
+        data_preservation: true
+        session_continuity: true
+        automatic_failover: { get_input: automatic_service_migration }
+        migration_timeout: 180  # 3 minutes
+      attributes:
+        services_migrated: 0
+        migration_success_rate: 0.0
+        data_loss_percentage: 0.0
+        session_continuity_maintained: false
+        target_nodes_utilized: []
+      interfaces:
+        Standard:
+          create:
+            implementation: ../playbooks/prepare_service_migration.yml
+            inputs:
+              services: { get_input: services_hosted }
+              backup_nodes: { get_input: backup_node_candidates }
+              preservation_level: "maximum"
+          configure:
+            implementation: ../playbooks/configure_migration_targets.yml
+            inputs:
+              load_balancing: true
+              redundancy_level: 2
+          start:
+            implementation: ../playbooks/execute_service_migration.yml
+            inputs:
+              migration_timeout: 180
+              validation_required: true
+
+    # Redundancy Activation Service
+    redundancy_activation_service:
+      type: rural_network.RedundancyActivationService
+      properties:
+        failed_node: { get_input: failed_node_id }
+        node_type: { get_input: node_type }
+        redundancy_candidates: { get_input: backup_node_candidates }
+        activation_mode: "automatic"
+        redundancy_level: "active_standby"
+        capacity_matching: true
+        configuration_synchronization: true
+        enabled: { get_input: enable_redundancy_activation }
+      attributes:
+        redundancy_activated: false
+        backup_nodes_online: 0
+        capacity_coverage: 0.0
+        configuration_synced: false
+        failover_time: 0
+      interfaces:
+        Standard:
+          create:
+            implementation: ../playbooks/identify_redundant_resources.yml
+            inputs:
+              failed_node: { get_input: failed_node_id }
+              backup_candidates: { get_input: backup_node_candidates }
+              capacity_requirements: "match_original"
+          configure:
+            implementation: ../playbooks/configure_redundant_systems.yml
+            inputs:
+              synchronization_required: true
+              configuration_mirroring: true
+          start:
+            implementation: ../playbooks/activate_redundant_systems.yml
+            inputs:
+              failover_validation: true
+              performance_testing: true
+
+    # Network Topology Reconstruction Service
+    topology_reconstruction_service:
+      type: rural_network.TopologyReconstructionService
+      properties:
+        failed_node: { get_input: failed_node_id }
+        connected_nodes: { get_input: connected_nodes }
+        reconstruction_strategy: "optimal_connectivity"
+        mesh_optimization: true
+        redundant_path_creation: true
+        load_balancing_optimization: true
+        convergence_acceleration: true
+      attributes:
+        new_topology_calculated: false
+        redundant_paths_added: 0
+        convergence_time: 0
+        topology_efficiency: 0.0
+        connectivity_restored: false
+      interfaces:
+        Standard:
+          create:
+            implementation: ../playbooks/analyze_topology_impact.yml
+            inputs:
+              failed_node: { get_input: failed_node_id }
+              connected_infrastructure: { get_input: connected_nodes }
+          configure:
+            implementation: ../playbooks/calculate_optimal_topology.yml
+            inputs:
+              optimization_goals: ["redundancy", "performance", "efficiency"]
+              constraints: ["capacity", "latency", "cost"]
+          start:
+            implementation: ../playbooks/implement_topology_changes.yml
+            inputs:
+              convergence_timeout: 120
+              validation_required: true
+
+    # Recovery Coordination Service
+    recovery_coordinator:
+      type: rural_network.RecoveryCoordinatorService
+      properties:
+        recovery_workflow_id: { concat: ["node_recovery_", { get_input: failed_node_id }, "_", { get_property: [SELF, recovery_timestamp] }] }
+        failed_node: { get_input: failed_node_id }
+        failure_type: { get_input: failure_type }
+        recovery_strategy: "comprehensive_recovery"
+        coordination_timeout: { get_input: max_recovery_time }
+        priority_level: { get_input: recovery_priority }
+        success_criteria:
+          services_restored: true
+          connectivity_reestablished: true
+          redundancy_activated: { get_input: enable_redundancy_activation }
+          topology_optimized: true
+          performance_threshold: 0.85
+        rollback_strategy: "graceful_degradation"
+      attributes:
+        recovery_timestamp: ""
+        coordination_status: "initializing"
+        recovery_progress: 0
+        services_recovered: 0
+        connectivity_percentage: 0.0
+        overall_effectiveness: 0.0
+      interfaces:
+        Standard:
+          create:
+            implementation: ../playbooks/initialize_recovery_workflow.yml
+          start:
+            implementation: ../playbooks/coordinate_recovery_steps.yml
+          delete:
+            implementation: ../playbooks/finalize_recovery_workflow.yml
+
+    # Recovery Monitoring Service
+    recovery_monitoring_service:
+      type: rural_network.RecoveryMonitoringService
+      properties:
+        monitoring_scope:
+          failed_node: { get_input: failed_node_id }
+          connected_nodes: { get_input: connected_nodes }
+          backup_nodes: { get_input: backup_node_candidates }
+          migrated_services: { get_input: services_hosted }
+        monitoring_interval: 3  # seconds
+        recovery_validation_tests:
+          - connectivity_test
+          - service_availability_test
+          - performance_benchmark_test
+          - redundancy_validation_test
+        alert_thresholds:
+          recovery_progress_min: 0.1  # 10% progress per minute
+          service_availability_min: 0.95
+          connectivity_min: 0.90
+          response_time_max: 150.0
+      interfaces:
+        Standard:
+          create:
+            implementation: ../playbooks/setup_recovery_monitoring.yml
+          start:
+            implementation: ../playbooks/start_recovery_monitoring.yml
+          delete:
+            implementation: ../playbooks/cleanup_recovery_monitoring.yml
+
+  # Relationship Templates
+  relationships:
+    - type: rural_network.RecoveryCoordinatedBy
+      source: node_isolation_service
+      target: recovery_coordinator
+      
+    - type: rural_network.RecoveryCoordinatedBy
+      source: service_migration_service
+      target: recovery_coordinator
+      
+    - type: rural_network.RecoveryCoordinatedBy
+      source: redundancy_activation_service
+      target: recovery_coordinator
+      
+    - type: rural_network.RecoveryCoordinatedBy
+      source: topology_reconstruction_service
+      target: recovery_coordinator
+      
+    - type: rural_network.AssessedBy
+      source: recovery_coordinator
+      target: failure_assessment_service
+      
+    - type: rural_network.MonitoredBy
+      source: recovery_coordinator
+      target: recovery_monitoring_service
+      
+    - type: rural_network.DependsOn
+      source: service_migration_service
+      target: node_isolation_service
+      
+    - type: rural_network.DependsOn
+      source: topology_reconstruction_service
+      target: redundancy_activation_service
+
+  # Node Failure Recovery Workflow
+  workflows:
+    node_failure_complete_recovery:
+      description: "Comprehensive node failure recovery with service migration and redundancy activation"
+      metadata:
+        workflow_type: "critical_recovery"
+        estimated_duration: 480  # 8 minutes
+        success_rate: 0.92
+        rollback_supported: true
+        requires_manual_intervention: false
+      inputs:
+        recovery_timeout:
+          type: integer
+          default: { get_input: max_recovery_time }
+        enable_redundancy:
+          type: boolean
+          default: { get_input: enable_redundancy_activation }
+        service_migration:
+          type: boolean
+          default: { get_input: automatic_service_migration }
+      steps:
+        # Step 1: Initialize Recovery Process (0-30 seconds)
+        initialize_recovery:
+          target: recovery_coordinator
+          activities:
+            - call_operation: Standard.create
+            - set_state: created
+          on_success:
+            - comprehensive_failure_assessment
+          on_failure:
+            - escalate_recovery_failure
+
+        # Step 2: Comprehensive Failure Assessment (30-60 seconds)
+        comprehensive_failure_assessment:
+          target: failure_assessment_service
+          activities:
+            - call_operation: Standard.create
+            - call_operation: Standard.start
+            - set_state: started
+          parallel:
+            - setup_recovery_monitoring
+          on_success:
+            - execute_node_isolation
+          on_failure:
+            - attempt_basic_recovery
+
+        # Step 3: Setup Recovery Monitoring (Parallel)
+        setup_recovery_monitoring:
+          target: recovery_monitoring_service
+          activities:
+            - call_operation: Standard.create
+            - call_operation: Standard.start
+            - set_state: started
+
+        # Step 4: Execute Node Isolation (60-90 seconds)
+        execute_node_isolation:
+          target: node_isolation_service
+          activities:
+            - call_operation: Standard.create
+            - call_operation: Standard.configure
+            - call_operation: Standard.start
+            - set_state: started
+          on_success:
+            - parallel_service_and_redundancy_setup
+          on_failure:
+            - attempt_forced_isolation
+
+        # Step 5: Parallel Service Migration and Redundancy Activation (90-240 seconds)
+        parallel_service_and_redundancy_setup:
+          target: service_migration_service
+          activities:
+            - call_operation: Standard.create
+            - call_operation: Standard.configure
+            - set_state: configured
+          parallel:
+            - setup_redundancy_activation
+          on_success:
+            - execute_service_migration
+          on_failure:
+            - attempt_degraded_service_recovery
+
+        # Step 6: Setup Redundancy Activation (Parallel)
+        setup_redundancy_activation:
+          target: redundancy_activation_service
+          activities:
+            - call_operation: Standard.create
+            - call_operation: Standard.configure
+            - set_state: configured
+          on_success:
+            - activate_redundant_systems
+          on_failure:
+            - continue_without_redundancy
+
+        # Step 7: Execute Service Migration (240-300 seconds)
+        execute_service_migration:
+          target: service_migration_service
+          activities:
+            - call_operation: Standard.start
+              inputs:
+                migration_validation: true
+                session_preservation: true
+            - set_state: started
+          on_success:
+            - reconstruct_network_topology
+          on_failure:
+            - attempt_partial_service_recovery
+
+        # Step 8: Activate Redundant Systems (Parallel)
+        activate_redundant_systems:
+          target: redundancy_activation_service
+          activities:
+            - call_operation: Standard.start
+              inputs:
+                failover_testing: true
+                capacity_validation: true
+            - set_state: started
+
+        # Step 9: Reconstruct Network Topology (300-420 seconds)
+        reconstruct_network_topology:
+          target: topology_reconstruction_service
+          activities:
+            - call_operation: Standard.create
+            - call_operation: Standard.configure
+            - call_operation: Standard.start
+            - set_state: started
+          on_success:
+            - validate_complete_recovery
+          on_failure:
+            - attempt_basic_topology_recovery
+
+        # Step 10: Validate Complete Recovery (420-480 seconds)
+        validate_complete_recovery:
+          target: recovery_coordinator
+          activities:
+            - call_operation: Standard.start
+              inputs:
+                validation_duration: 60
+                comprehensive_testing: true
+                success_criteria:
+                  all_services_operational: true
+                  connectivity_full: true
+                  redundancy_verified: { get_input: enable_redundancy }
+                  performance_acceptable: true
+          on_success:
+            - finalize_successful_recovery
+          on_failure:
+            - attempt_recovery_optimization
+
+        # Step 11: Finalize Successful Recovery
+        finalize_successful_recovery:
+          target: recovery_coordinator
+          activities:
+            - call_operation: Standard.delete
+              inputs:
+                preserve_recovery_configuration: true
+                generate_recovery_report: true
+                schedule_node_replacement: true
+                optimize_new_topology: true
+            - set_state: deleted
+
+  # Recovery Outputs
+  outputs:
+    recovery_workflow_id:
+      description: "Unique recovery workflow identifier"
+      value: { get_attribute: [recovery_coordinator, recovery_workflow_id] }
+      
+    recovery_effectiveness:
+      description: "Overall recovery effectiveness score (0.0-1.0)"
+      value: { get_attribute: [recovery_coordinator, overall_effectiveness] }
+      
+    services_recovered:
+      description: "Number of services successfully recovered"
+      value: { get_attribute: [recovery_coordinator, services_recovered] }
+      
+    connectivity_restoration:
+      description: "Percentage of connectivity restored"
+      value: { get_attribute: [recovery_coordinator, connectivity_percentage] }
+      
+    redundancy_status:
+      description: "Status of redundancy activation"
+      value: { get_attribute: [redundancy_activation_service, redundancy_activated] }
+      
+    backup_nodes_activated:
+      description: "List of backup nodes successfully activated"
+      value: { get_attribute: [redundancy_activation_service, backup_nodes_online] }
+      
+    service_migration_results:
+      description: "Results of service migration process"
+      value: { get_attribute: [service_migration_service, target_nodes_utilized] }
+      
+    topology_optimization:
+      description: "Network topology optimization results"
+      value: { get_attribute: [topology_reconstruction_service, topology_efficiency] }
+      
+    total_recovery_time:
+      description: "Total time taken for complete recovery (seconds)"
+      value: { get_attribute: [recovery_coordinator, total_recovery_duration] }
+      
+    failure_analysis_report:
+      description: "Comprehensive failure analysis and lessons learned"
+      value: { get_attribute: [failure_assessment_service, recovery_strategy_recommendation] }
+      
+    cascading_failure_prevention:
+      description: "Assessment of cascading failure prevention effectiveness"
+      value: { get_attribute: [failure_assessment_service, cascading_failure_risk] }
+
+  # Recovery Policies
+  policies:
+    - recovery_timeout_policy:
+        type: rural_network.RecoveryTimeoutPolicy
+        targets: [node_failure_complete_recovery]
+        properties:
+          timeout: { get_input: max_recovery_time }
+          action: "escalate_to_manual"
+          partial_recovery_acceptable: true
+          
+    - service_continuity_policy:
+        type: rural_network.ServiceContinuityPolicy
+        targets: [service_migration_service]
+        properties:
+          maximum_downtime: 120  # 2 minutes
+          data_loss_tolerance: 0.01  # 1%
+          session_preservation_required: true
+          
+    - redundancy_requirement_policy:
+        type: rural_network.RedundancyPolicy
+        targets: [redundancy_activation_service]
+        properties:
+          minimum_redundancy_level: 1
+          geographic_distribution: true
+          capacity_matching: 0.8  # 80% of original capacity
+          
+    - recovery_resource_priority:
+        type: rural_network.ResourcePriorityPolicy
+        targets: [recovery_coordinator, service_migration_service]
+        properties:
+          priority: "critical"
+          resource_preemption: true
+          cpu_allocation: "maximum"
+
+  # Recovery Groups
+  groups:
+    critical_recovery_services:
+      type: rural_network.CriticalRecoveryGroup
+      members: [recovery_coordinator, service_migration_service, redundancy_activation_service]
+      properties:
+        coordination_required: true
+        failure_tolerance: "medium"
+        parallel_execution: true
+        
+    topology_and_monitoring:
+      type: rural_network.SupportRecoveryGroup
+      members: [topology_reconstruction_service, recovery_monitoring_service, failure_assessment_service]
+      properties:
+        execution_priority: "support"
+        parallel_execution: true

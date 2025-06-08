@@ -1,0 +1,608 @@
+---
+- name: "Nokia Build-a-thon: Service Migration Healing Playbook"
+  hosts: localhost
+  gather_facts: false
+  vars:
+    playbook_version: "1.0.0"
+    playbook_type: "service_migration"
+    execution_timestamp: "{{ ansible_date_time.iso8601 }}"
+    migration_timeout: 300  # 5 minutes
+    data_consistency_checks: true
+    session_preservation: true
+    
+  tasks:
+    - name: "Initialize Service Migration Workflow"
+      debug:
+        msg: |
+          ============================================================
+          Nokia Build-a-thon AI Self-Healing Network
+          Service Migration Healing Playbook v{{ playbook_version }}
+          Execution Time: {{ execution_timestamp }}
+          Source Node: {{ source_node }}
+          Target Nodes: {{ target_nodes | join(', ') }}
+          Services to Migrate: {{ services_to_migrate | join(', ') }}
+          Migration Strategy: {{ migration_strategy | default('load_balanced') }}
+          Data Preservation: {{ data_preservation | default(true) }}
+          Session Continuity: {{ session_continuity | default(true) }}
+          ============================================================
+      tags: [initialization]
+
+    - name: "Validate Service Migration Parameters"
+      assert:
+        that:
+          - source_node is defined
+          - target_nodes is defined
+          - services_to_migrate is defined
+          - source_node | regex_search('^node_[0-4][0-9]$')
+          - target_nodes | length > 0
+          - services_to_migrate | length > 0
+          - migration_strategy | default('load_balanced') in ['load_balanced', 'single_target', 'redundant', 'priority_based']
+          - migration_timeout | default(300) | int > 60
+        fail_msg: "Invalid parameters for service migration"
+        success_msg: "Service migration parameters validated successfully"
+      tags: [validation]
+
+    - name: "Generate Migration Workflow ID"
+      set_fact:
+        migration_workflow_id: "MIGRATION_{{ source_node }}_{{ ansible_date_time.epoch }}"
+        migration_start_time: "{{ ansible_date_time.epoch | int }}"
+      tags: [initialization]
+
+    - name: "Assess Source Node Current State"
+      uri:
+        url: "http://localhost:8080/api/v1/nodes/{{ source_node }}/status"
+        method: GET
+        headers:
+          Content-Type: "application/json"
+          X-Migration-Context: "{{ migration_workflow_id }}"
+        timeout: 15
+      register: source_node_status
+      tags: [source_assessment]
+
+    - name: "Inventory Services on Source Node"
+      uri:
+        url: "http://localhost:8080/api/v1/services/inventory"
+        method: POST
+        body_format: json
+        body:
+          node_id: "{{ source_node }}"
+          service_filter: "{{ services_to_migrate }}"
+          include_dependencies: true
+          include_data_volumes: "{{ data_preservation | default(true) }}"
+          include_session_data: "{{ session_continuity | default(true) }}"
+          include_configuration: true
+        headers:
+          X-Migration-Workflow: "{{ migration_workflow_id }}"
+        timeout: 30
+      register: service_inventory
+      tags: [service_inventory]
+
+    - name: "Analyze Service Dependencies"
+      set_fact:
+        service_dependency_map: "{{ service_inventory.json.dependencies | default({}) }}"
+        critical_services: "{{ service_inventory.json.critical_services | default([]) }}"
+        data_volumes: "{{ service_inventory.json.data_volumes | default({}) }}"
+        active_sessions: "{{ service_inventory.json.active_sessions | default({}) }}"
+        total_data_size: "{{ service_inventory.json.total_data_size | default(0) }}"
+      tags: [dependency_analysis]
+
+    - name: "Assess Target Node Capacities"
+      uri:
+        url: "http://localhost:8080/api/v1/nodes/capacity/assess"
+        method: POST
+        body_format: json
+        body:
+          target_nodes: "{{ target_nodes }}"
+          required_resources:
+            cpu: "{{ service_inventory.json.total_cpu_requirement | default(2.0) }}"
+            memory: "{{ service_inventory.json.total_memory_requirement | default(4096) }}"
+            storage: "{{ total_data_size }}"
+            network: "{{ service_inventory.json.total_bandwidth_requirement | default(100) }}"
+          services_to_host: "{{ services_to_migrate }}"
+          migration_context: "{{ migration_workflow_id }}"
+        timeout: 20
+      register: capacity_assessment
+      tags: [capacity_assessment]
+
+    - name: "Calculate Optimal Service Distribution"
+      uri:
+        url: "http://localhost:8080/api/v1/migration/optimize"
+        method: POST
+        body_format: json
+        body:
+          migration_strategy: "{{ migration_strategy }}"
+          source_node: "{{ source_node }}"
+          target_nodes: "{{ target_nodes }}"
+          services: "{{ services_to_migrate }}"
+          constraints:
+            preserve_dependencies: true
+            load_balancing: "{{ migration_strategy == 'load_balanced' }}"
+            redundancy_level: "{{ 2 if migration_strategy == 'redundant' else 1 }}"
+            affinity_rules: "{{ service_inventory.json.affinity_rules | default([]) }}"
+            anti_affinity_rules: "{{ service_inventory.json.anti_affinity_rules | default([]) }}"
+          optimization_goals:
+            - "minimize_migration_time"
+            - "maximize_resource_efficiency"
+            - "preserve_service_quality"
+            - "maintain_data_consistency"
+        timeout: 45
+      register: migration_plan
+      tags: [migration_planning]
+
+    - name: "Validate Migration Plan Feasibility"
+      assert:
+        that:
+          - migration_plan.json.feasible | default(false)
+          - migration_plan.json.estimated_migration_time | default(999) | int < migration_timeout
+          - migration_plan.json.service_distribution | default({}) != {}
+          - migration_plan.json.risk_assessment.overall_risk | default('high') != 'high'
+        fail_msg: "Migration plan is not feasible or too risky"
+        success_msg: "Migration plan validated and feasible"
+      tags: [plan_validation]
+
+    - name: "Prepare Target Nodes for Service Hosting"
+      include_tasks: prepare_target_node.yml
+      vars:
+        target_node: "{{ item.node }}"
+        services_to_host: "{{ item.services }}"
+        resource_allocation: "{{ item.resources }}"
+      loop: "{{ migration_plan.json.service_distribution }}"
+      tags: [target_preparation]
+
+    - name: "Create Data Backup and Snapshots"
+      uri:
+        url: "http://localhost:8080/api/v1/data/backup"
+        method: POST
+        body_format: json
+        body:
+          backup_context: "{{ migration_workflow_id }}"
+          source_node: "{{ source_node }}"
+          services: "{{ services_to_migrate }}"
+          backup_strategy: "consistent_snapshot"
+          include_data: "{{ data_preservation }}"
+          include_config: true
+          include_logs: true
+          compression: true
+          encryption: true
+        timeout: 120
+      register: data_backup
+      when: data_preservation | default(true)
+      tags: [data_backup]
+
+    - name: "Preserve Active User Sessions"
+      uri:
+        url: "http://localhost:8080/api/v1/sessions/preserve"
+        method: POST
+        body_format: json
+        body:
+          preservation_context: "{{ migration_workflow_id }}"
+          source_node: "{{ source_node }}"
+          services: "{{ services_to_migrate }}"
+          session_data: "{{ active_sessions }}"
+          preservation_strategy: "state_serialization"
+          timeout: 60
+        timeout: 90
+      register: session_preservation_result
+      when: session_continuity | default(true)
+      tags: [session_preservation]
+
+    - name: "Begin Service Migration Execution"
+      uri:
+        url: "http://localhost:8080/api/v1/migration/execute"
+        method: POST
+        body_format: json
+        body:
+          migration_id: "{{ migration_workflow_id }}"
+          execution_plan: "{{ migration_plan.json }}"
+          execution_mode: "coordinated_parallel"
+          monitoring_enabled: true
+          rollback_enabled: true
+          checkpoints:
+            - "service_stopped"
+            - "data_migrated"
+            - "service_started"
+            - "health_verified"
+          validation_tests:
+            - "connectivity_test"
+            - "performance_test"
+            - "data_integrity_test"
+            - "session_continuity_test"
+        timeout: "{{ migration_timeout }}"
+      register: migration_execution
+      tags: [migration_execution]
+
+    - name: "Monitor Service Migration Progress"
+      uri:
+        url: "http://localhost:8080/api/v1/migration/{{ migration_workflow_id }}/status"
+        method: GET
+        timeout: 10
+      register: migration_progress
+      retries: "{{ (migration_timeout / 15) | int }}"
+      delay: 15
+      until: migration_progress.json.status in ['completed', 'failed', 'partial']
+      tags: [migration_monitoring]
+
+    - name: "Validate Migrated Services Health"
+      uri:
+        url: "http://localhost:8080/api/v1/services/health/validate"
+        method: POST
+        body_format: json
+        body:
+          validation_context: "{{ migration_workflow_id }}"
+          target_nodes: "{{ target_nodes }}"
+          services: "{{ services_to_migrate }}"
+          validation_tests:
+            connectivity:
+              enabled: true
+              timeout: 30
+            performance:
+              enabled: true
+              baseline_comparison: true
+              acceptable_degradation: 0.15  # 15%
+            functionality:
+              enabled: true
+              test_suite: "migration_validation"
+            data_integrity:
+              enabled: "{{ data_preservation }}"
+              checksum_validation: true
+          comprehensive_testing: true
+        timeout: 120
+      register: service_validation
+      tags: [service_validation]
+
+    - name: "Restore User Sessions"
+      uri:
+        url: "http://localhost:8080/api/v1/sessions/restore"
+        method: POST
+        body_format: json
+        body:
+          restoration_context: "{{ migration_workflow_id }}"
+          target_nodes: "{{ target_nodes }}"
+          session_data: "{{ session_preservation_result.json.preserved_sessions | default({}) }}"
+          restoration_strategy: "state_deserialization"
+          validation_required: true
+        timeout: 90
+      register: session_restoration
+      when: session_continuity | default(true) and session_preservation_result is succeeded
+      tags: [session_restoration]
+
+    - name: "Update Service Registry and DNS"
+      uri:
+        url: "http://localhost:8080/api/v1/registry/update"
+        method: PUT
+        body_format: json
+        body:
+          update_context: "{{ migration_workflow_id }}"
+          service_updates: "{{ migration_plan.json.service_distribution }}"
+          dns_updates: true
+          load_balancer_updates: true
+          monitoring_updates: true
+          propagation_timeout: 60
+        timeout: 90
+      register: registry_update
+      tags: [registry_update]
+
+    - name: "Calculate Migration Effectiveness"
+      set_fact:
+        migration_duration: "{{ (ansible_date_time.epoch | int) - (migration_start_time | int) }}"
+        migration_effectiveness: >-
+          {%- set services_migrated = migration_progress.json.services_migrated | default(0) -%}
+          {%- set total_services = services_to_migrate | length -%}
+          {%- set success_rate = (services_migrated / total_services * 100) if total_services > 0 else 0 -%}
+          {%- set performance_score = (100 - (service_validation.json.performance_degradation | default(0) * 100)) | max(0) -%}
+          {%- set data_integrity_score = service_validation.json.data_integrity_score | default(100) -%}
+          {{ ((success_rate + performance_score + data_integrity_score) / 3) | round(2) }}
+        services_successfully_migrated: "{{ migration_progress.json.services_migrated | default(0) }}"
+        data_migration_success: "{{ migration_progress.json.data_migration_success | default(false) }}"
+        session_continuity_maintained: "{{ session_restoration.json.sessions_restored | default(0) > 0 if session_continuity else true }}"
+      tags: [effectiveness_calculation]
+
+    - name: "Cleanup Source Node Resources"
+      uri:
+        url: "http://localhost:8080/api/v1/nodes/{{ source_node }}/cleanup"
+        method: POST
+        body_format: json
+        body:
+          cleanup_context: "{{ migration_workflow_id }}"
+          services_to_cleanup: "{{ services_to_migrate }}"
+          cleanup_strategy: "graceful_removal"
+          preserve_logs: true
+          preserve_configuration_backup: true
+          cleanup_timeout: 120
+        timeout: 150
+      register: source_cleanup
+      when: migration_effectiveness | float > 80
+      tags: [source_cleanup]
+
+    - name: "Setup Post-Migration Monitoring"
+      uri:
+        url: "http://localhost:8080/api/v1/monitoring/post-migration"
+        method: POST
+        body_format: json
+        body:
+          monitoring_context: "{{ migration_workflow_id }}"
+          monitored_services: "{{ services_to_migrate }}"
+          target_nodes: "{{ target_nodes }}"
+          monitoring_duration: 3600  # 1 hour intensive monitoring
+          monitoring_metrics:
+            - "service_availability"
+            - "response_time"
+            - "resource_utilization"
+            - "error_rate"
+            - "session_health"
+          alert_thresholds:
+            availability_min: 0.98
+            response_time_max: 2000  # ms
+            error_rate_max: 0.02
+          escalation_rules:
+            - condition: "availability < 0.95"
+              action: "immediate_alert"
+            - condition: "error_rate > 0.05"
+              action: "escalate_to_manual"
+        timeout: 30
+      register: post_migration_monitoring
+      tags: [post_migration_monitoring]
+
+    - name: "Generate Service Migration Report"
+      copy:
+        content: |
+          Nokia Build-a-thon AI Self-Healing Network
+          Service Migration Healing Report
+          ===============================
+          
+          Migration Context:
+          - Migration ID: {{ migration_workflow_id }}
+          - Source Node: {{ source_node }}
+          - Target Nodes: {{ target_nodes | join(', ') }}
+          - Execution Time: {{ execution_timestamp }}
+          - Migration Duration: {{ migration_duration }}s
+          - Migration Strategy: {{ migration_strategy }}
+          
+          Services Migration Summary:
+          - Total Services: {{ services_to_migrate | length }}
+          - Successfully Migrated: {{ services_successfully_migrated }}
+          - Migration Success Rate: {{ (services_successfully_migrated / services_to_migrate | length * 100) | round(2) if services_to_migrate | length > 0 else 0 }}%
+          - Critical Services: {{ critical_services | join(', ') }}
+          
+          Data and Session Management:
+          - Data Preservation: {{ 'Enabled' if data_preservation else 'Disabled' }}
+          - Total Data Migrated: {{ migration_progress.json.data_migrated_gb | default('N/A') }} GB
+          - Data Migration Success: {{ data_migration_success }}
+          - Session Continuity: {{ 'Enabled' if session_continuity else 'Disabled' }}
+          - Sessions Restored: {{ session_restoration.json.sessions_restored | default(0) if session_continuity else 'N/A' }}
+          - Session Continuity Maintained: {{ session_continuity_maintained }}
+          
+          Performance Impact:
+          - Migration Effectiveness: {{ migration_effectiveness }}%
+          - Performance Degradation: {{ service_validation.json.performance_degradation | default(0) * 100 }}%
+          - Service Availability: {{ service_validation.json.availability_score | default('N/A') }}%
+          - Data Integrity Score: {{ service_validation.json.data_integrity_score | default('N/A') }}%
+          
+          Resource Distribution:
+          {% for distribution in migration_plan.json.service_distribution | default([]) %}
+          - {{ distribution.node }}: {{ distribution.services | join(', ') }}
+            CPU: {{ distribution.resources.cpu }}%, Memory: {{ distribution.resources.memory }}MB
+          {% endfor %}
+          
+          Service Health Validation:
+          - Connectivity Tests: {{ service_validation.json.connectivity_score | default('N/A') }}%
+          - Performance Tests: {{ service_validation.json.performance_score | default('N/A') }}%
+          - Functionality Tests: {{ service_validation.json.functionality_score | default('N/A') }}%
+          - Data Integrity Tests: {{ service_validation.json.data_integrity_score | default('N/A') }}%
+          
+          Quality Assessment:
+          {% if migration_effectiveness | float >= 90 %}
+          - Service migration EXCELLENT
+          - All services successfully migrated
+          - Minimal performance impact
+          - High data integrity maintained
+          {% elif migration_effectiveness | float >= 75 %}
+          - Service migration GOOD
+          - Most services successfully migrated
+          - Acceptable performance impact
+          - Data integrity maintained
+          {% elif migration_effectiveness | float >= 60 %}
+          - Service migration ACCEPTABLE
+          - Basic service migration achieved
+          - Some performance degradation
+          - Partial data integrity issues
+          {% else %}
+          - Service migration POOR
+          - Significant migration issues
+          - Consider rollback or manual intervention
+          {% endif %}
+          
+          Post-Migration Actions:
+          - Intensive monitoring active for {{ post_migration_monitoring.json.monitoring_duration | default(3600) }}s
+          - Source node cleanup: {{ 'Completed' if source_cleanup is succeeded else 'Pending' }}
+          - Registry updates: {{ 'Completed' if registry_update is succeeded else 'Failed' }}
+          - DNS propagation: {{ registry_update.json.dns_propagation_status | default('unknown') }}
+          
+          Recommendations:
+          {% if migration_effectiveness | float < 80 %}
+          - Review service dependencies and resource allocation
+          - Consider performance optimization
+          - Monitor service stability closely
+          {% endif %}
+          {% if not data_migration_success %}
+          - Verify data consistency manually
+          - Consider data recovery procedures
+          {% endif %}
+          {% if not session_continuity_maintained %}
+          - Notify users of potential session loss
+          - Review session management procedures
+          {% endif %}
+          - Continue post-migration monitoring
+          - Schedule performance optimization review
+          - Update disaster recovery documentation
+          
+          Next Steps:
+          - Monitor services for {{ post_migration_monitoring.json.monitoring_duration | default(3600) }}s
+          - Validate business continuity
+          - Update operational documentation
+          - Plan source node maintenance or replacement
+          
+          Generated: {{ execution_timestamp }}
+          Report ID: SMR_{{ migration_workflow_id }}
+        dest: "/tmp/service_migration_report_{{ migration_workflow_id }}.txt"
+        mode: '0644'
+      tags: [reporting]
+
+    - name: "Update Migration Registry"
+      uri:
+        url: "http://localhost:8080/api/v1/migration/registry"
+        method: POST
+        body_format: json
+        body:
+          migration_id: "{{ migration_workflow_id }}"
+          migration_type: "node_failure_service_migration"
+          source_infrastructure: "{{ source_node }}"
+          target_infrastructure: "{{ target_nodes }}"
+          migrated_services: "{{ services_to_migrate }}"
+          migration_result:
+            effectiveness: "{{ migration_effectiveness }}"
+            duration: "{{ migration_duration }}"
+            services_migrated: "{{ services_successfully_migrated }}"
+            data_migration_success: "{{ data_migration_success }}"
+            session_continuity: "{{ session_continuity_maintained }}"
+          status: "{{ 'completed' if migration_effectiveness | float > 70 else 'partial' }}"
+          monitoring_active: true
+        timeout: 15
+      register: migration_registry
+      tags: [registry_update]
+
+    - name: "Notify Orchestration Agent"
+      uri:
+        url: "http://localhost:9090/api/v1/healing/migration/status"
+        method: POST
+        body_format: json
+        body:
+          workflow_type: "service_migration"
+          migration_id: "{{ migration_workflow_id }}"
+          status: "{{ 'COMPLETED' if migration_effectiveness | float > 70 else 'PARTIAL' }}"
+          effectiveness: "{{ migration_effectiveness }}"
+          execution_time: "{{ execution_timestamp }}"
+          migration_duration: "{{ migration_duration }}"
+          source_node: "{{ source_node }}"
+          target_nodes: "{{ target_nodes }}"
+          services_migrated: "{{ services_successfully_migrated }}"
+          total_services: "{{ services_to_migrate | length }}"
+          data_preservation: "{{ data_migration_success }}"
+          session_continuity: "{{ session_continuity_maintained }}"
+          monitoring_active: true
+          recommendations:
+            - "Continue post-migration monitoring"
+            - "Validate business processes"
+            - "Update documentation"
+        headers:
+          Content-Type: "application/json"
+          X-Migration-Workflow: "{{ migration_workflow_id }}"
+          X-Healing-Context: "node_failure_recovery"
+        timeout: 15
+      register: orchestrator_notification
+      ignore_errors: true
+      tags: [orchestrator_notification]
+
+    - name: "Log Service Migration Completion"
+      debug:
+        msg: |
+          ============================================================
+          Service Migration Workflow Completed
+          ============================================================
+          Migration ID: {{ migration_workflow_id }}
+          Source Node: {{ source_node }}
+          Target Nodes: {{ target_nodes | join(', ') }}
+          Services Migrated: {{ services_successfully_migrated }}/{{ services_to_migrate | length }}
+          Effectiveness: {{ migration_effectiveness }}%
+          Duration: {{ migration_duration }}s
+          Data Preservation: {{ data_migration_success }}
+          Session Continuity: {{ session_continuity_maintained }}
+          Status: {{ 'SUCCESS' if migration_effectiveness | float > 70 else 'PARTIAL' }}
+          Report: /tmp/service_migration_report_{{ migration_workflow_id }}.txt
+          ============================================================
+      tags: [completion]
+
+  handlers:
+    - name: "Migration Rollback"
+      uri:
+        url: "http://localhost:8080/api/v1/migration/{{ migration_workflow_id }}/rollback"
+        method: POST
+        body_format: json
+        body:
+          rollback_reason: "playbook_failure"
+          preserve_target_data: false
+          restore_source_services: true
+        timeout: 120
+      listen: "migration_rollback"
+      ignore_errors: true
+
+    - name: "Emergency Service Restoration"
+      uri:
+        url: "http://localhost:8080/api/v1/services/emergency/restore"
+        method: POST
+        body_format: json
+        body:
+          restoration_context: "{{ migration_workflow_id }}_emergency"
+          source_node: "{{ source_node }}"
+          services: "{{ services_to_migrate }}"
+        timeout: 90
+      listen: "emergency_restore"
+      ignore_errors: true
+
+# Service migration completion summary
+- name: "Service Migration Summary"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: "Migration Execution Summary"
+      debug:
+        msg: |
+          Nokia Build-a-thon AI Self-Healing Network
+          Service Migration Healing Playbook Execution Complete
+          
+          Summary:
+          - Migration ID: {{ migration_workflow_id | default('N/A') }}
+          - Source Node: {{ source_node | default('N/A') }}
+          - Target Nodes: {{ target_nodes | default([]) | join(', ') }}
+          - Services Migrated: {{ services_successfully_migrated | default(0) }}/{{ services_to_migrate | default([]) | length }}
+          - Effectiveness: {{ migration_effectiveness | default('N/A') }}%
+          - Duration: {{ migration_duration | default('N/A') }}s
+          
+          Data and Sessions:
+          - Data Migration: {{ 'Success' if data_migration_success | default(false) else 'Failed' }}
+          - Session Continuity: {{ 'Maintained' if session_continuity_maintained | default(false) else 'Lost' }}
+          
+          Integration Status:
+          - Registry Updated: {{ 'Yes' if migration_registry is succeeded else 'No' }}
+          - Post-Migration Monitoring: {{ 'Active' if post_migration_monitoring is succeeded else 'Inactive' }}
+          - Orchestrator Notified: {{ 'Yes' if orchestrator_notification is succeeded else 'No' }}
+          - Report Generated: Yes
+          
+          This playbook demonstrates enterprise-grade service migration capabilities
+          for the Nokia Build-a-thon AI Self-Healing Network project.
+      tags: [summary]
+
+# Include file for target node preparation
+- name: "Target Node Preparation Tasks"
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: "Prepare Target Node for Service Hosting"
+      uri:
+        url: "http://localhost:8080/api/v1/nodes/{{ target_node }}/prepare"
+        method: POST
+        body_format: json
+        body:
+          preparation_context: "{{ migration_workflow_id }}"
+          services_to_host: "{{ services_to_host }}"
+          resource_reservation: "{{ resource_allocation }}"
+          preparation_tasks:
+            - "install_dependencies"
+            - "configure_networking"
+            - "setup_storage"
+            - "configure_security"
+            - "validate_readiness"
+        timeout: 120
+      register: target_preparation
+      when: target_node is defined
+      tags: [target_node_prep]

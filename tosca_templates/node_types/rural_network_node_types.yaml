@@ -1,0 +1,768 @@
+tosca_definitions_version: tosca_simple_yaml_1_3
+
+metadata:
+  title: "Rural Network Node Type Definitions"
+  description: "TOSCA node type definitions for rural AI self-healing network infrastructure"
+  author: "Nokia Build-a-thon AI Self-Healing Network"
+  version: "1.0.0"
+  created: "2024-12-08"
+  template_type: "node_type_definitions"
+  domain: "rural_telecommunications"
+
+# Data Type Definitions
+data_types:
+  rural_network.Coordinates:
+    derived_from: tosca.datatypes.Root
+    properties:
+      latitude:
+        type: float
+        required: true
+        constraints:
+          - in_range: [-90.0, 90.0]
+      longitude:
+        type: float
+        required: true
+        constraints:
+          - in_range: [-180.0, 180.0]
+      altitude:
+        type: float
+        required: false
+        default: 0.0
+
+  rural_network.PerformanceMetrics:
+    derived_from: tosca.datatypes.Root
+    properties:
+      latency:
+        type: float
+        description: "Network latency in milliseconds"
+        required: false
+        default: 0.0
+      throughput:
+        type: float
+        description: "Network throughput in Mbps"
+        required: false
+        default: 0.0
+      packet_loss:
+        type: float
+        description: "Packet loss percentage"
+        required: false
+        default: 0.0
+      jitter:
+        type: float
+        description: "Network jitter in milliseconds"
+        required: false
+        default: 0.0
+      availability:
+        type: float
+        description: "Service availability percentage"
+        required: false
+        default: 100.0
+
+  rural_network.PowerConfiguration:
+    derived_from: tosca.datatypes.Root
+    properties:
+      voltage_rating:
+        type: float
+        description: "Nominal voltage rating in volts"
+        required: true
+        default: 220.0
+      power_consumption:
+        type: float
+        description: "Power consumption in watts"
+        required: true
+        default: 100.0
+      backup_power_capacity:
+        type: integer
+        description: "Backup power capacity in seconds"
+        required: false
+        default: 3600
+      renewable_energy_enabled:
+        type: boolean
+        required: false
+        default: false
+
+  rural_network.NetworkLink:
+    derived_from: tosca.datatypes.Root
+    properties:
+      source_node:
+        type: string
+        required: true
+      target_node:
+        type: string
+        required: true
+      link_type:
+        type: string
+        constraints:
+          - valid_values: ["fiber", "wireless", "satellite", "copper"]
+        required: true
+      bandwidth_capacity:
+        type: float
+        description: "Link capacity in Mbps"
+        required: true
+      link_quality:
+        type: float
+        description: "Link quality score (0.0-1.0)"
+        required: false
+        default: 1.0
+
+# Capability Type Definitions
+capability_types:
+  rural_network.NetworkCapability:
+    derived_from: tosca.capabilities.Root
+    properties:
+      max_bandwidth:
+        type: float
+        description: "Maximum bandwidth capacity in Mbps"
+        required: true
+      supported_protocols:
+        type: list
+        entry_schema:
+          type: string
+        required: false
+      quality_of_service:
+        type: boolean
+        required: false
+        default: true
+
+  rural_network.HealingCapability:
+    derived_from: tosca.capabilities.Root
+    properties:
+      healing_strategies:
+        type: list
+        entry_schema:
+          type: string
+        required: true
+      auto_healing_enabled:
+        type: boolean
+        required: false
+        default: true
+      healing_response_time:
+        type: integer
+        description: "Maximum healing response time in seconds"
+        required: false
+        default: 30
+
+  rural_network.MonitoringCapability:
+    derived_from: tosca.capabilities.Root
+    properties:
+      monitoring_interval:
+        type: integer
+        description: "Monitoring interval in seconds"
+        required: false
+        default: 10
+      metrics_collection:
+        type: list
+        entry_schema:
+          type: string
+        required: true
+      alert_thresholds:
+        type: map
+        entry_schema:
+          type: float
+        required: false
+
+# Requirement Type Definitions
+requirement_types:
+  rural_network.NetworkConnection:
+    derived_from: tosca.requirements.Root
+    capability: rural_network.NetworkCapability
+    relationship: rural_network.ConnectedTo
+    node: rural_network.NetworkNode
+    occurrences: [0, UNBOUNDED]
+
+  rural_network.HealingCoordination:
+    derived_from: tosca.requirements.Root
+    capability: rural_network.HealingCapability
+    relationship: rural_network.CoordinatedBy
+    occurrences: [0, 1]
+
+  rural_network.PerformanceMonitoring:
+    derived_from: tosca.requirements.Root
+    capability: rural_network.MonitoringCapability
+    relationship: rural_network.MonitoredBy
+    occurrences: [0, UNBOUNDED]
+
+# Relationship Type Definitions
+relationship_types:
+  rural_network.ConnectedTo:
+    derived_from: tosca.relationships.ConnectsTo
+    properties:
+      connection_type:
+        type: string
+        constraints:
+          - valid_values: ["primary", "backup", "mesh"]
+        default: "primary"
+      bandwidth_allocation:
+        type: float
+        description: "Allocated bandwidth percentage"
+        constraints:
+          - in_range: [0.0, 1.0]
+        default: 1.0
+
+  rural_network.CoordinatedBy:
+    derived_from: tosca.relationships.DependsOn
+    properties:
+      coordination_level:
+        type: string
+        constraints:
+          - valid_values: ["loose", "tight", "real_time"]
+        default: "tight"
+      priority_level:
+        type: integer
+        constraints:
+          - in_range: [1, 5]
+        default: 3
+
+  rural_network.MonitoredBy:
+    derived_from: tosca.relationships.DependsOn
+    properties:
+      monitoring_frequency:
+        type: integer
+        description: "Monitoring frequency in seconds"
+        default: 10
+      alert_enabled:
+        type: boolean
+        default: true
+
+  rural_network.RecoveryCoordinatedBy:
+    derived_from: rural_network.CoordinatedBy
+    properties:
+      recovery_priority:
+        type: integer
+        constraints:
+          - in_range: [1, 3]
+        default: 1
+      automatic_recovery:
+        type: boolean
+        default: true
+
+  rural_network.EmergencyCoordinatedBy:
+    derived_from: rural_network.CoordinatedBy
+    properties:
+      emergency_priority:
+        type: integer
+        constraints:
+          - in_range: [1, 3]
+        default: 1
+      immediate_response:
+        type: boolean
+        default: true
+
+  rural_network.IntentCoordinatedBy:
+    derived_from: rural_network.CoordinatedBy
+    properties:
+      intent_driven:
+        type: boolean
+        default: true
+      ai_assisted:
+        type: boolean
+        default: true
+
+  rural_network.NotificationTriggeredBy:
+    derived_from: tosca.relationships.DependsOn
+    properties:
+      notification_type:
+        type: string
+        constraints:
+          - valid_values: ["immediate", "delayed", "batch"]
+        default: "immediate"
+
+  rural_network.AssessedBy:
+    derived_from: tosca.relationships.DependsOn
+    properties:
+      assessment_type:
+        type: string
+        constraints:
+          - valid_values: ["continuous", "triggered", "scheduled"]
+        default: "triggered"
+
+  rural_network.LearnsFrom:
+    derived_from: tosca.relationships.DependsOn
+    properties:
+      learning_type:
+        type: string
+        constraints:
+          - valid_values: ["supervised", "unsupervised", "reinforcement"]
+        default: "reinforcement"
+
+  rural_network.DependsOn:
+    derived_from: tosca.relationships.DependsOn
+    properties:
+      dependency_type:
+        type: string
+        constraints:
+          - valid_values: ["hard", "soft", "optional"]
+        default: "soft"
+
+# Base Node Type Definitions
+node_types:
+  # Base Network Node
+  rural_network.NetworkNode:
+    derived_from: tosca.nodes.Root
+    description: "Base type for all rural network infrastructure nodes"
+    properties:
+      node_id:
+        type: string
+        description: "Unique node identifier"
+        required: true
+      node_type:
+        type: string
+        description: "Type of network node"
+        constraints:
+          - valid_values: ["core", "distribution", "access", "edge"]
+        required: true
+      location:
+        type: rural_network.Coordinates
+        description: "Geographic location of the node"
+        required: true
+      power_config:
+        type: rural_network.PowerConfiguration
+        description: "Power configuration parameters"
+        required: true
+      operational_status:
+        type: string
+        description: "Current operational status"
+        constraints:
+          - valid_values: ["operational", "degraded", "failed", "maintenance"]
+        default: "operational"
+      deployment_environment:
+        type: string
+        description: "Deployment environment type"
+        constraints:
+          - valid_values: ["indoor", "outdoor", "harsh_weather", "remote"]
+        default: "outdoor"
+    attributes:
+      current_performance:
+        type: rural_network.PerformanceMetrics
+        description: "Current performance metrics"
+      health_score:
+        type: float
+        description: "Overall health score (0.0-1.0)"
+        default: 1.0
+      last_maintenance:
+        type: timestamp
+        description: "Last maintenance timestamp"
+    capabilities:
+      network_capability:
+        type: rural_network.NetworkCapability
+      monitoring_capability:
+        type: rural_network.MonitoringCapability
+    requirements:
+      - network_connection:
+          capability: rural_network.NetworkCapability
+          relationship: rural_network.ConnectedTo
+          occurrences: [0, UNBOUNDED]
+
+  # Power Stabilization Service
+  rural_network.PowerStabilizationService:
+    derived_from: tosca.nodes.Root
+    description: "Service for power fluctuation healing and stabilization"
+    properties:
+      node_id:
+        type: string
+        description: "Target node for power stabilization"
+        required: true
+      stabilization_mode:
+        type: string
+        constraints:
+          - valid_values: ["manual", "automatic", "adaptive"]
+        default: "automatic"
+      voltage_target:
+        type: float
+        description: "Target voltage for stabilization"
+        default: 220.0
+      voltage_tolerance:
+        type: float
+        description: "Acceptable voltage tolerance"
+        default: 5.0
+      power_backup_enabled:
+        type: boolean
+        default: true
+      stabilization_timeout:
+        type: integer
+        description: "Maximum stabilization time in seconds"
+        default: 300
+      priority_level:
+        type: integer
+        constraints:
+          - in_range: [1, 5]
+        default: 2
+      current_voltage:
+        type: float
+        description: "Current voltage reading"
+        required: true
+      severity:
+        type: string
+        constraints:
+          - valid_values: ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+        required: true
+    attributes:
+      stabilization_status:
+        type: string
+        description: "Current stabilization status"
+        default: "inactive"
+      power_consumption:
+        type: float
+        description: "Current power consumption in watts"
+        default: 0.0
+      backup_power_activated:
+        type: boolean
+        description: "Whether backup power is active"
+        default: false
+      voltage_stabilized:
+        type: boolean
+        description: "Whether voltage is stabilized"
+        default: false
+    capabilities:
+      healing_capability:
+        type: rural_network.HealingCapability
+    requirements:
+      - coordination:
+          capability: rural_network.HealingCapability
+          relationship: rural_network.CoordinatedBy
+          occurrences: [0, 1]
+
+  # Traffic Rerouting Service
+  rural_network.TrafficReroutingService:
+    derived_from: tosca.nodes.Root
+    description: "Service for intelligent traffic rerouting and load balancing"
+    properties:
+      affected_node:
+        type: string
+        description: "Node requiring traffic rerouting"
+        required: true
+      backup_nodes:
+        type: list
+        entry_schema:
+          type: string
+        description: "List of backup nodes for rerouting"
+        required: true
+      rerouting_strategy:
+        type: string
+        constraints:
+          - valid_values: ["shortest_path", "least_congested_path", "load_balanced", "weighted_round_robin"]
+        default: "least_congested_path"
+      load_balancing_enabled:
+        type: boolean
+        default: true
+      failover_timeout:
+        type: integer
+        description: "Failover timeout in seconds"
+        default: 30
+      route_optimization:
+        type: boolean
+        default: true
+      qos_preservation:
+        type: boolean
+        default: true
+    attributes:
+      active_routes:
+        type: list
+        entry_schema:
+          type: string
+        description: "Currently active routes"
+        default: []
+      backup_routes_activated:
+        type: boolean
+        default: false
+      traffic_load_balanced:
+        type: boolean
+        default: false
+      route_convergence_time:
+        type: integer
+        description: "Time taken for route convergence"
+        default: 0
+    capabilities:
+      healing_capability:
+        type: rural_network.HealingCapability
+
+  # Network Monitoring Service
+  rural_network.NetworkMonitoringService:
+    derived_from: tosca.nodes.Root
+    description: "Comprehensive network monitoring and health assessment service"
+    properties:
+      monitored_node:
+        type: string
+        description: "Node being monitored"
+        required: true
+      monitoring_interval:
+        type: integer
+        description: "Monitoring interval in seconds"
+        default: 5
+      alert_thresholds:
+        type: map
+        entry_schema:
+          type: float
+        description: "Alert thresholds for various metrics"
+        required: true
+      escalation_enabled:
+        type: boolean
+        default: true
+    capabilities:
+      monitoring_capability:
+        type: rural_network.MonitoringCapability
+
+  # Healing Coordinator Service
+  rural_network.HealingCoordinatorService:
+    derived_from: tosca.nodes.Root
+    description: "Central coordination service for healing workflows"
+    properties:
+      healing_workflow_id:
+        type: string
+        description: "Unique healing workflow identifier"
+        required: true
+      target_node:
+        type: string
+        description: "Target node for healing"
+        required: true
+      healing_strategy:
+        type: string
+        description: "Healing strategy being employed"
+        required: true
+      coordination_timeout:
+        type: integer
+        description: "Maximum coordination time"
+        required: true
+      rollback_enabled:
+        type: boolean
+        default: true
+      success_criteria:
+        type: map
+        entry_schema:
+          type: string
+        description: "Success criteria for healing workflow"
+        required: true
+    attributes:
+      workflow_timestamp:
+        type: string
+        description: "Workflow execution timestamp"
+      current_timestamp:
+        type: string
+        description: "Current system timestamp"
+      healing_progress:
+        type: integer
+        description: "Healing progress percentage"
+        default: 0
+      coordination_status:
+        type: string
+        description: "Current coordination status"
+        default: "initializing"
+      healing_effectiveness:
+        type: float
+        description: "Healing effectiveness score"
+        default: 0.0
+      total_healing_time:
+        type: integer
+        description: "Total time taken for healing"
+        default: 0
+      lessons_learned:
+        type: list
+        entry_schema:
+          type: string
+        description: "Lessons learned from healing process"
+        default: []
+    capabilities:
+      healing_capability:
+        type: rural_network.HealingCapability
+
+  # Emergency Routing Service
+  rural_network.EmergencyRoutingService:
+    derived_from: tosca.nodes.Root
+    description: "Emergency routing service for critical failures like fiber cuts"
+    properties:
+      failed_link:
+        type: map
+        entry_schema:
+          type: string
+        description: "Information about the failed link"
+        required: true
+      alternative_path:
+        type: list
+        entry_schema:
+          type: string
+        description: "Alternative path nodes"
+        required: true
+      routing_algorithm:
+        type: string
+        constraints:
+          - valid_values: ["shortest_path_first", "dijkstra", "bellman_ford", "emergency_optimized"]
+        default: "shortest_path_first"
+      load_distribution:
+        type: string
+        constraints:
+          - valid_values: ["round_robin", "weighted_round_robin", "least_connections"]
+        default: "weighted_round_robin"
+      failover_mode:
+        type: string
+        constraints:
+          - valid_values: ["immediate", "graceful", "scheduled"]
+        default: "immediate"
+      capacity_requirement:
+        type: float
+        description: "Required capacity percentage"
+        constraints:
+          - in_range: [0.0, 1.0]
+        default: 0.8
+      qos_preservation:
+        type: boolean
+        default: true
+      emergency_mode:
+        type: boolean
+        default: true
+    attributes:
+      emergency_routes:
+        type: list
+        entry_schema:
+          type: string
+        description: "Established emergency routes"
+        default: []
+      route_establishment_time:
+        type: integer
+        description: "Time taken to establish routes"
+        default: 0
+      capacity_utilization:
+        type: float
+        description: "Current capacity utilization"
+        default: 0.0
+      route_stability:
+        type: boolean
+        description: "Whether routes are stable"
+        default: false
+      convergence_achieved:
+        type: boolean
+        description: "Whether routing convergence is achieved"
+        default: false
+    capabilities:
+      healing_capability:
+        type: rural_network.HealingCapability
+
+  # Service Provider Notification Service
+  rural_network.ServiceProviderNotification:
+    derived_from: tosca.nodes.Root
+    description: "Service for notifying service providers of incidents and healing actions"
+    properties:
+      incident_type:
+        type: string
+        description: "Type of incident being reported"
+        required: true
+      severity:
+        type: string
+        constraints:
+          - valid_values: ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+        required: true
+      affected_infrastructure:
+        type: map
+        entry_schema:
+          type: string
+        description: "Information about affected infrastructure"
+        required: true
+      priority:
+        type: integer
+        description: "Notification priority"
+        constraints:
+          - in_range: [1, 5]
+        required: true
+      auto_escalation:
+        type: boolean
+        default: true
+      notification_channels:
+        type: list
+        entry_schema:
+          type: string
+        description: "Notification channels to use"
+        default: ["email", "api"]
+      sla_impact_assessment:
+        type: boolean
+        default: true
+    attributes:
+      notification_sent:
+        type: boolean
+        description: "Whether notification has been sent"
+        default: false
+      escalation_triggered:
+        type: boolean
+        description: "Whether escalation has been triggered"
+        default: false
+      sla_breach_risk:
+        type: string
+        description: "Assessment of SLA breach risk"
+        default: ""
+      estimated_impact_duration:
+        type: integer
+        description: "Estimated impact duration in minutes"
+        default: 0
+      incident_id:
+        type: string
+        description: "Generated incident tracking ID"
+      incident_timestamp:
+        type: string
+        description: "Incident timestamp"
+
+# Policy Type Definitions
+policy_types:
+  rural_network.TimeoutPolicy:
+    derived_from: tosca.policies.Root
+    properties:
+      timeout:
+        type: integer
+        description: "Timeout value in seconds"
+        required: true
+      action:
+        type: string
+        constraints:
+          - valid_values: ["rollback", "escalate", "abort"]
+        default: "escalate"
+
+  rural_network.ResourceOptimizationPolicy:
+    derived_from: tosca.policies.Root
+    properties:
+      cpu_limit:
+        type: integer
+        description: "CPU utilization limit percentage"
+        default: 80
+      memory_limit:
+        type: integer
+        description: "Memory limit in MB"
+        default: 512
+      priority:
+        type: string
+        constraints:
+          - valid_values: ["low", "medium", "high", "critical"]
+        default: "medium"
+
+  rural_network.EscalationPolicy:
+    derived_from: tosca.policies.Root
+    properties:
+      escalation_threshold:
+        type: integer
+        description: "Escalation threshold in seconds"
+        required: true
+      escalation_target:
+        type: string
+        description: "Target for escalation"
+        required: true
+      notification_required:
+        type: boolean
+        default: true
+
+# Group Type Definitions
+group_types:
+  rural_network.HealingServiceGroup:
+    derived_from: tosca.groups.Root
+    properties:
+      coordination_required:
+        type: boolean
+        default: true
+      parallel_execution:
+        type: boolean
+        default: false
+
+  rural_network.TrafficManagementGroup:
+    derived_from: tosca.groups.Root
+    properties:
+      coordination_required:
+        type: boolean
+        default: true
+      parallel_execution:
+        type: boolean
+        default: true

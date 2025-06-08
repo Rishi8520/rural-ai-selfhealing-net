@@ -1,0 +1,411 @@
+tosca_definitions_version: tosca_simple_yaml_1_3
+
+metadata:
+  title: "Rural Network Power Fluctuation Healing Workflow"
+  description: "TOSCA template for automated power stabilization and traffic rerouting"
+  author: "Nokia Build-a-thon AI Self-Healing Network"
+  version: "1.0.0"
+  created: "2024-12-08"
+  template_type: "healing_workflow"
+  use_case: "power_fluctuation_mitigation"
+
+imports:
+  - ../node_types/rural_network_node_types.yaml
+  - ../node_types/healing_interface_types.yaml
+
+topology_template:
+  inputs:
+    target_node_id:
+      type: string
+      description: "Node ID experiencing power fluctuation (e.g., node_25)"
+      constraints:
+        - pattern: "node_[0-4][0-9]"
+      required: true
+      
+    severity_level:
+      type: string
+      description: "Power fluctuation severity level"
+      constraints:
+        - valid_values: ["LOW", "MEDIUM", "HIGH", "CRITICAL"]
+      default: "MEDIUM"
+      required: true
+      
+    voltage_reading:
+      type: float
+      description: "Current voltage reading from the affected node"
+      constraints:
+        - greater_than: 0.0
+        - less_than: 300.0
+      required: true
+      
+    backup_route_nodes:
+      type: list
+      description: "List of alternative routing nodes for traffic rerouting"
+      entry_schema:
+        type: string
+        constraints:
+          - pattern: "node_[0-4][0-9]"
+      required: true
+      
+    healing_priority:
+      type: integer
+      description: "Healing workflow priority (1=highest, 5=lowest)"
+      constraints:
+        - in_range: [1, 5]
+      default: 2
+      
+    max_healing_time:
+      type: integer
+      description: "Maximum time allowed for healing workflow (seconds)"
+      default: 300
+      constraints:
+        - greater_than: 30
+
+  node_templates:
+    # Power Stabilization Service
+    power_stabilization_service:
+      type: rural_network.PowerStabilizationService
+      properties:
+        node_id: { get_input: target_node_id }
+        stabilization_mode: "automatic"
+        voltage_target: 220.0
+        voltage_tolerance: 5.0
+        power_backup_enabled: true
+        stabilization_timeout: { get_input: max_healing_time }
+        priority_level: { get_input: healing_priority }
+        current_voltage: { get_input: voltage_reading }
+        severity: { get_input: severity_level }
+      attributes:
+        stabilization_status: ""
+        power_consumption: 0.0
+        backup_power_activated: false
+        voltage_stabilized: false
+      interfaces:
+        Standard:
+          create:
+            implementation: ../playbooks/power_stabilization.yml
+            inputs:
+              node_id: { get_input: target_node_id }
+              target_voltage: 220.0
+              current_voltage: { get_input: voltage_reading }
+              severity: { get_input: severity_level }
+          configure:
+            implementation: ../playbooks/configure_backup_power.yml
+            inputs:
+              node_id: { get_input: target_node_id }
+              backup_capacity: 3600  # 1 hour backup
+              auto_switchover: true
+          start:
+            implementation: ../playbooks/activate_stabilization.yml
+            inputs:
+              node_id: { get_input: target_node_id }
+              monitoring_interval: 10  # seconds
+          delete:
+            implementation: ../playbooks/deactivate_power_healing.yml
+
+    # Traffic Rerouting Service
+    traffic_rerouting_service:
+      type: rural_network.TrafficReroutingService
+      properties:
+        affected_node: { get_input: target_node_id }
+        backup_nodes: { get_input: backup_route_nodes }
+        rerouting_strategy: "least_congested_path"
+        load_balancing_enabled: true
+        failover_timeout: 30
+        route_optimization: true
+        qos_preservation: true
+      attributes:
+        active_routes: []
+        backup_routes_activated: false
+        traffic_load_balanced: false
+        route_convergence_time: 0
+      interfaces:
+        Standard:
+          create:
+            implementation: ../playbooks/calculate_backup_routes.yml
+            inputs:
+              source_node: { get_input: target_node_id }
+              backup_nodes: { get_input: backup_route_nodes }
+              optimization_algorithm: "dijkstra"
+          configure:
+            implementation: ../playbooks/update_routing_tables.yml
+            inputs:
+              affected_node: { get_input: target_node_id }
+              new_routes: { get_attribute: [SELF, active_routes] }
+              propagation_delay: 5
+          start:
+            implementation: ../playbooks/activate_backup_routing.yml
+            inputs:
+              node_id: { get_input: target_node_id }
+              validation_timeout: 60
+          delete:
+            implementation: ../playbooks/restore_original_routing.yml
+
+    # Network Monitoring Service
+    network_monitoring_service:
+      type: rural_network.NetworkMonitoringService
+      properties:
+        monitored_node: { get_input: target_node_id }
+        monitoring_interval: 5  # seconds
+        alert_thresholds:
+          voltage_min: 210.0
+          voltage_max: 230.0
+          packet_loss_max: 0.05
+          latency_max: 100.0
+        escalation_enabled: true
+      interfaces:
+        Standard:
+          create:
+            implementation: ../playbooks/setup_enhanced_monitoring.yml
+          start:
+            implementation: ../playbooks/start_healing_monitoring.yml
+          delete:
+            implementation: ../playbooks/cleanup_monitoring.yml
+
+    # Healing Coordinator
+    healing_coordinator:
+      type: rural_network.HealingCoordinatorService
+      properties:
+        healing_workflow_id: { concat: ["power_healing_", { get_input: target_node_id }, "_", { get_property: [SELF, workflow_timestamp] }] }
+        target_node: { get_input: target_node_id }
+        healing_strategy: "power_fluctuation_mitigation"
+        coordination_timeout: { get_input: max_healing_time }
+        rollback_enabled: true
+        success_criteria:
+          voltage_stable: true
+          connectivity_restored: true
+          performance_threshold: 0.8
+      attributes:
+        workflow_timestamp: { get_property: [SELF, current_timestamp] }
+        current_timestamp: ""
+        healing_progress: 0
+        coordination_status: "initializing"
+      interfaces:
+        Standard:
+          create:
+            implementation: ../playbooks/initialize_healing_workflow.yml
+          start:
+            implementation: ../playbooks/coordinate_healing_steps.yml
+          delete:
+            implementation: ../playbooks/finalize_healing_workflow.yml
+
+  # Relationship Templates
+  relationships:
+    - type: rural_network.CoordinatedBy
+      source: power_stabilization_service
+      target: healing_coordinator
+      
+    - type: rural_network.CoordinatedBy
+      source: traffic_rerouting_service
+      target: healing_coordinator
+      
+    - type: rural_network.MonitoredBy
+      source: power_stabilization_service
+      target: network_monitoring_service
+
+  # Healing Workflow Definition
+  workflows:
+    power_fluctuation_healing:
+      description: "Complete power fluctuation healing workflow with coordinated steps"
+      metadata:
+        workflow_type: "healing"
+        estimated_duration: 180  # seconds
+        success_rate: 0.95
+        rollback_supported: true
+      inputs:
+        severity:
+          type: string
+          default: { get_input: severity_level }
+        timeout:
+          type: integer
+          default: { get_input: max_healing_time }
+      steps:
+        # Step 1: Initialize Healing Workflow
+        initialize_healing:
+          target: healing_coordinator
+          activities:
+            - call_operation: Standard.create
+            - set_state: created
+          on_success:
+            - assess_power_situation
+          on_failure:
+            - cleanup_and_abort
+
+        # Step 2: Assess Power Situation
+        assess_power_situation:
+          target: network_monitoring_service
+          activities:
+            - call_operation: Standard.create
+            - call_operation: Standard.start
+            - set_state: started
+          on_success:
+            - isolate_affected_node
+          on_failure:
+            - escalate_to_manual_intervention
+
+        # Step 3: Isolate Affected Node (Traffic Rerouting)
+        isolate_affected_node:
+          target: traffic_rerouting_service
+          activities:
+            - call_operation: Standard.create
+              inputs:
+                rerouting_reason: "power_fluctuation_isolation"
+            - set_state: created
+          on_success:
+            - configure_backup_routing
+          on_failure:
+            - rollback_isolation
+
+        # Step 4: Configure Backup Routing
+        configure_backup_routing:
+          target: traffic_rerouting_service
+          activities:
+            - call_operation: Standard.configure
+            - set_state: configured
+          on_success:
+            - activate_backup_routing
+          on_failure:
+            - rollback_routing_configuration
+
+        # Step 5: Activate Backup Routing
+        activate_backup_routing:
+          target: traffic_rerouting_service
+          activities:
+            - call_operation: Standard.start
+            - set_state: started
+          on_success:
+            - activate_power_stabilization
+          on_failure:
+            - rollback_backup_routing
+
+        # Step 6: Activate Power Stabilization
+        activate_power_stabilization:
+          target: power_stabilization_service
+          activities:
+            - call_operation: Standard.create
+            - call_operation: Standard.configure
+            - call_operation: Standard.start
+            - set_state: started
+          on_success:
+            - monitor_healing_progress
+          on_failure:
+            - attempt_emergency_power_restore
+
+        # Step 7: Monitor Healing Progress
+        monitor_healing_progress:
+          target: healing_coordinator
+          activities:
+            - call_operation: Standard.start
+              inputs:
+                monitoring_duration: 120  # 2 minutes
+                success_criteria:
+                  voltage_stability: true
+                  route_convergence: true
+                  connectivity_verified: true
+            - set_state: started
+          on_success:
+            - validate_healing_success
+          on_failure:
+            - attempt_advanced_healing
+
+        # Step 8: Validate Healing Success
+        validate_healing_success:
+          target: healing_coordinator
+          activities:
+            - call_operation: Standard.validate_healing
+              inputs:
+                validation_tests:
+                  - voltage_stability_test
+                  - connectivity_test
+                  - performance_test
+                validation_timeout: 60
+          on_success:
+            - finalize_successful_healing
+          on_failure:
+            - attempt_rollback_recovery
+
+        # Step 9: Finalize Successful Healing
+        finalize_successful_healing:
+          target: healing_coordinator
+          activities:
+            - call_operation: Standard.delete
+              inputs:
+                cleanup_temporary_resources: true
+                preserve_improvements: true
+                generate_success_report: true
+            - set_state: deleted
+
+  # Outputs for Integration with Orchestration Agent
+  outputs:
+    healing_workflow_id:
+      description: "Unique identifier for this healing workflow execution"
+      value: { get_attribute: [healing_coordinator, healing_workflow_id] }
+      
+    healing_status:
+      description: "Current status of the healing workflow"
+      value: { get_attribute: [healing_coordinator, coordination_status] }
+      
+    power_stabilization_result:
+      description: "Result of power stabilization efforts"
+      value: { get_attribute: [power_stabilization_service, stabilization_status] }
+      
+    backup_routing_status:
+      description: "Status of backup routing implementation"
+      value: { get_attribute: [traffic_rerouting_service, backup_routes_activated] }
+      
+    voltage_stabilized:
+      description: "Whether voltage has been successfully stabilized"
+      value: { get_attribute: [power_stabilization_service, voltage_stabilized] }
+      
+    healing_effectiveness:
+      description: "Overall effectiveness score of the healing workflow (0.0-1.0)"
+      value: { get_attribute: [healing_coordinator, healing_effectiveness] }
+      
+    estimated_recovery_time:
+      description: "Time taken for complete recovery (seconds)"
+      value: { get_attribute: [healing_coordinator, total_healing_time] }
+      
+    lessons_learned:
+      description: "Key insights from this healing workflow for future optimization"
+      value: { get_attribute: [healing_coordinator, lessons_learned] }
+
+  # Policy Definitions
+  policies:
+    - healing_timeout_policy:
+        type: rural_network.TimeoutPolicy
+        targets: [power_fluctuation_healing]
+        properties:
+          timeout: { get_input: max_healing_time }
+          action: "rollback"
+          
+    - resource_optimization_policy:
+        type: rural_network.ResourceOptimizationPolicy
+        targets: [power_stabilization_service, traffic_rerouting_service]
+        properties:
+          cpu_limit: 80
+          memory_limit: 512  # MB
+          priority: "high"
+          
+    - escalation_policy:
+        type: rural_network.EscalationPolicy
+        targets: [healing_coordinator]
+        properties:
+          escalation_threshold: 240  # seconds
+          escalation_target: "manual_intervention"
+          notification_required: true
+
+  # Groups for Coordinated Management
+  groups:
+    power_healing_services:
+      type: rural_network.HealingServiceGroup
+      members: [power_stabilization_service, network_monitoring_service]
+      properties:
+        coordination_required: true
+        parallel_execution: false
+        
+    traffic_management_services:
+      type: rural_network.TrafficManagementGroup
+      members: [traffic_rerouting_service, network_monitoring_service]
+      properties:
+        coordination_required: true
+        parallel_execution: true
