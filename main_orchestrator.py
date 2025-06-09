@@ -28,20 +28,28 @@ def create_calculation_config():
     """Creates a default calculation_config.json if it doesn't exist."""
     config_file = "calculation_config.json"
     if not os.path.exists(config_file):
+        # IMPORTANT: Ensure 'baseline_network_metrics.csv' is in the same directory as main_orchestrator.py
+        logger.warning(f"Configuration file {config_file} not found. Creating default. "
+                       "Please ensure 'baseline_network_metrics.csv' is in the same directory "
+                       f"as this script for training data, and 'rural_network_metrics.csv' for testing.")
         default_config = {
-            "prediction_features": [
-                "throughput", "latency", "packet_loss", "cpu_usage", "memory_usage",
-                "energy_level", "degradation_level", "fault_severity", "power_stability",
-                "voltage_level"
-            ],
-            "input_features": [
-                "throughput", "latency", "packet_loss", "cpu_usage", "memory_usage",
-                "energy_level", "degradation_level", "fault_severity", "power_stability",
-                "voltage_level"
+            "lstm_sequence_length": 10, # Keep this consistent
+            "lstm_epochs": 20,
+            "anomaly_threshold_percentile": 99,
+            "alert_debounce_interval": 10,
+            "model_training_batch_size": 32,
+            "train_on_startup": True, # Set to True to ensure training happens on startup
+            "training_data_limit": 10000,
+            # Updated lstm_features to match the comprehensive list in calculation_agent.py
+            "lstm_features": [
+                'throughput', 'latency', 'packet_loss', 'jitter',
+                'signal_strength', 'cpu_usage', 'memory_usage', 'buffer_occupancy',
+                'active_links', 'neighbor_count', 'link_utilization', 'critical_load',
+                'normal_load', 'energy_level', 'x_position', 'y_position', 'z_position',
+                'degradation_level', 'fault_severity', 'power_stability', 'voltage_level'
             ],
             "prediction_horizon": 1,
-            "train_on_startup": True, # Set to True to ensure training happens on startup
-            "training_data_file": "baseline_network_metrics.csv", # Changed back to baseline_network_metrics.csv
+            "training_data_file": "baseline_network_metrics.csv", 
             "testing_data_file": "rural_network_metrics.csv",
             "monitor_ns3_metrics_file": "calculation_agent_data_stream.json" # Monitor agent writes here
         }
@@ -120,39 +128,40 @@ async def orchestrator_output_aggregator_task(calc_sub_socket: zmq.asyncio.Socke
             message_bytes = await calc_sub_socket.recv()
             alert_message = json.loads(message_bytes.decode('utf-8'))
 
-            if alert_message.get("anomaly_type"): # Check if it's an anomaly alert
+            # Check if it's an anomaly alert (using 'status' for CalculationAgent's unified messages)
+            # The 'type' can be 'status_update' with status 'Anomaly detected'
+            if alert_message.get("type") == "status_update" and alert_message.get("status") == "Anomaly detected":
                 node_id = alert_message.get("node_id", "N/A")
-                current_metrics = alert_message.get("current_metrics", {})
                 anomaly_details = alert_message.get("details", {})
                 
                 logger.critical(f"\n{'='*50}\nANOMALY DETECTED FOR NODE: {node_id}\n{'='*50}")
                 
-                # --- Monitor Agent Output ---
-                # This is represented by the 'current_metrics' that led to the anomaly,
-                # as collected by the Monitor Agent and passed to the Calculation Agent.
+                # --- Monitor Agent Output (represented by actual_metrics) ---
                 logger.info("Monitor Agent Output (Metrics Leading to Anomaly):")
-                for key, value in current_metrics.items():
+                actual_metrics = anomaly_details.get('actual_metrics', {})
+                for key, value in actual_metrics.items():
                     logger.info(f"  {key}: {value}")
                 
-                # --- Calculation Agent Output ---
-                # This is the anomaly alert message itself.
+                # --- Calculation Agent Output (Anomaly Details) ---
                 logger.info("\nCalculation Agent Output (Anomaly Details):")
-                logger.info(f"  Alert ID: {alert_message.get('alert_id')}")
+                logger.info(f"  Alert ID: {anomaly_details.get('alert_id', 'N/A')}") # Calc Agent provides alert_id within details
                 logger.info(f"  Timestamp: {alert_message.get('timestamp')}")
-                logger.info(f"  Anomaly Type: {alert_message.get('anomaly_type')}")
-                logger.info(f"  Prediction: {alert_message.get('predicted_metrics')}")
-                logger.info(f"  Details: {anomaly_details.get('type', 'N/A')}: {anomaly_details.get('value', 'N/A')}")
+                logger.info(f"  Anomaly Score: {anomaly_details.get('anomaly_score', 'N/A')}")
+                logger.info(f"  Predicted Metrics: {anomaly_details.get('predicted_metrics')}")
+                logger.info(f"  Severity: {anomaly_details.get('severity_classification', 'N/A')}")
+                logger.info(f"  Root Causes: {anomaly_details.get('root_cause_indicators', 'N/A')}")
+                logger.info(f"  Recommended Actions: {anomaly_details.get('recommended_actions', 'N/A')}")
                 
                 # --- Healing Agent Output ---
-                # Placeholder: Due to the constraint of not modifying other agents,
-                # the orchestrator cannot directly listen to Healing Agent's specific
-                # recommendations that it pushes to the MCP Agent.
                 logger.info("\nHealing Agent Output (Recommendation Status):")
                 logger.info(f"  A healing action for node {node_id} would be recommended by the Healing Agent.")
                 logger.info("  (Note: Direct real-time output from Healing Agent's recommendations is not available due to 'main_orchestrator.py' modification constraint.)")
                 logger.info(f"{'='*50}\n")
+            elif alert_message.get("type") == "status_update":
+                # Log non-anomaly status updates for debugging
+                logger.info(f"Orchestrator: Received status update for node {alert_message.get('node_id', 'N/A')}: {alert_message.get('status', 'N/A')}")
             
-            await asyncio.sleep(0.1) # Small delay to prevent busy-waiting
+            await asyncio.sleep(0.01) # Small delay to prevent busy-waiting
         except asyncio.CancelledError:
             logger.info("Orchestrator output aggregator task cancelled.")
             break
@@ -262,3 +271,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+

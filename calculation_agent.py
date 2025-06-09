@@ -8,8 +8,9 @@ from collections import deque
 import numpy as np
 import pandas as pd
 import tensorflow as tf
-from keras.models import Sequential, load_model
-from keras.layers import LSTM, Dense, Dropout
+from tensorflow.keras.models import Sequential, load_model
+from tensorflow.keras.layers import LSTM, Dense, Dropout, InputLayer
+from tensorflow.keras.optimizers import Adam
 from sklearn.preprocessing import MinMaxScaler
 from sklearn.metrics import mean_squared_error
 import joblib
@@ -18,12 +19,22 @@ import zmq.asyncio
 import sys
 from functools import partial
 import shap
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as plt # Keep this import here for general availability in module scope
 
 
 # Set up logging for CalculationAgent
+# This must be at the top, immediately after imports, to ensure 'logger' is defined.
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Configure TensorFlow to use only CPU, to avoid potential GPU conflicts in certain environments
+# This must be done BEFORE any TensorFlow operation or Keras model creation.
+try:
+    tf.config.set_visible_devices([], 'GPU')
+    logger.info("TensorFlow configured to use CPU only.")
+except Exception as e:
+    logger.warning(f"Could not configure TensorFlow to use CPU only. May proceed with default device settings. Error: {e}")
+
 
 # Import the SalpSwarmOptimizer from its dedicated file
 from salp_swarm_optimizer import SalpSwarmOptimizer
@@ -68,52 +79,66 @@ class AnomalyAlert:
     actual_metrics: Dict[str, float]
     source_agent: str = "calculation_agent"
 
-# --- LSTM Model for Anomaly Detection (Keras Sequential Model) ---
-class LSTMAnomalyModel(Sequential):
-    def __init__(self, input_size=None, hidden_size=None, num_layers=2, dropout_rate=0.2, sequence_length=None, **kwargs):
-        # Pop custom arguments from kwargs or assign them if explicitly passed
-        _input_size = kwargs.pop('input_size', input_size)
-        _hidden_size = kwargs.pop('hidden_size', hidden_size)
-        _num_layers = kwargs.pop('num_layers', num_layers)
-        _dropout_rate = kwargs.pop('dropout_rate', dropout_rate)
-        _sequence_length = kwargs.pop('sequence_length', sequence_length)
-
-        # Ensure required args are provided either explicitly or via kwargs
-        if _input_size is None or _hidden_size is None or _sequence_length is None:
+# --- LSTM Model for Anomaly Detection (Robust Keras Sequential Model) ---
+# This class will encapsulate a Keras Sequential model, ensuring its input shape is defined.
+class LSTMAnomalyModel:
+    def __init__(self, input_size=None, hidden_size=None, num_layers=2, dropout_rate=0.2, sequence_length=None):
+        
+        # Ensure required args are provided
+        if input_size is None or hidden_size is None or sequence_length is None:
             raise ValueError("input_size, hidden_size, and sequence_length must be provided to LSTMAnomalyModel.")
 
-        # Store these arguments as attributes
-        self.input_size = _input_size
-        self.hidden_size = _hidden_size
-        self.num_layers = _num_layers
-        self.dropout_rate = _dropout_rate
-        self.sequence_length = _sequence_length
+        # Store these parameters
+        self.input_size = input_size
+        self.hidden_size = hidden_size
+        self.num_layers = num_layers
+        self.dropout_rate = dropout_rate
+        self.sequence_length = sequence_length
 
-        super(LSTMAnomalyModel, self).__init__(**kwargs)
-
-        # The Input layer correctly allows for a flexible batch size (None)
-        self.add(tf.keras.layers.Input(shape=(self.sequence_length, self.input_size)))
+        # Define the layers for the Sequential model explicitly from the start
+        # This list forms the core of the Sequential model
+        layers = [
+            # Use InputLayer explicitly as the first layer
+            # This ensures the input shape is set immediately when the Sequential model is created.
+            InputLayer(input_shape=(self.sequence_length, self.input_size))
+        ]
 
         # Add LSTM layers
         for i in range(self.num_layers):
-            # Return sequences for all but the last LSTM layer if there are more layers
             return_sequences = (i < self.num_layers - 1)
-            self.add(LSTM(self.hidden_size, activation='relu', return_sequences=return_sequences))
+            layers.append(LSTM(self.hidden_size, activation='relu', return_sequences=return_sequences))
         
-        self.add(Dropout(self.dropout_rate))
-        # Output layer for reconstruction: predicts the next sequence's features
-        self.add(Dense(self.input_size)) 
+        layers.append(Dropout(self.dropout_rate))
+        layers.append(Dense(self.input_size)) # Output layer for reconstruction
 
-    def get_config(self):
-        config = super(LSTMAnomalyModel, self).get_config()
-        config.update({
-            'input_size': self.input_size,
-            'hidden_size': self.hidden_size,
-            'num_layers': self.num_layers,
-            'dropout_rate': self.dropout_rate,
-            'sequence_length': self.sequence_length,
-        })
-        return config
+        # Create the Keras Sequential model by passing the list of layers
+        self._model = Sequential(layers)
+        
+        # Now the _model should have its input_shape attribute populated
+        logger.debug(f"LSTMAnomalyModel (encapsulated Sequential) created. Input shape: {self._model.input_shape}, Output shape: {self._model.output_shape}")
+
+    # Delegate Keras methods to the internal _model instance
+    def compile(self, *args, **kwargs):
+        self._model.compile(*args, **kwargs)
+
+    def fit(self, *args, **kwargs):
+        return self._model.fit(*args, **kwargs)
+
+    def predict(self, *args, **kwargs):
+        return self._model.predict(*args, **kwargs)
+    
+    def summary(self):
+        self._model.summary()
+
+    def save(self, filepath, overwrite=True, save_format=None, signatures=None, options=None):
+        """Saves the internal Keras model."""
+        self._model.save(filepath, overwrite=overwrite, save_format=save_format, signatures=signatures, options=options)
+
+    # Property to allow external access to the Keras input_shape
+    @property
+    def input_shape(self):
+        return self._model.input_shape
+
 
 # --- LSTM Anomaly Detector for a Single Node ---
 class LSTMAnomalyDetector:
@@ -128,7 +153,7 @@ class LSTMAnomalyDetector:
         # Changed from fixed anomaly_threshold to percentile for dynamic calculation
         self.anomaly_threshold_percentile = anomaly_threshold_percentile 
         self.dynamic_anomaly_threshold = 0.0 # This will be set after training
-        self.model = None
+        self.model = None # This will be an instance of LSTMAnomalyModel
         self.scaler = MinMaxScaler()
         self.data_buffer = deque(maxlen=sequence_length)
         self.shap_explainer = None
@@ -152,24 +177,26 @@ class LSTMAnomalyDetector:
         if self.input_features_count == 0:
             raise ValueError("input_features_count must be set before building the model.")
 
+        # Instantiate the LSTMAnomalyModel, which now creates a Sequential model with explicit InputLayer
         self.model = LSTMAnomalyModel(
             input_size=self.input_features_count,
             hidden_size=hidden_size,
             num_layers=num_layers,
             dropout_rate=dropout_rate,
-            sequence_length=self.sequence_length # Pass sequence_length here
+            sequence_length=self.sequence_length
         )
-        # Using Adam optimizer with a custom learning rate
-        optimizer = tf.keras.optimizers.Adam(learning_rate=learning_rate)
-        self.model.compile(optimizer=optimizer, loss='mse')
-        logger.info(f"Node {self.node_id}: LSTM model built with hidden_size={hidden_size}, lr={learning_rate}, layers={num_layers}")
+        
+        # Revert to passing the instantiated Adam optimizer directly.
+        # This is the standard way to configure the learning rate.
+        self.model.compile(optimizer=Adam(learning_rate=learning_rate), loss='mse')        
+        logger.info(f"Node {self.node_id}: LSTM model built and compiled with hidden_size={hidden_size}, lr={learning_rate}, layers={num_layers}")
 
     def save_model(self):
         """Saves the trained LSTM model, scaler, and dynamic threshold."""
         os.makedirs(MODEL_DIR, exist_ok=True)
         try:
-            if self.model:
-                self.model.save(self.model_path)
+            if self.model: # The LSTMAnomalyModel wrapper
+                self.model.save(self.model_path) # Delegates to its internal Keras model
                 logger.info(f"Node {self.node_id}: Saved LSTM model to {self.model_path}")
             if self.scaler:
                 joblib.dump(self.scaler, self.scaler_path)
@@ -187,7 +214,24 @@ class LSTMAnomalyDetector:
         """Loads the pre-trained LSTM model, scaler, and dynamic threshold."""
         if os.path.exists(self.model_path) and os.path.exists(self.scaler_path) and os.path.exists(self.threshold_path):
             try:
-                self.model = load_model(self.model_path, custom_objects={'LSTMAnomalyModel': LSTMAnomalyModel})
+                # Load the raw Keras Sequential model directly
+                loaded_keras_model = load_model(self.model_path)
+                
+                # Reconstruct the LSTMAnomalyModel wrapper around the loaded Keras model.
+                # It's important to provide all constructor arguments to LSTMAnomalyModel
+                # so it can correctly recreate its internal structure, even if it's then
+                # overwritten by the loaded model.
+                # For robust loading, one might save model parameters (hidden_size etc.)
+                # in the threshold.json or a separate file. For now, using defaults.
+                self.model = LSTMAnomalyModel(
+                    input_size=self.input_features_count,
+                    hidden_size=64, # Placeholder: ideally loaded from config or model metadata
+                    num_layers=2,   # Placeholder: ideally loaded from config or model metadata
+                    dropout_rate=0.2, # Placeholder: ideally loaded from config or model metadata
+                    sequence_length=self.sequence_length
+                )
+                self.model._model = loaded_keras_model # Assign the loaded Keras model directly
+
                 self.scaler = joblib.load(self.scaler_path)
                 with open(self.threshold_path, 'r') as f:
                     self.dynamic_anomaly_threshold = json.load(f)['dynamic_anomaly_threshold']
@@ -195,21 +239,20 @@ class LSTMAnomalyDetector:
                 self.is_trained = True
                 logger.info(f"Node {self.node_id}: Successfully loaded model from {self.model_path}, scaler, and threshold ({self.dynamic_anomaly_threshold:.6f}).")
 
-                # Re-initialize SHAP explainer if loading a trained model
-                # Use a small subset of training data (if available) for background
-                # For a robust solution, you might save/load a small background dataset or generate on the fly
-                if self.shap_background_data is not None: # Check if background data was already set during init/training
+                # Re-initialize SHAP explainer
+                if self.shap_background_data is not None:
                     try:
-                        self.shap_explainer = shap.GradientExplainer(self.model, self.shap_background_data)
+                        # SHAP explainer needs the actual Keras model object
+                        self.shap_explainer = shap.GradientExplainer(self.model._model, self.shap_background_data)
                         logger.info(f"Node {self.node_id}: SHAP GradientExplainer re-initialized after loading model.")
                     except Exception as e:
-                        logger.warning(f"Node {self.node_id}: Could not re-initialize SHAP explainer after loading model: {e}")
+                        logger.warning(f"Node {self.node_id}: Could not re-initialize SHAP explainer after loading model: {e}", exc_info=True)
                 else:
                      logger.warning(f"Node {self.node_id}: SHAP background data not available during model load. SHAP explainer not re-initialized.")
 
                 return True
             except Exception as e:
-                logger.error(f"Node {self.node_id}: Error loading model components: {e}")
+                logger.error(f"Node {self.node_id}: Error loading model components: {e}", exc_info=True)
                 return False
         else:
             logger.warning(f"Node {self.node_id}: No saved model, scaler, or threshold found. Will train new model.")
@@ -272,7 +315,8 @@ class LSTMAnomalyDetector:
             background_indices = np.random.choice(X_train_scaled.shape[0], num_background_samples, replace=False)
             self.shap_background_data = X_train_scaled[background_indices] # Store for base_values
 
-            self.shap_explainer = shap.GradientExplainer(self.model, self.shap_background_data)
+            # SHAP explainer needs the actual Keras model object
+            self.shap_explainer = shap.GradientExplainer(self.model._model, self.shap_background_data)
             logger.info(f"Node {self.node_id}: SHAP GradientExplainer initialized with background data shape {self.shap_background_data.shape}.")
         except Exception as e:
             logger.error(f"Node {self.node_id}: Error initializing SHAP GradientExplainer: {e}", exc_info=True)
@@ -309,21 +353,35 @@ class LSTMAnomalyDetector:
         # Reshape back to 3D (sequence_length, input_features_count)
         return scaled_sequence_flat.reshape(self.sequence_length, self.input_features_count)
 
-    async def generate_shap_plots(self, shap_values_1d, base_value_scalar, data_1d, feature_names, plot_suffix):
+    async def generate_shap_plots(self, shap_values_1d: np.ndarray, base_value_scalar: float, data_1d: np.ndarray, feature_names: List[str], plot_suffix: str):
         """
         Generates and saves SHAP plots for a single prediction.
         - Waterfall plot
         - Force plot
         """
-        try:
-            import matplotlib.pyplot as plt
-        except ImportError:
-            logger.warning("Matplotlib not found. Skipping SHAP plot generation.")
-            return
+        logger.debug(f"Entering generate_shap_plots for node {self.node_id} with suffix {plot_suffix}")
+        logger.debug(f"  Type of shap_values_1d: {type(shap_values_1d)}, value: {shap_values_1d}")
+        logger.debug(f"  Type of base_value_scalar: {type(base_value_scalar)}, value: {base_value_scalar}")
+        logger.debug(f"  Type of data_1d: {type(data_1d)}, value: {data_1d}")
+        logger.debug(f"  Type of feature_names: {type(feature_names)}, value: {feature_names}")
 
         if not self.save_shap_plots:
             logger.info(f"Node {self.node_id}: SHAP plot saving disabled.")
             return
+
+        # Explicitly check if arguments are valid before using them
+        if not isinstance(data_1d, np.ndarray) or data_1d.ndim != 1:
+            logger.error(f"Node {self.node_id}: data_1d is not a 1D numpy array. Type: {type(data_1d)}, Dims: {getattr(data_1d, 'ndim', 'N/A')}")
+            return
+        if not isinstance(shap_values_1d, np.ndarray) or shap_values_1d.ndim != 1:
+            logger.error(f"Node {self.node_id}: shap_values_1d is not a 1D numpy array. Type: {type(shap_values_1d)}, Dims: {getattr(shap_values_1d, 'ndim', 'N/A')}")
+            return
+        if not isinstance(feature_names, list) or not all(isinstance(f, str) for f in feature_names):
+            logger.error(f"Node {self.node_id}: feature_names is not a list of strings. Type: {type(feature_names)}")
+            return
+        if not isinstance(base_value_scalar, (int, float)):
+             logger.error(f"Node {self.node_id}: base_value_scalar is not a number. Type: {type(base_value_scalar)}")
+             return
 
         try:
             os.makedirs(self.plot_dir, exist_ok=True)
@@ -474,81 +532,74 @@ class LSTMAnomalyDetector:
                         
                         base_value_for_anomaly_impact = 0.0 # Conceptual baseline for "impact" being explained
 
-                        # Check for shape consistency before plotting
-                        if len(shap_values_for_last_timestep) != len(self.feature_names) or \
-                           len(data_for_explanation_original_scale) != len(self.feature_names):
-                            logger.error(f"Node {self.node_id}: SHAP values/data length mismatch with feature names before plotting. "
-                                         f"SHAP len: {len(shap_values_for_last_timestep)}, Data len: {len(data_for_explanation_original_scale)}, "
-                                         f"Feature names len: {len(self.feature_names)}")
-                            root_cause_indicators.append({"error": "SHAP explanation failed due to shape mismatch", "details": "Cannot generate explanation."})
+                        # Check for shape consistency before plotting is now handled within generate_shap_plots
+                        plot_suffix = f"{int(time.time())}"
+                        asyncio.create_task(self.generate_shap_plots(
+                            shap_values_for_last_timestep,
+                            base_value_for_anomaly_impact,
+                            data_for_explanation_original_scale,
+                            self.feature_names,
+                            plot_suffix
+                        ))
+
+                        sorted_features_by_impact = sorted(zip(self.feature_names, shap_values_for_last_timestep), key=lambda x: np.abs(x[1]), reverse=True)
+
+                        top_n = 5
+                        for feature, importance in sorted_features_by_impact[:top_n]:
+                            if np.abs(importance) > 1e-6:
+                                root_cause_indicators.append({"feature": feature, "importance": f"{importance:.4f}"})
+                                if any(k in feature.lower() for k in ['throughput', 'latency', 'packet_loss', 'signal_strength', 'neighbor_count', 'link_utilization', 'jitter']):
+                                    if "Network" not in affected_components: affected_components.append("Network")
+                                elif any(k in feature.lower() for k in ['cpu_usage', 'memory_usage', 'buffer_occupancy']):
+                                    if "Equipment" not in affected_components: affected_components.append("Equipment")
+                                elif any(k in feature.lower() for k in ['voltage_level', 'power_stability', 'energy_level']):
+                                        if "Power_System" not in affected_components: affected_components.append("Power_System")
+                                elif 'position' in feature.lower():
+                                    if "Location/Environmental" not in affected_components: affected_components.append("Location/Environmental")
+                                elif 'operational' in feature.lower():
+                                    if "Node_State" not in affected_components: affected_components.append("Node_State")
+                                elif 'load' in feature.lower():
+                                    if "Load_Management" not in affected_components: affected_components.append("Load_Management")
+                                elif 'degradation_level' in feature.lower() or 'fault_severity' in feature.lower():
+                                    if "System_Health" not in affected_components: affected_components.append("System_Health")
+
+                        if not root_cause_indicators and is_anomaly:
+                            root_cause_indicators.append({"feature": "Unknown/General Anomaly", "importance": "N/A"})
+
+                        if anomaly_score > 0.75 and ("Network" in affected_components or "Equipment" in affected_components or "Node_State" in affected_components):
+                            severity_classification = "Critical"
+                        elif anomaly_score > 0.5:
+                            severity_classification = "High"
+                        elif anomaly_score > 0.25:
+                            severity_classification = "Medium"
                         else:
-                            plot_suffix = f"{int(time.time())}"
-                            asyncio.create_task(self.generate_shap_plots(
-                                shap_values_for_last_timestep,
-                                base_value_for_anomaly_impact,
-                                data_for_explanation_original_scale,
-                                self.feature_names,
-                                plot_suffix
-                            ))
+                            severity_classification = "Low"
 
-                            sorted_features_by_impact = sorted(zip(self.feature_names, shap_values_for_last_timestep), key=lambda x: np.abs(x[1]), reverse=True)
+                        if severity_classification == "Critical":
+                            time_to_failure = "Immediate (0-5 min)"
+                            recommended_actions.append("Initiate emergency failover/redundancy switch.")
+                            recommended_actions.append("Isolate affected node for deep diagnostics.")
+                            recommended_actions.append("Dispatch field technicians for urgent on-site inspection.")
+                        elif severity_classification == "High":
+                            time_to_failure = "Short (5-30 min)"
+                            recommended_actions.append("Execute automated diagnostics and health checks.")
+                            recommended_actions.append("Prepare for traffic rerouting/load shedding.")
+                            recommended_actions.append("Alert network operations center (NOC) for close monitoring.")
+                        elif severity_classification == "Medium":
+                            time_to_failure = "Medium (30-120 min)"
+                            recommended_actions.append("Monitor closely and review recent configuration changes.")
+                            recommended_actions.append("Schedule proactive maintenance if trend continues.")
+                            recommended_actions.append("Review logs for pre-failure indicators.")
+                        else:
+                            time_to_failure = "Long (>120 min)"
+                            recommended_actions.append("Log for trend analysis and historical anomaly patterns.")
+                            recommended_actions.append("No immediate action required, but keep under observation.")
+                            recommended_actions.append("Consider a routine health check during next maintenance window.")
 
-                            top_n = 5
-                            for feature, importance in sorted_features_by_impact[:top_n]:
-                                if np.abs(importance) > 1e-6:
-                                    root_cause_indicators.append({"feature": feature, "importance": f"{importance:.4f}"})
-                                    if any(k in feature.lower() for k in ['throughput', 'latency', 'packet_loss', 'signal_strength', 'neighbor_count', 'link_utilization', 'jitter']):
-                                        if "Network" not in affected_components: affected_components.append("Network")
-                                    elif any(k in feature.lower() for k in ['cpu_usage', 'memory_usage', 'buffer_occupancy']):
-                                        if "Equipment" not in affected_components: affected_components.append("Equipment")
-                                    elif any(k in feature.lower() for k in ['voltage_level', 'power_stability', 'energy_level']):
-                                         if "Power_System" not in affected_components: affected_components.append("Power_System")
-                                    elif 'position' in feature.lower():
-                                        if "Location/Environmental" not in affected_components: affected_components.append("Location/Environmental")
-                                    elif 'operational' in feature.lower():
-                                        if "Node_State" not in affected_components: affected_components.append("Node_State")
-                                    elif 'load' in feature.lower():
-                                        if "Load_Management" not in affected_components: affected_components.append("Load_Management")
-                                    elif 'degradation_level' in feature.lower() or 'fault_severity' in feature.lower():
-                                        if "System_Health" not in affected_components: affected_components.append("System_Health")
-
-                            if not root_cause_indicators and is_anomaly:
-                                root_cause_indicators.append({"feature": "Unknown/General Anomaly", "importance": "N/A"})
-
-                            if anomaly_score > 0.75 and ("Network" in affected_components or "Equipment" in affected_components or "Node_State" in affected_components):
-                                severity_classification = "Critical"
-                            elif anomaly_score > 0.5:
-                                severity_classification = "High"
-                            elif anomaly_score > 0.25:
-                                severity_classification = "Medium"
-                            else:
-                                severity_classification = "Low"
-
-                            if severity_classification == "Critical":
-                                time_to_failure = "Immediate (0-5 min)"
-                                recommended_actions.append("Initiate emergency failover/redundancy switch.")
-                                recommended_actions.append("Isolate affected node for deep diagnostics.")
-                                recommended_actions.append("Dispatch field technicians for urgent on-site inspection.")
-                            elif severity_classification == "High":
-                                time_to_failure = "Short (5-30 min)"
-                                recommended_actions.append("Execute automated diagnostics and health checks.")
-                                recommended_actions.append("Prepare for traffic rerouting/load shedding.")
-                                recommended_actions.append("Alert network operations center (NOC) for close monitoring.")
-                            elif severity_classification == "Medium":
-                                time_to_failure = "Medium (30-120 min)"
-                                recommended_actions.append("Monitor closely and review recent configuration changes.")
-                                recommended_actions.append("Schedule proactive maintenance if trend continues.")
-                                recommended_actions.append("Review logs for pre-failure indicators.")
-                            else:
-                                time_to_failure = "Long (>120 min)"
-                                recommended_actions.append("Log for trend analysis and historical anomaly patterns.")
-                                recommended_actions.append("No immediate action required, but keep under observation.")
-                                recommended_actions.append("Consider a routine health check during next maintenance window.")
-
-                            shap_values_output = {
-                                "feature_names": self.feature_names,
-                                "importances": shap_values_for_last_timestep.tolist(),
-                            }
+                        shap_values_output = {
+                            "feature_names": self.feature_names,
+                            "importances": shap_values_for_last_timestep.tolist(),
+                        }
 
                     except Exception as e:
                         logger.error(f"Node {self.node_id}: SHAP explanation failed: {e}", exc_info=True)
@@ -597,6 +648,8 @@ class CalculationAgent:
             push_socket_address_mcp (str): ZeroMQ address for pushing status updates to the MCP.
             sequence_length (int): The length of the time series sequence for LSTM.
         """
+        logger.info(f"Calculation Agent: Initializing. Current working directory: {os.getcwd()}")
+
         self.config = self.load_config()
         self.node_ids = node_ids
 
@@ -613,9 +666,8 @@ class CalculationAgent:
 
         self.a2a_publisher_socket = self.context.socket(zmq.PUB)
         self.a2a_publisher_socket.connect(pub_socket_address_a2a)
-        logger.info(f"Calculation Agent: A2A Publisher bound to {pub_socket_address_a2a}")
+        logger.info(f"Calculation Agent: A2A Publisher connected to {pub_socket_address_a2a}") # Corrected log message
 
-        # Renamed self.mcp_push_status to self._mcp_push_socket
         self._mcp_push_socket = self.context.socket(zmq.PUSH)
         self._mcp_push_socket.connect(push_socket_address_mcp)
         logger.info(f"Calculation Agent: MCP PUSH socket connected to {push_socket_address_mcp}")
@@ -675,15 +727,17 @@ class CalculationAgent:
                 sequence_length=self.sequence_length,
                 anomaly_threshold_percentile=self.anomaly_threshold_percentile_config # Pass percentile
             )
+            logger.info(f"Detector initialized for node: {node_id} with sequence length {self.sequence_length}")
 
     async def _objective_function(self, params, node_id, X_train, y_train):
         """
         Objective function for SSA to optimize LSTM hyperparameters.
         """
-        try:
-            import matplotlib.pyplot as plt
-        except ImportError:
-            pass
+        # CRITICAL FIX: Clear Keras session before each trial in objective function.
+        # This helps in multiprocessing environments where Keras/TensorFlow might
+        # retain graph states from previous trials, leading to unexpected errors
+        # when models or optimizers are re-created.
+        tf.keras.backend.clear_session()
 
         hidden_size, learning_rate, num_layers, dropout_rate = \
             int(params[0]), float(params[1]), int(params[2]), float(params[3])
@@ -722,6 +776,7 @@ class CalculationAgent:
             temp_detector.train_model(X_train_scaled, y_train_scaled, epochs=5, verbose=0)
 
             if not temp_detector.is_trained:
+                logger.warning(f"Node {node_id} (SSA temp): Training failed, temp_detector.is_trained is False.")
                 return float('inf')
 
             predictions = temp_detector.model.predict(X_train_scaled, verbose=0)
@@ -778,11 +833,16 @@ class CalculationAgent:
         Loads initial training data for all nodes from the specified CSV.
         This data is used to train each node's detector once at startup.
         """
-        logger.info(f"Calculation Agent: Loading initial training data from {file_path}...")
+        absolute_file_path = os.path.abspath(file_path)
+        logger.info(f"Calculation Agent: Attempting to load initial training data from {absolute_file_path}...")
         try:
-            df = pd.read_csv(file_path)
+            df = pd.read_csv(absolute_file_path)
+            logger.info(f"Successfully loaded CSV from {absolute_file_path}. Total rows: {len(df)}, columns: {len(df.columns)}")
 
             df['NodeId'] = df['NodeId'].apply(lambda x: f"node_{int(x):02d}")
+            unique_nodes_in_csv = df['NodeId'].unique().tolist()
+            logger.info(f"Found {len(unique_nodes_in_csv)} unique nodes in training data: {unique_nodes_in_csv}")
+
 
             column_mapping = {
                 'Time': 'current_time',
@@ -828,13 +888,25 @@ class CalculationAgent:
 
             node_training_data = {}
 
-            for node_id_formatted in self.node_ids:
+            # Iterate through all nodes the agent is configured to monitor (self.node_ids)
+            for node_id_formatted in self.node_ids: 
                 node_df = df_renamed[df_renamed['NodeId'] == node_id_formatted].sort_values(by='current_time')
+                
+                # Check if the node even exists in the loaded CSV data
+                if node_df.empty:
+                    logger.warning(f"Node {node_id_formatted}: No data found in the training CSV file. Skipping training for this node.")
+                    node_training_data[node_id_formatted] = (np.array([]), np.array([]))
+                    continue
+
+                logger.info(f"Node {node_id_formatted}: Found {len(node_df)} raw data points in training file for this specific node.")
+
 
                 node_features_df = node_df[self.numerical_features_for_lstm].astype(float)
 
                 if len(node_features_df) < self.sequence_length + 1:
-                    logger.warning(f"Node {node_id_formatted}: Not enough data points ({len(node_features_df)}) for initial training with sequence length {self.sequence_length}. Skipping training for this node.")
+                    logger.warning(f"Node {node_id_formatted}: Not enough data points ({len(node_features_df)}) "
+                                   f"for initial training with sequence length {self.sequence_length} (needs at least {self.sequence_length + 1}). "
+                                   f"Skipping training for this node.")
                     node_training_data[node_id_formatted] = (np.array([]), np.array([]))
                     continue
 
@@ -851,15 +923,17 @@ class CalculationAgent:
                     np.array(X_train_list, dtype=np.float32),
                     np.array(y_train_list, dtype=np.float32)
                 )
-                logger.info(f"Node {node_id_formatted}: Prepared {num_sequences} training sequences.")
+                logger.info(f"Node {node_id_formatted}: Prepared {num_sequences} training sequences. "
+                            f"X_train shape: {node_training_data[node_id_formatted][0].shape}, "
+                            f"y_train shape: {node_training_data[node_id_formatted][1].shape}")
 
             return node_training_data
 
         except FileNotFoundError:
-            logger.error(f"Error: Initial training data file not found at {file_path}. Please ensure '{file_path}' exists.")
+            logger.error(f"Error: Initial training data file not found at {absolute_file_path}. Please ensure the file exists and the path is correct.")
             sys.exit(1)
         except Exception as e:
-            logger.error(f"Error loading and preparing initial training data: {e}", exc_info=True)
+            logger.error(f"Error loading and preparing initial training data from {absolute_file_path}: {e}", exc_info=True)
             sys.exit(1)
 
     async def perform_pre_live_testing(self):
@@ -868,12 +942,13 @@ class CalculationAgent:
         to evaluate SHAP and anomaly detection.
         """
         testing_file = self.config['testing_data_file']
+        absolute_testing_file_path = os.path.abspath(testing_file)
         logger.info("=" * 80)
-        logger.info(f"STARTING PRE-LIVE TESTING PHASE (SHAP & ANOMALY DETECTION) from {testing_file}")
+        logger.info(f"STARTING PRE-LIVE TESTING PHASE (SHAP & ANOMALY DETECTION) from {absolute_testing_file_path}")
         logger.info("=" * 80)
 
         try:
-            df = pd.read_csv(testing_file)
+            df = pd.read_csv(absolute_testing_file_path)
             df['NodeId'] = df['NodeId'].apply(lambda x: f"node_{int(x):02d}")
             # Map columns to match the features used by LSTM
             column_mapping = {
@@ -917,7 +992,11 @@ class CalculationAgent:
 
                 detector = self.node_detectors.get(node_id)
                 if not detector or not detector.is_trained:
-                    logger.debug(f"No trained detector for {node_id} or model not loaded. Skipping test data point.")
+                    # Log more explicitly if skipping due to untrained detector
+                    if detector and not detector.is_trained:
+                        logger.debug(f"Pre-live test: Skipping data for node {node_id} as its detector is not trained.")
+                    else:
+                        logger.debug(f"Pre-live test: No detector found for node {node_id}. Skipping data point.")
                     continue
 
                 raw_data_point = {feature: row.get(feature, 0.0) for feature in self.numerical_features_for_lstm}
@@ -944,9 +1023,9 @@ class CalculationAgent:
             logger.info("=" * 80)
 
         except FileNotFoundError:
-            logger.error(f"Pre-live testing data file not found: {testing_file}. Skipping pre-live testing.")
+            logger.error(f"Pre-live testing data file not found: {absolute_testing_file_path}. Skipping pre-live testing.")
         except Exception as e:
-            logger.error(f"Error during pre-live testing phase: {e}", exc_info=True)
+            logger.error(f"Error during pre-live testing phase from {absolute_testing_file_path}: {e}", exc_info=True)
 
 
     # New method to handle pushing status to MCP
@@ -973,19 +1052,18 @@ class CalculationAgent:
 
         # Ensure detector is trained before attempting prediction
         if not detector.is_trained:
-            logger.debug(f"Node {node_id}: Detector not trained yet. Skipping processing this data point.")
+            logger.debug(f"Node {node_id}: Detector not trained yet. Skipping processing this data point. Buffer length: {len(detector.data_buffer)}")
             # Changed this line to use send_json correctly
-            await self.mcp_push_status_update( # Using the new helper method
-                {
-                    "source": "CalculationAgent",
-                    "type": "status_update",
-                    "node_id": node_id,
-                    "timestamp": datetime.now().isoformat(),
-                    "simulation_time": raw_data_point_dict.get('current_time', 0.0),
-                    "status": "Insufficient data for prediction" if len(detector.data_buffer) < detector.sequence_length else "No model available",
-                    "details": {"anomaly_score": 0.0} # Placeholder details
-                }
-            )
+            status_message = {
+                "source": "CalculationAgent",
+                "type": "status_update",
+                "node_id": node_id,
+                "timestamp": datetime.now().isoformat(),
+                "simulation_time": raw_data_point_dict.get('current_time', 0.0),
+                "status": "Insufficient data for prediction" if len(detector.data_buffer) < detector.sequence_length else "No model available",
+                "details": {"anomaly_score": 0.0} # Placeholder details
+            }
+            await self.mcp_push_status_update(status_message) # Using the new helper method
             return
 
         anomaly_results = await detector.predict_anomaly(raw_data_point_dict, self.numerical_features_for_lstm)
@@ -1036,7 +1114,6 @@ class CalculationAgent:
             "details": anomaly_results
         }
         try:
-            # Changed this line to use the new helper method
             await self.mcp_push_status_update(mcp_message)
             logger.info(f"Node {node_id}: MCP: Pushed status update (Status: {anomaly_results['status']}, Score: {anomaly_results['anomaly_score']:.4f}).")
         except Exception as e:
@@ -1132,17 +1209,25 @@ class CalculationAgent:
                 else:
                     logger.warning(f"Node {node_id}: No sufficient training data available. Detector for this node will not be trained.")
                     detector.is_trained = False
-
+        
+        # Only proceed with gather if there are actual training tasks
         if training_tasks:
+            logger.info(f"Calculation Agent: Awaiting completion of {len(training_tasks)} training tasks...")
             results = await asyncio.gather(*training_tasks, return_exceptions=True)
             for i, result in enumerate(results):
-                current_node_id = self.node_ids[i]
+                current_node_id = self.node_ids[i] if i < len(self.node_ids) else "Unknown_Node_Index" # Handle potential index mismatch
                 if isinstance(result, Exception):
                     logger.error(f"Error during training/optimization for node {current_node_id}: {result}", exc_info=True)
+                    # If an error occurred during training, ensure detector.is_trained is False
+                    if current_node_id in self.node_detectors:
+                        self.node_detectors[current_node_id].is_trained = False
                 else:
                     detector = self.node_detectors[current_node_id]
                     if detector.is_trained:
                         detector.save_model()
+                        logger.info(f"Node {current_node_id}: Training completed and model saved successfully.")
+                    else:
+                        logger.warning(f"Node {current_node_id}: Training task completed but detector.is_trained is still False. Check previous logs for details.")
         else:
             logger.warning("No nodes had sufficient training data or models were loaded. Skipping mass training phase.")
 
@@ -1150,7 +1235,11 @@ class CalculationAgent:
         logger.info("Calculation Agent: Initial setup complete for all monitored nodes.")
 
         # --- Perform pre-live testing phase ---
-        await self.perform_pre_live_testing()
+        # Only run pre-live testing if at least one detector is trained
+        if any(d.is_trained for d in self.node_detectors.values()):
+            await self.perform_pre_live_testing()
+        else:
+            logger.warning("Skipping pre-live testing: No detectors were trained.")
 
 
         logger.info("Calculation Agent: Entering live data monitoring phase. Waiting for data from Monitor Agent...")
@@ -1220,4 +1309,3 @@ if __name__ == "__main__":
     finally:
         if 'calc_agent' in locals() and hasattr(calc_agent, 'is_running') and calc_agent.is_running:
             asyncio.run(calc_agent.stop())
-
