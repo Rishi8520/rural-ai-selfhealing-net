@@ -1178,7 +1178,68 @@ class NetworkOrchestrationAgent:
         self.context.term()
         
         logger.info("✅ TOSCA Orchestration Agent stopped successfully")
+# Add this method to orchestration_agent.py
+async def _listen_for_healing_plans(self):
+    """Listen for healing plans from the healing agent"""
+    try:
+        while True:
+            message = await self.healing_subscriber_socket.recv_json()
+            logger.info(f"Received healing plan: {message}")
+            
+            if message.get('message_type') == 'healing_plan':
+                healing_plan = message.get('healing_plan')
+                anomaly_id = message.get('anomaly_id')
+                
+                # Convert AI healing plan to TOSCA workflow
+                tosca_workflow = await self._convert_healing_plan_to_tosca(healing_plan)
+                
+                if tosca_workflow:
+                    # Execute TOSCA workflow with xOpera
+                    result = await self._execute_tosca_workflow(tosca_workflow, anomaly_id)
+                    
+                    # Send result back to healing agent
+                    await self._send_execution_result(anomaly_id, result)
+                    
+    except Exception as e:
+        logger.error(f"Error listening for healing plans: {e}")
 
+async def _convert_healing_plan_to_tosca(self, healing_plan):
+    """Convert AI healing plan to TOSCA workflow"""
+    try:
+        # Map healing actions to TOSCA templates
+        action_mappings = {
+            'reroute_traffic': 'traffic_rerouting.yaml',
+            'restart_device': 'device_restart.yaml', 
+            'escalate_human': 'human_escalation.yaml',
+            'apply_policy': 'policy_application.yaml'
+        }
+        
+        tosca_steps = []
+        for action in healing_plan.get('healing_actions', []):
+            action_type = action.get('type')
+            template = action_mappings.get(action_type)
+            
+            if template:
+                tosca_steps.append({
+                    'template': template,
+                    'parameters': {
+                        'node_id': action.get('destination_node_id'),
+                        'link_id': action.get('target_link_id'),
+                        'priority': action.get('priority'),
+                        'description': action.get('description')
+                    }
+                })
+        
+        return {
+            'workflow_id': f"workflow_{healing_plan.get('anomaly_id')}",
+            'steps': tosca_steps,
+            'strategy': healing_plan.get('overall_strategy')
+        }
+        
+    except Exception as e:
+        logger.error(f"Error converting healing plan to TOSCA: {e}")
+        return None
+    
 # Main execution
 async def main():
     """Main execution function"""
