@@ -1,4 +1,6 @@
 # streamlined_monitor_agent.py - FOCUS ON DATA COLLECTION AND BASIC HEALTH ONLY
+from prometheus_client import start_http_server, Gauge, Counter, Histogram
+import time
 import asyncio
 import json
 import logging
@@ -160,6 +162,13 @@ class StreamlinedMonitorAgent:
         self.streaming_active = False
         self.basic_health_stats = {}
         
+        # Setup Prometheus metrics first
+        self.setup_prometheus_metrics()
+
+        # Start Prometheus HTTP server
+        start_http_server(8001)  # Monitor metrics on port 8001
+        logger.info("📊 Prometheus metrics server started on port 8001")
+
         # Simple thresholds for basic operational checks
         self.thresholds = {
             'voltage_min': 200.0,
@@ -170,42 +179,97 @@ class StreamlinedMonitorAgent:
         
         # Data streaming queue
         self.data_stream_queue = asyncio.Queue(maxsize=50)
-        self.data_batch_size = self.config['data_streaming']['batch_size']
+        self.data_batch_size = self.config.get('data_streaming', {}).get('batch_size', 5)
         
         logger.info("Streamlined Monitor Agent initialized - data collection focus")
-    
+
     def load_config(self, config_file: str) -> Dict[str, Any]:
-        """Load configuration from file"""
+        """Load configuration from JSON file"""
         try:
+            if not os.path.exists(config_file):
+                # Create default config if file doesn't exist
+                default_config = {
+                    "monitoring": {
+                        "check_interval": 3.0,
+                        "baseline_samples": 5,
+                        "basic_health_only": True
+                    },
+                    "data_streaming": {
+                        "batch_size": 5,
+                        "stream_interval": 2.0,
+                        "raw_data_only": True
+                    },
+                    "calculation_agent": {
+                        "endpoint": "calculation_agent_data_stream.json"
+                    },
+                    "ns3": {
+                        "metrics_file": "rural_network_metrics.csv",
+                        "topology_file": "network_topology.json"
+                    }
+                }
+                
+                with open(config_file, 'w') as f:
+                    json.dump(default_config, f, indent=2)
+                
+                logger.info(f"📝 Created default config file: {config_file}")
+                return default_config
+            
             with open(config_file, 'r') as f:
                 config = json.load(f)
-            logger.info(f"Configuration loaded from {config_file}")
-            return config
+                logger.info(f"📋 Configuration loaded from {config_file}")
+                return config
+                
         except Exception as e:
-            logger.error(f"Error loading config: {e}")
-            return self.get_default_config()
-    
-    def get_default_config(self) -> Dict[str, Any]:
-        """Default configuration for streamlined monitoring"""
-        return {
-            "monitoring": {
-                "check_interval": 3.0,
-                "baseline_samples": 5,
-                "basic_health_only": True
-            },
-            "data_streaming": {
-                "batch_size": 5,
-                "stream_interval": 2.0,
-                "raw_data_only": True
-            },
-            "calculation_agent": {
-                "endpoint": "calculation_agent_data_stream.json"
-            },
-            "ns3": {
-                "metrics_file": "rural_network_metrics.csv",
-                "topology_file": "network_topology.json"
+            logger.error(f"❌ Error loading config: {e}")
+            # Return minimal default config
+            return {
+                "monitoring": {"check_interval": 3.0, "baseline_samples": 5},
+                "data_streaming": {"batch_size": 5, "stream_interval": 2.0},
+                "calculation_agent": {"endpoint": "calculation_agent_data_stream.json"},
+                "ns3": {"metrics_file": "rural_network_metrics.csv"}
             }
-        }
+
+    def setup_prometheus_metrics(self):
+        """Setup Prometheus metrics for monitoring"""
+        self.node_status_gauge = Gauge(
+            'nokia_monitor_node_status', 
+            'Node operational status (1=operational, 0=down)',
+            ['node_id', 'node_type', 'location']
+        )
+        
+        self.network_health_gauge = Gauge(
+            'nokia_monitor_network_health_percentage', 
+            'Overall network health percentage'
+        )
+        
+        self.voltage_gauge = Gauge(
+            'nokia_monitor_node_voltage', 
+            'Node voltage level',
+            ['node_id']
+        )
+        
+        self.energy_gauge = Gauge(
+            'nokia_monitor_node_energy', 
+            'Node energy level',
+            ['node_id']
+        )
+        
+        self.data_collection_counter = Counter(
+            'nokia_monitor_data_points_collected_total', 
+            'Total data points collected from NS3'
+        )
+
+        self.simulation_time_gauge = Gauge(
+            'nokia_monitor_simulation_time_seconds',
+            'Current NS3 simulation time'
+        )
+        
+        self.nodes_monitored_gauge = Gauge(
+            'nokia_monitor_nodes_total',
+            'Total number of nodes being monitored'
+        )
+
+        logger.info("✅ Prometheus metrics setup completed")
     
     def convert_to_enhanced_metrics(self, raw_metrics: Dict[str, Any]) -> Dict[str, EnhancedNetworkMetrics]:
         """Convert raw metrics to enhanced format for compatibility"""
@@ -234,7 +298,7 @@ class StreamlinedMonitorAgent:
         return enhanced_metrics
     
     async def basic_operational_health_check(self, metrics: Dict[str, EnhancedNetworkMetrics]):
-        """✅ PRIMARY: Basic operational health check - no AI analysis, just simple thresholds"""
+        """Basic operational health check - no AI analysis, just simple thresholds"""
         try:
             total_nodes = len(metrics)
             operational_nodes = len([m for m in metrics.values() if m.operational])
@@ -244,6 +308,20 @@ class StreamlinedMonitorAgent:
             energy_critical_nodes = 0
             
             for node_id, node_metrics in metrics.items():
+                # Update Prometheus metrics
+                self.node_status_gauge.labels(
+                    node_id=node_id,
+                    node_type=getattr(node_metrics, 'node_type', 'rural'),
+                    location=f"({node_metrics.position_x}, {node_metrics.position_y})"
+                ).set(1.0 if node_metrics.operational else 0.0)
+                
+                # Update voltage and energy
+                self.voltage_gauge.labels(node_id=node_id).set(node_metrics.voltage_level)
+                self.energy_gauge.labels(node_id=node_id).set(node_metrics.energy_level)
+                
+                # Increment data collection counter
+                self.data_collection_counter.inc()
+                
                 # Basic voltage check
                 if (node_metrics.voltage_level < self.thresholds['voltage_min'] or 
                     node_metrics.voltage_level > self.thresholds['voltage_max']):
@@ -257,6 +335,13 @@ class StreamlinedMonitorAgent:
             
             # Calculate operational percentage
             operational_percentage = (operational_nodes / total_nodes) * 100 if total_nodes > 0 else 0
+            
+            # Update network health
+            self.network_health_gauge.set(operational_percentage)
+            
+            # Update simulation time and nodes count
+            self.simulation_time_gauge.set(next(iter(metrics.values())).simulation_time)
+            self.nodes_monitored_gauge.set(total_nodes)
             
             # Determine basic network status
             if operational_percentage >= 95:
@@ -291,7 +376,7 @@ class StreamlinedMonitorAgent:
             logger.error(f"Error in basic health check: {e}")
     
     async def queue_raw_data_for_calculation_agent(self, metrics: Dict[str, EnhancedNetworkMetrics]):
-        """✅ PRIMARY: Queue RAW metrics data for Calculation Agent - no processing, just collection"""
+        """Queue RAW metrics data for Calculation Agent - no processing, just collection"""
         try:
             # Create simple raw data message (no AI analysis)
             raw_data_message = DataStreamMessage(
@@ -368,7 +453,7 @@ class StreamlinedMonitorAgent:
             logger.error(f"Error queuing raw data for Calculation Agent: {e}")
     
     async def simplified_monitoring_loop(self):
-        """✅ PRIMARY: Simplified monitoring loop - focus only on data collection and basic health"""
+        """Simplified monitoring loop - focus only on data collection and basic health"""
         logger.info("Starting streamlined monitoring loop - data collection focus...")
         
         while self.is_running:
@@ -436,7 +521,7 @@ class StreamlinedMonitorAgent:
                 await asyncio.sleep(2.0)
     
     async def send_raw_data_to_calculation_agent(self, batch: List[DataStreamMessage]):
-        """✅ PRIMARY: Send raw data batch to Calculation Agent for AI analysis"""
+        """Send raw data batch to Calculation Agent for AI analysis"""
         try:
             batch_data = {
                 'batch_id': f"raw_data_batch_{int(time.time())}",
@@ -476,7 +561,7 @@ class StreamlinedMonitorAgent:
             logger.error(f"Error sending raw data to Calculation Agent: {e}")
     
     async def establish_basic_baseline(self):
-        """✅ SECONDARY: Establish basic operational baseline - simplified version"""
+        """Establish basic operational baseline - simplified version"""
         logger.info("Establishing basic operational baseline...")
         
         baseline_samples = self.config['monitoring'].get('baseline_samples', 5)
@@ -660,10 +745,8 @@ async def main():
         if not os.path.exists('streamlined_monitor_config.json'):
             create_streamlined_config()
         
-        # Use streamlined config (or fallback to enhanced config for compatibility)
+        # Use streamlined config
         config_file = 'streamlined_monitor_config.json'
-        if not os.path.exists(config_file):
-            config_file = 'enhanced_monitor_config.json'
         
         monitor = StreamlinedMonitorAgent(config_file)
         

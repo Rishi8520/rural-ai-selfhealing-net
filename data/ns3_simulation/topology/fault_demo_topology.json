@@ -1,0 +1,102 @@
+{
+  "network_topology": {
+    "total_nodes": 50,
+    "layers": {
+      "core": {
+        "count": 5,
+        "description": "High-capacity backbone routing",
+        "node_range": "0-4",
+        "data_rate": "1Mbps",
+        "delay": "10ms"
+      },
+      "distribution": {
+        "count": 15,
+        "description": "Regional traffic aggregation",
+        "node_range": "5-19",
+        "data_rate": "512Kbps",
+        "delay": "20ms"
+      },
+      "access": {
+        "count": 30,
+        "description": "End-user connection points",
+        "node_range": "20-49",
+        "data_rate": "256Kbps",
+        "delay": "50ms"
+      }
+    },
+    "connections": {
+      "core_topology": "Star with central hub (CORE-0) + redundancy",
+      "distribution_topology": "Ring around regions, 3:1 ratio to core",
+      "access_topology": "2:1 ratio to distribution",
+      "total_interfaces": 51
+    },
+    "fault_patterns": [
+      {
+        "fault_id": 0,
+        "target_node": 0,
+        "connected_node": 1,
+        "fault_type": "fiber_cut",
+        "description": "FIBER CUT between CORE-0 and CORE-1",
+        "start_time": 60,
+        "peak_time": 105,
+        "severity": 1,
+        "anomaly_id": "anomaly_1_77394"
+      },
+      {
+        "fault_id": 1,
+        "target_node": 1,
+        "connected_node": 0,
+        "fault_type": "fiber_cut",
+        "description": "FIBER CUT between CORE-0 and CORE-1",
+        "start_time": 60,
+        "peak_time": 105,
+        "severity": 1,
+        "anomaly_id": "anomaly_2_77394"
+      },
+      {
+        "fault_id": 2,
+        "target_node": 5,
+        "connected_node": 20,
+        "fault_type": "fiber_cut",
+        "description": "FIBER CUT between DIST-0 and ACC-0",
+        "start_time": 120,
+        "peak_time": 165,
+        "severity": 1,
+        "anomaly_id": "anomaly_3_77394"
+      },
+      {
+        "fault_id": 3,
+        "target_node": 20,
+        "connected_node": 5,
+        "fault_type": "fiber_cut",
+        "description": "FIBER CUT between DIST-0 and ACC-0",
+        "start_time": 120,
+        "peak_time": 165,
+        "severity": 1,
+        "anomaly_id": "anomaly_4_77394"
+      },
+      {
+        "fault_id": 4,
+        "target_node": 7,
+        "connected_node": 0,
+        "fault_type": "power_fluctuation",
+        "description": "POWER FLUCTUATION at DIST-2",
+        "start_time": 90,
+        "peak_time": 150,
+        "severity": 0.7,
+        "anomaly_id": "anomaly_5_77394"
+      },
+      {
+        "fault_id": 5,
+        "target_node": 25,
+        "connected_node": 0,
+        "fault_type": "power_fluctuation",
+        "description": "POWER FLUCTUATION at ACC-5",
+        "start_time": 150,
+        "peak_time": 210,
+        "severity": 0.7,
+        "anomaly_id": "anomaly_6_77394"
+      }
+    ]
+  }
+}

@@ -1,0 +1,27 @@
+global:
+  scrape_interval: 15s
+scrape_configs:
+- job_name: nokia-central
+  scrape_interval: 10s
+  static_configs:
+  - targets:
+    - localhost:8000
+- job_name: nokia-monitor
+  scrape_interval: 5s
+  static_configs:
+  - targets:
+    - localhost:8001
+- job_name: nokia-calculation
+  scrape_interval: 10s
+  static_configs:
+  - targets:
+    - localhost:8002
+- job_name: nokia-orchestration
+  scrape_interval: 10s
+  static_configs:
+  - targets:
+    - localhost:8003
+- job_name: prometheus
+  static_configs:
+  - targets:
+    - localhost:9090

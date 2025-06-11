@@ -1,0 +1,21 @@
+{
+  "lstm_sequence_length": 10,
+  "lstm_epochs": 20,
+  "anomaly_threshold_percentile": 99,
+  "alert_debounce_interval": 10,
+  "model_training_batch_size": 32,
+  "batch_size": 32,
+  "train_on_startup": true,
+  "training_data_limit": 10000,
+  "lstm_features": [
+    "throughput", "latency", "packet_loss", "jitter",
+    "signal_strength", "cpu_usage", "memory_usage", "buffer_occupancy",
+    "active_links", "neighbor_count", "link_utilization", "critical_load",
+    "normal_load", "energy_level", "x_position", "y_position", "z_position",
+    "degradation_level", "fault_severity", "power_stability", "voltage_level"
+  ],
+  "prediction_horizon": 1,
+  "training_data_file": "baseline_network_metrics.csv",
+  "testing_data_file": "rural_network_metrics.csv",
+  "monitor_ns3_metrics_file": "calculation_agent_data_stream.json"
+}

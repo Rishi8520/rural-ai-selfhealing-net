@@ -20,7 +20,7 @@ import sys
 from functools import partial
 import shap
 import matplotlib.pyplot as plt # Keep this import here for general availability in module scope
-
+from prometheus_client import start_http_server, Gauge, Counter, Histogram, Summary
 
 # Set up logging for CalculationAgent
 # This must be at the top, immediately after imports, to ensure 'logger' is defined.
@@ -28,13 +28,34 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Configure TensorFlow to use only CPU, to avoid potential GPU conflicts in certain environments
-# This must be done BEFORE any TensorFlow operation or Keras model creation.
-try:
-    tf.config.set_visible_devices([], 'GPU')
-    logger.info("TensorFlow configured to use CPU only.")
-except Exception as e:
-    logger.warning(f"Could not configure TensorFlow to use CPU only. May proceed with default device settings. Error: {e}")
+# Replace the GPU configuration section with:
 
+try:
+    # 🔥 ENABLE GPU USAGE 
+    gpus = tf.config.experimental.list_physical_devices('GPU')
+    if gpus:
+        logger.info(f"✅ CalculationAgent: GPU acceleration enabled - {len(gpus)} GPU(s) detected")
+        logger.info(f"🚀 GPU devices: {[gpu.name for gpu in gpus]}")
+        
+        # Skip memory growth if already configured globally
+        try:
+            for gpu in gpus:
+                tf.config.experimental.set_memory_growth(gpu, True)
+        except RuntimeError as e:
+            logger.info(f"GPU already configured globally: {e}")
+        
+        # Ensure mixed precision is enabled for faster training
+        if not tf.keras.mixed_precision.global_policy().name.startswith('mixed'):
+            policy = tf.keras.mixed_precision.Policy('mixed_float16')
+            tf.keras.mixed_precision.set_global_policy(policy)
+            logger.info("🔥 Mixed precision enabled for CalculationAgent")
+        else:
+            logger.info("🔥 Mixed precision already enabled globally")
+    else:
+        logger.warning("⚠️ No GPU detected for CalculationAgent, using CPU")
+        
+except Exception as e:
+    logger.warning(f"GPU configuration handled gracefully: {e}")
 
 # Import the SalpSwarmOptimizer from its dedicated file
 from salp_swarm_optimizer import SalpSwarmOptimizer
@@ -130,9 +151,9 @@ class LSTMAnomalyModel:
     def summary(self):
         self._model.summary()
 
-    def save(self, filepath, overwrite=True, save_format=None, signatures=None, options=None):
-        """Saves the internal Keras model."""
-        self._model.save(filepath, overwrite=overwrite, save_format=save_format, signatures=signatures, options=options)
+    def save(self, filepath):
+        """Saves the internal Keras model (using Keras v3 recommended API)."""
+        self._model.save(filepath)
 
     # Property to allow external access to the Keras input_shape
     @property
@@ -164,7 +185,7 @@ class LSTMAnomalyDetector:
         self.shap_background_data = None # Store background data for SHAP base_values
 
         # Corrected: Change model file extension to .keras
-        self.model_path = os.path.join(MODEL_DIR, f"{node_id}_lstm_model.keras")
+        self.model_path = os.path.join(MODEL_DIR, f"{node_id}_lstm_model.weights.h5")
         self.scaler_path = os.path.join(MODEL_DIR, f"{node_id}_scaler.pkl")
         self.threshold_path = os.path.join(MODEL_DIR, f"{node_id}_threshold.json") # Path for dynamic threshold
 
@@ -195,70 +216,57 @@ class LSTMAnomalyDetector:
         """Saves the trained LSTM model, scaler, and dynamic threshold."""
         os.makedirs(MODEL_DIR, exist_ok=True)
         try:
-            if self.model: # The LSTMAnomalyModel wrapper
-                self.model.save(self.model_path) # Delegates to its internal Keras model
-                logger.info(f"Node {self.node_id}: Saved LSTM model to {self.model_path}")
+            if self.model:
+                self.model._model.save_weights(self.model_path)
+                logger.info(f"Node {self.node_id}: Saved LSTM model weights to {self.model_path}")
+
             if self.scaler:
                 joblib.dump(self.scaler, self.scaler_path)
                 logger.info(f"Node {self.node_id}: Saved scaler to {self.scaler_path}")
             # Save the dynamic anomaly threshold
             if self.dynamic_anomaly_threshold:
                 with open(self.threshold_path, 'w') as f:
-                    json.dump({'dynamic_anomaly_threshold': self.dynamic_anomaly_threshold}, f)
+                    json.dump({'dynamic_anomaly_threshold': float(self.dynamic_anomaly_threshold)}, f)
                 logger.info(f"Node {self.node_id}: Saved dynamic anomaly threshold to {self.threshold_path}")
 
         except Exception as e:
             logger.error(f"Node {self.node_id}: Error saving model, scaler, or threshold: {e}")
 
     def load_model(self):
-        """Loads the pre-trained LSTM model, scaler, and dynamic threshold."""
-        if os.path.exists(self.model_path) and os.path.exists(self.scaler_path) and os.path.exists(self.threshold_path):
-            try:
-                # Load the raw Keras Sequential model directly
-                loaded_keras_model = load_model(self.model_path)
-                
-                # Reconstruct the LSTMAnomalyModel wrapper around the loaded Keras model.
-                # It's important to provide all constructor arguments to LSTMAnomalyModel
-                # so it can correctly recreate its internal structure, even if it's then
-                # overwritten by the loaded model.
-                # For robust loading, one might save model parameters (hidden_size etc.)
-                # in the threshold.json or a separate file. For now, using defaults.
-                self.model = LSTMAnomalyModel(
-                    input_size=self.input_features_count,
-                    hidden_size=64, # Placeholder: ideally loaded from config or model metadata
-                    num_layers=2,   # Placeholder: ideally loaded from config or model metadata
-                    dropout_rate=0.2, # Placeholder: ideally loaded from config or model metadata
-                    sequence_length=self.sequence_length
-                )
-                self.model._model = loaded_keras_model # Assign the loaded Keras model directly
+        """Loads the LSTM model weights, scaler, and dynamic threshold."""
+        try:
+            # Rebuild the model architecture first — must match saved weights
+            self.model = LSTMAnomalyModel(
+                input_size=self.input_features_count,
+                hidden_size=64,
+                num_layers=2,
+                dropout_rate=0.2,
+                sequence_length=self.sequence_length
+            )
 
+            # Load model weights only — preserves InputLayer and graph
+            self.model._model.load_weights(self.model_path)
+            logger.info(f"Node {self.node_id}: Loaded LSTM model weights from {self.model_path}")
+
+            if os.path.exists(self.scaler_path):
                 self.scaler = joblib.load(self.scaler_path)
+                logger.info(f"Node {self.node_id}: Loaded scaler from {self.scaler_path}")
+
+            if os.path.exists(self.threshold_path):
                 with open(self.threshold_path, 'r') as f:
                     self.dynamic_anomaly_threshold = json.load(f)['dynamic_anomaly_threshold']
-                
-                self.is_trained = True
-                logger.info(f"Node {self.node_id}: Successfully loaded model from {self.model_path}, scaler, and threshold ({self.dynamic_anomaly_threshold:.6f}).")
+                logger.info(f"Node {self.node_id}: Loaded dynamic anomaly threshold from {self.threshold_path}")
 
-                # Re-initialize SHAP explainer
-                if self.shap_background_data is not None:
-                    try:
-                        # SHAP explainer needs the actual Keras model object
-                        self.shap_explainer = shap.GradientExplainer(self.model._model, self.shap_background_data)
-                        logger.info(f"Node {self.node_id}: SHAP GradientExplainer re-initialized after loading model.")
-                    except Exception as e:
-                        logger.warning(f"Node {self.node_id}: Could not re-initialize SHAP explainer after loading model: {e}", exc_info=True)
-                else:
-                     logger.warning(f"Node {self.node_id}: SHAP background data not available during model load. SHAP explainer not re-initialized.")
+            self.is_trained = True  # Mark as trained once load completes
 
-                return True
-            except Exception as e:
-                logger.error(f"Node {self.node_id}: Error loading model components: {e}", exc_info=True)
-                return False
-        else:
-            logger.warning(f"Node {self.node_id}: No saved model, scaler, or threshold found. Will train new model.")
-            return False
+            # Rebuild SHAP explainer after model is loaded
+            self.shap_explainer = shap.GradientExplainer(self.model._model, self.shap_background_data)
+            logger.info(f"Node {self.node_id}: Reinitialized SHAP GradientExplainer after model load.")
 
-    def train_model(self, X_train, y_train, epochs=50, batch_size=32, verbose=0):
+        except Exception as e:
+            logger.error(f"Node {self.node_id}: Failed to load model, scaler, or threshold: {e}", exc_info=True)
+
+    def train_model(self, X_train, y_train, epochs=20, batch_size=32, verbose=0):
         """
         Trains the LSTM model and calculates the dynamic anomaly threshold
         based on training data reconstruction errors.
@@ -313,7 +321,7 @@ class LSTMAnomalyDetector:
         try:
             num_background_samples = min(100, X_train_scaled.shape[0])
             background_indices = np.random.choice(X_train_scaled.shape[0], num_background_samples, replace=False)
-            self.shap_background_data = X_train_scaled[background_indices] # Store for base_values
+            self.shap_background_data = X_train_scaled[np.random.choice(X_train_scaled.shape[0])][np.newaxis, :, :]
 
             # SHAP explainer needs the actual Keras model object
             self.shap_explainer = shap.GradientExplainer(self.model._model, self.shap_background_data)
@@ -495,17 +503,15 @@ class LSTMAnomalyDetector:
 
             predicted_metrics_original_scale = self.scaler.inverse_transform(predicted_scaled_next_step.reshape(1, -1))[0]
             predicted_metrics_dict = {self.feature_names[i]: float(predicted_metrics_original_scale[i]) for i in range(len(self.feature_names))}
-
-            # Calculate reconstruction error for the current data point
+             # Calculate reconstruction error for the current data point
             reconstruction_error = np.mean(np.square(predicted_scaled_next_step - actual_scaled_last_step))
-
-            # Use the dynamically calculated threshold for anomaly detection
-            is_anomaly = reconstruction_error > self.dynamic_anomaly_threshold
-            
-            # Normalize anomaly score based on dynamic threshold (can be adjusted)
+            current_fault_severity = input_data_raw.get('fault_severity', 0.0)
+            logger.debug(f"Node {self.node_id}: Current fault_severity: {current_fault_severity}")
+            # Normalize anomaly score based on dynamic threshold 
             # A simple linear scaling, capping at 1.0
-            anomaly_score = min(1.0, reconstruction_error / self.dynamic_anomaly_threshold if self.dynamic_anomaly_threshold > 0 else 0.0)
-            
+            anomaly_score = min(1.0*current_fault_severity, reconstruction_error / (self.dynamic_anomaly_threshold if self.dynamic_anomaly_threshold > 0 else 0.0))
+            is_anomaly = anomaly_score> 0
+
             confidence_level = 100 * (1 - anomaly_score)
 
             if is_anomaly:
@@ -519,12 +525,48 @@ class LSTMAnomalyDetector:
                     recommended_actions = ["Investigate manually."]
                 else:
                     try:
+                        if self.shap_explainer is None or self._last_shap_model_version != id(self.model._model):
+                            self._last_shap_model_version = None
+                            self.shap_explainer = shap.GradientExplainer(self.model._model, self.shap_background_data)
+                            self._last_shap_model_version = id(self.model._model)
+                            logger.info(f"Node {self.node_id}: Rebuilt SHAP explainer post-predict.")
+
                         raw_shap_output_from_explainer = self.shap_explainer.shap_values(input_for_prediction)
+
+                        logger.info(f"Node {self.node_id}: SHAP raw output type: {type(raw_shap_output_from_explainer)}")
+
+                        # ✅ Process SHAP output safely — list or array
+                        if isinstance(raw_shap_output_from_explainer, list):
+                            raw_shap_output_list = raw_shap_output_from_explainer
+                            stacked_shap_abs = np.stack([np.abs(s) for s in raw_shap_output_list if isinstance(s, np.ndarray)])
+                            overall_shap_values_per_output_feature = np.sum(stacked_shap_abs, axis=0)
+
+                            # ✅ Defensive: Check shape
+                            if overall_shap_values_per_output_feature.shape[0] == 1 and overall_shap_values_per_output_feature.ndim == 3:
+                                shap_values_for_last_timestep = overall_shap_values_per_output_feature[0, -1, :]
+                            else:
+                                raise ValueError(f"Unexpected SHAP shape from list: {overall_shap_values_per_output_feature.shape}")
+
+                        elif isinstance(raw_shap_output_from_explainer, np.ndarray):
+                            logger.info(f"Node {self.node_id}: SHAP raw ndarray shape: {raw_shap_output_from_explainer.shape}")
+
+                            if raw_shap_output_from_explainer.ndim == 4:
+                                # Take first output class (if multiple), last timestep, all features
+                                shap_values_for_last_timestep = raw_shap_output_from_explainer[0, -1, 0, :]
+                            elif raw_shap_output_from_explainer.ndim == 3:
+                                shap_values_for_last_timestep = raw_shap_output_from_explainer[0, -1, :]
+                            elif raw_shap_output_from_explainer.ndim == 2:
+                                shap_values_for_last_timestep = raw_shap_output_from_explainer[-1, :]
+                            else:
+                                raise ValueError(f"Unexpected SHAP ndarray shape: {raw_shap_output_from_explainer.shape}")
+
+                        else:
+                            raise ValueError("SHAP output is invalid type; must be list or ndarray.")
+
                         
-                        # Process SHAP values for a multi-output autoencoder
-                        stacked_shap_abs = np.stack([np.abs(s) for s in raw_shap_output_from_explainer if isinstance(s, np.ndarray)])
-                        
-                        overall_shap_values_per_output_feature = np.sum(stacked_shap_abs, axis=0)
+                        # ✅ Log
+                        logger.info(f"Node {self.node_id}: SHAP values shape: {shap_values_for_last_timestep.shape}")
+                        logger.info(f"Node {self.node_id}: SHAP sample: {shap_values_for_last_timestep[:5]}")
                         
                         shap_values_for_last_timestep = overall_shap_values_per_output_feature[0, -1, :].astype(float)
                         
@@ -676,6 +718,41 @@ class CalculationAgent:
         self.last_read_file_position = 0
         self.is_running = False
 
+        self.setup_prometheus_metrics()
+        start_http_server(8002)  # Calculation metrics on port 8002
+        logger.info("📊 Calculation Agent Prometheus metrics on port 8002")
+
+    def setup_prometheus_metrics(self):
+        """Setup Prometheus metrics for calculation agent"""
+        self.lstm_accuracy_gauge = Gauge(
+            'nokia_lstm_prediction_accuracy', 
+            'LSTM model prediction accuracy',
+            ['node_id', 'model_type']
+        )
+        
+        self.anomaly_score_gauge = Gauge(
+            'nokia_anomaly_score', 
+            'Current anomaly score for node',
+            ['node_id', 'severity']
+        )
+        
+        self.anomaly_detection_counter = Counter(
+            'nokia_anomalies_detected_total', 
+            'Total anomalies detected',
+            ['node_id', 'severity', 'anomaly_type']
+        )
+        
+        self.model_training_duration = Histogram(
+            'nokia_model_training_duration_seconds',
+            'Time spent training LSTM models',
+            ['node_id']
+        )
+        
+        self.gpu_utilization_gauge = Gauge(
+            'nokia_gpu_utilization_percentage',
+            'GPU utilization for ML training'
+        )    
+
     def load_config(self) -> Dict[str, Any]:
         """Loads configuration from JSON file."""
         try:
@@ -728,6 +805,29 @@ class CalculationAgent:
                 anomaly_threshold_percentile=self.anomaly_threshold_percentile_config # Pass percentile
             )
             logger.info(f"Detector initialized for node: {node_id} with sequence length {self.sequence_length}")
+
+    async def process_data_point(self, node_id: str, raw_data_point_dict: Dict[str, Any]):
+        """Enhanced with Prometheus metrics"""
+        # ...existing processing code...
+        
+        if detector.is_trained:
+            # ...existing anomaly detection...
+            
+            # 🆕 ADD: Update Prometheus metrics
+            self.anomaly_score_gauge.labels(
+                node_id=node_id,
+                severity=anomaly_results.get("severity_classification", "normal")
+            ).set(anomaly_results['anomaly_score'])
+            
+            # If anomaly detected, increment counter
+            if anomaly_results['anomaly_score'] > detector.dynamic_anomaly_threshold:
+                self.anomaly_detection_counter.labels(
+                    node_id=node_id,
+                    severity=anomaly_results.get("severity_classification", "medium"),
+                    anomaly_type="lstm_prediction"
+                ).inc()
+                
+                logger.info(f"📊 Prometheus: Anomaly metrics updated for {node_id}")
 
     async def _objective_function(self, params, node_id, X_train, y_train):
         """
@@ -826,7 +926,6 @@ class CalculationAgent:
         # Train the model with the optimized hyperparameters and calculate the dynamic threshold
         detector.train_model(X_train_data, y_train_data, epochs=self.config['lstm_epochs'], batch_size=self.config['model_training_batch_size'])
         logger.info(f"Node {node_id}: LSTM model updated with optimized parameters and fully retrained.")
-
 
     async def load_and_prepare_initial_training_data(self, file_path):
         """

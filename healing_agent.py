@@ -1,4 +1,4 @@
-# --- File: healing_agent.py ---
+# healing_agent.py
 import asyncio
 import json
 import numpy as np
@@ -16,6 +16,8 @@ from sentence_transformers import SentenceTransformer # For advanced RAG
 import faiss # For efficient similarity search with dense vectors
 import sqlite3 # Added for database operations
 import platform # For Windows-specific event loop policy
+import torch
+from prometheus_client import start_http_server, Gauge, Counter, Histogram
 
 # Set Windows-specific event loop policy for ZeroMQ compatibility
 if platform.system() == "Windows":
@@ -36,12 +38,18 @@ else:
 
 # --- Database Manager Class ---
 class DatabaseManager:
-    def __init__(self, db_path='rag_knowledge_base.db'):
+    def __init__(self, db_path='rural_network_knowledge_base.db'):
         self.db_path = db_path
         self.conn = None
         self.cursor = None
         self._connect()
-        self._ensure_tables() # Ensure tables exist when connected
+        self._ensure_tables()
+        
+        try:
+            self.load_ns3_data_files()
+            logger.info("✅ NS3 database initialization completed successfully")
+        except Exception as e:
+            logger.warning(f"⚠️ NS3 data loading had issues: {e}")
 
     def _connect(self):
         try:
@@ -53,9 +61,8 @@ class DatabaseManager:
             raise
 
     def _ensure_tables(self):
-        """Ensures that necessary tables exist in the database, including the new UserFeedback table."""
+        """Enhanced table creation with NS3 integration"""
         try:
-            # SQL statements to create tables if they don't exist
             self.cursor.executescript("""
                 CREATE TABLE IF NOT EXISTS NetworkLayers (
                     layer_id INTEGER PRIMARY KEY,
@@ -83,10 +90,13 @@ class DatabaseManager:
 
                 CREATE TABLE IF NOT EXISTS Links (
                     link_id VARCHAR(50) PRIMARY KEY,
-                    source_node_id VARCHAR(50) NOT NULL,
-                    target_node_id VARCHAR(50) NOT NULL,
+                    source_node_id VARCHAR(50),
+                    target_node_id VARCHAR(50),
+                    destination_node_id VARCHAR(50),                  
                     link_type VARCHAR(50),
                     bandwidth_gbps REAL,
+                    total_bandwidth_mbps REAL,
+                    current_bandwidth_util_percent REAL,
                     latency_ms REAL,
                     status VARCHAR(20),
                     FOREIGN KEY (source_node_id) REFERENCES Nodes(node_id),
@@ -95,57 +105,144 @@ class DatabaseManager:
 
                 CREATE TABLE IF NOT EXISTS Anomalies (
                     anomaly_id VARCHAR(50) PRIMARY KEY,
-                    timestamp INTEGER NOT NULL,
-                    node_id VARCHAR(50) NOT NULL,
-                    severity VARCHAR(50),
+                    node_id VARCHAR(50),
+                    anomaly_type VARCHAR(100),
                     description TEXT,
+                    severity VARCHAR(20),
+                    timestamp REAL,
+                    status VARCHAR(20),
                     FOREIGN KEY (node_id) REFERENCES Nodes(node_id)
                 );
 
-                CREATE TABLE IF NOT EXISTS TrafficFlows (
-                    flow_id VARCHAR(50) PRIMARY KEY,
-                    source_node_id VARCHAR(50) NOT NULL,
-                    destination_node_id VARCHAR(50) NOT NULL,
-                    bandwidth_usage_gbps REAL,
-                    flow_type VARCHAR(50),
-                    FOREIGN KEY (source_node_id) REFERENCES Nodes(node_id),
-                    FOREIGN KEY (destination_node_id) REFERENCES Nodes(node_id)
+                CREATE TABLE IF NOT EXISTS RecoveryTactics (
+                    tactic_id VARCHAR(50) PRIMARY KEY,
+                    tactic_name VARCHAR(100),
+                    description TEXT,
+                    estimated_time_seconds INTEGER,
+                    priority VARCHAR(20)
                 );
 
                 CREATE TABLE IF NOT EXISTS Policies (
-                    policy_id INTEGER PRIMARY KEY,
-                    policy_name VARCHAR(100) NOT NULL,
+                    policy_id VARCHAR(50) PRIMARY KEY,
+                    policy_name VARCHAR(100),
                     policy_type VARCHAR(50),
                     description TEXT
                 );
 
-                CREATE TABLE IF NOT EXISTS RecoveryTactics (
-                    tactic_id INTEGER PRIMARY KEY,
-                    tactic_name VARCHAR(100) NOT NULL,
-                    description TEXT,
-                    estimated_time_seconds INTEGER,
-                    priority VARCHAR(50)
+                CREATE TABLE IF NOT EXISTS TrafficFlows (
+                    flow_id VARCHAR(50) PRIMARY KEY,
+                    source_node_id VARCHAR(50),
+                    destination_node_id VARCHAR(50),
+                    bandwidth_usage_gbps REAL,
+                    flow_type VARCHAR(50),
+                    timestamp REAL,
+                    FOREIGN KEY (source_node_id) REFERENCES Nodes(node_id),
+                    FOREIGN KEY (destination_node_id) REFERENCES Nodes(node_id)
                 );
 
-                -- NEW TABLE FOR USER FEEDBACK
                 CREATE TABLE IF NOT EXISTS UserFeedback (
-                    feedback_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
                     anomaly_id VARCHAR(50) NOT NULL,
                     timestamp INTEGER NOT NULL,
-                    proposed_plan TEXT, -- Store JSON as text
-                    user_decision VARCHAR(20) NOT NULL, -- 'approved', 'disapproved', 'other'
-                    user_input TEXT, -- Raw text input from user
-                    classified_intent TEXT, -- LLM-classified intent of user_input
-                    extracted_entities TEXT, -- LLM-extracted entities from user_input (JSON as text)
+                    proposed_plan TEXT,
+                    user_decision VARCHAR(50),
+                    user_input TEXT,
+                    classified_intent VARCHAR(100),
+                    extracted_entities TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS NS3Metrics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    node_id VARCHAR(50) NOT NULL,
+                    timestamp REAL NOT NULL,
+                    throughput REAL,
+                    latency REAL,
+                    packet_loss REAL,
+                    cpu_usage REAL,
+                    memory_usage REAL,
+                    FOREIGN KEY (node_id) REFERENCES Nodes(node_id)
+                );
+
+                CREATE TABLE IF NOT EXISTS AnomaliesMetrics (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    node_id VARCHAR(50) NOT NULL,
+                    anomaly_id VARCHAR(50),
+                    metric_name VARCHAR(100),
+                    metric_value REAL,
+                    timestamp REAL,
+                    FOREIGN KEY (node_id) REFERENCES Nodes(node_id),
                     FOREIGN KEY (anomaly_id) REFERENCES Anomalies(anomaly_id)
                 );
             """)
             self.conn.commit()
-            logger.info("Database tables ensured (created if not exist).")
+            logger.info("Database tables ensured with NS3 and TOSCA integration.")
         except sqlite3.Error as e:
             logger.error(f"Error ensuring database tables: {e}")
             self.conn.rollback()
             raise
+
+    def load_ns3_data_files(self, ns3_data_path="data/ns3_simulation/database/"):
+        """Load NS3 simulation data with duplicate prevention"""
+        try:
+            ns3_files = [
+                "fault_demo_database_schema.sql",
+                "fault_demo_database_nodes.sql", 
+                "fault_demo_database_links.sql",
+                "fault_demo_database_anomalies.sql",
+                "fault_demo_database_recovery_tactics.sql",
+                "fault_demo_database_policies.sql",
+                "fault_demo_database_traffic_flows.sql"
+            ]
+            
+            for file_name in ns3_files:
+                file_path = os.path.join(ns3_data_path, file_name)
+                if os.path.exists(file_path):
+                    logger.info(f"Loading NS3 data from {file_path}")
+                    
+                    if "schema" in file_name.lower():
+                        logger.info(f"Skipping schema file execution: {file_name} - tables already exist")
+                        continue
+                    
+                    table_name = self._get_table_name_from_file(file_name)
+                    if table_name and self._table_has_data(table_name):
+                        logger.info(f"Table {table_name} already has data, skipping {file_name}")
+                        continue
+                    
+                    with open(file_path, 'r') as f:
+                        sql_content = f.read()
+                        sql_content = sql_content.replace('INSERT INTO', 'INSERT OR IGNORE INTO')
+                        self.cursor.executescript(sql_content)
+                    self.conn.commit()
+                    logger.info(f"Successfully loaded {file_name}")
+                else:
+                    logger.warning(f"NS3 data file not found: {file_path}")
+            
+            logger.info("NS3 database loading completed")
+            
+        except Exception as e:
+            logger.error(f"Error loading NS3 data files: {e}")
+            self.conn.rollback()
+
+    def _get_table_name_from_file(self, file_name):
+        """Helper to extract table name from file name"""
+        table_mapping = {
+            "fault_demo_database_nodes.sql": "Nodes",
+            "fault_demo_database_links.sql": "Links",
+            "fault_demo_database_anomalies.sql": "Anomalies", 
+            "fault_demo_database_recovery_tactics.sql": "RecoveryTactics",
+            "fault_demo_database_policies.sql": "Policies",
+            "fault_demo_database_traffic_flows.sql": "TrafficFlows"
+        }
+        return table_mapping.get(file_name)
+
+    def _table_has_data(self, table_name):
+        """Check if table already contains data"""
+        try:
+            self.cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+            count = self.cursor.fetchone()[0]
+            return count > 0
+        except:
+            return False
 
     def _execute_query(self, query, params=()):
         try:
@@ -238,7 +335,6 @@ class DatabaseManager:
                 except sqlite3.Error as e:
                     logger.error(f"Error loading data from {data_file} into {table_name}: {e}")
                     self.conn.rollback()
-
 
             logger.info("Initial database data loading process completed.")
 
@@ -392,9 +488,12 @@ class HealingAgent:
         self.mcp_push_socket = self.context.socket(zmq.PUSH)
         self.mcp_push_socket.connect(push_socket_address_mcp)
         self.llm = self._initialize_llm()
-        self.embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+        self.embedding_model = self._initialize_gpu_embeddings()
+        self.setup_healing_prometheus_metrics()
+        start_http_server(8004)  # Healing agent metrics on port 8004
+        logger.info("📊 Healing Agent Prometheus metrics on port 8004")
         logger.info("Load pretrained SentenceTransformer: all-MiniLM-L6-v2")
-        self.db_manager = DatabaseManager() # Initialize DatabaseManager
+        self.db_manager = DatabaseManager('rural_network_knowledge_base.db')  # Use consistent DB name
         self.rag_index = None
         self.rag_documents = []
         self._load_rag_data() # Load RAG data from database
@@ -404,6 +503,67 @@ class HealingAgent:
         logger.info("LLM (Gemini) initialized successfully.")
         logger.info("Healing Agent started. Listening for anomalies...")
 
+    def _initialize_gpu_embeddings(self):
+        """
+        🎯 Initialize SentenceTransformer with GPU acceleration
+        """
+        try:
+            # Check if CUDA is available for PyTorch (SentenceTransformer uses PyTorch)
+            if torch.cuda.is_available():
+                device = "cuda"
+                gpu_name = torch.cuda.get_device_name(0)
+                logger.info(f"🖥️  GPU detected for embeddings: {gpu_name}")
+                logger.info(f"🚀 SentenceTransformer will use GPU acceleration")
+            else:
+                device = "cpu"
+                logger.warning("⚠️ No CUDA GPU detected for SentenceTransformer, using CPU")
+            
+            # Initialize with device specification
+            model = SentenceTransformer('all-MiniLM-L6-v2', device=device)
+            
+            logger.info(f"✅ SentenceTransformer loaded on: {device}")
+            
+            # If GPU is available, test it with a sample encoding
+            if device == "cuda":
+                try:
+                    test_embedding = model.encode(["GPU test"], show_progress_bar=False)
+                    logger.info("🔥 GPU embedding test successful")
+                except Exception as e:
+                    logger.warning(f"GPU embedding test failed: {e}, falling back to CPU")
+                    model = SentenceTransformer('all-MiniLM-L6-v2', device="cpu")
+            
+            return model
+            
+        except Exception as e:
+            logger.error(f"Error initializing embeddings: {e}")
+            # Fallback to CPU
+            return SentenceTransformer('all-MiniLM-L6-v2', device="cpu")
+
+    def setup_healing_prometheus_metrics(self):
+        """Setup Prometheus metrics for healing agent"""
+        self.healing_plan_generation_counter = Counter(
+            'nokia_healing_plans_generated_total',
+            'Total healing plans generated',
+            ['node_id', 'severity', 'strategy']
+        )
+        
+        self.healing_plan_effectiveness_gauge = Gauge(
+            'nokia_healing_plan_effectiveness_percentage',
+            'Healing plan effectiveness percentage',
+            ['plan_id', 'strategy']
+        )
+        
+        self.gemini_llm_response_time = Histogram(
+            'nokia_gemini_llm_response_time_seconds',
+            'Gemini LLM response time',
+            ['query_type']
+        )
+        
+        self.rag_retrieval_accuracy_gauge = Gauge(
+            'nokia_rag_retrieval_accuracy',
+            'RAG retrieval accuracy score',
+            ['query_type']
+        )
 
     def _initialize_llm(self):
         """Initializes the GenerativeModel with the API key."""
@@ -474,12 +634,38 @@ class HealingAgent:
 
         # Step 2: Anomaly Analysis and Healing Plan Generation with LLM
         prompt = self._construct_llm_prompt(anomaly_message, context_info)
+        start_time = time.time()
+
         healing_plan_json = await self._send_llm_request(prompt)
 
         if healing_plan_json:
             try:
                 healing_plan = json.loads(healing_plan_json)
                 logger.info(f"Generated Healing Plan for {anomaly_id}: {healing_plan}")
+
+                # 🆕 ADD: Update Prometheus metrics after successful plan generation
+                try:
+                    node_id = anomaly_message.get('node_id', 'unknown')
+                    severity = anomaly_message.get('severity', 'medium')
+                    strategy = "ai_generated"  # or extract from healing_plan if available
+                    
+                    # Increment healing plan counter
+                    self.healing_plan_generation_counter.labels(
+                        node_id=node_id,
+                        severity=severity,
+                        strategy=strategy
+                    ).inc()
+                    
+                    # Record LLM response time
+                    llm_response_time = time.time() - start_time
+                    self.gemini_llm_response_time.labels(
+                        query_type="healing_plan_generation"
+                    ).observe(llm_response_time)
+                    
+                    logger.info(f"📊 Healing metrics updated for {node_id}")
+                    
+                except Exception as e:
+                    logger.error(f"Error updating healing metrics: {e}")
 
                 # --- NEW: User Confirmation Step ---
                 print(f"\n--- PROPOSED HEALING PLAN for Anomaly {anomaly_id} ---")
@@ -570,7 +756,6 @@ class HealingAgent:
             )
         except Exception as e:
             logger.error(f"Failed to store user feedback: {e}")
-
 
     async def _send_to_mcp(self, healing_plan):
         """Sends the healing plan to the MCP via ZeroMQ PUSH socket."""

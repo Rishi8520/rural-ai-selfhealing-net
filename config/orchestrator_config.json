@@ -1,0 +1,95 @@
+{
+  "orchestration": {
+    "max_concurrent_workflows": 5,
+    "workflow_timeout": 300.0,
+    "health_check_interval": 10.0,
+    "performance_monitoring": true,
+    "tosca_enabled": true
+  },
+  "communication": {
+    "healing_subscriber_address": "tcp://127.0.0.1:5558",
+    "mcp_publisher_address": "tcp://127.0.0.1:5559",
+    "ns3_controller_address": "tcp://127.0.0.1:5560",
+    "status_publisher_address": "tcp://127.0.0.1:5561"
+  },
+  "network": {
+    "total_nodes": 50,
+    "core_nodes": [
+      "node_00",
+      "node_01",
+      "node_02",
+      "node_03",
+      "node_04"
+    ],
+    "distribution_nodes": [
+      "node_05",
+      "node_06",
+      "node_07",
+      "node_08",
+      "node_09",
+      "node_10",
+      "node_11",
+      "node_12",
+      "node_13",
+      "node_14",
+      "node_15",
+      "node_16",
+      "node_17",
+      "node_18",
+      "node_19"
+    ],
+    "access_nodes": [
+      "node_20",
+      "node_21",
+      "node_22",
+      "node_23",
+      "node_24",
+      "node_25",
+      "node_26",
+      "node_27",
+      "node_28",
+      "node_29",
+      "node_30",
+      "node_31",
+      "node_32",
+      "node_33",
+      "node_34",
+      "node_35",
+      "node_36",
+      "node_37",
+      "node_38",
+      "node_39",
+      "node_40",
+      "node_41",
+      "node_42",
+      "node_43",
+      "node_44",
+      "node_45",
+      "node_46",
+      "node_47",
+      "node_48",
+      "node_49"
+    ]
+  },
+  "healing": {
+    "priority_levels": 5,
+    "effectiveness_threshold": 0.7,
+    "automatic_rollback": true,
+    "learning_enabled": true,
+    "tosca_enabled": true
+  },
+  "reporting": {
+    "nokia_integration": true,
+    "real_time_dashboard": true,
+    "sla_monitoring": true,
+    "performance_analytics": true,
+    "tosca_metrics": true
+  },
+  "tosca": {
+    "templates_directory": "tosca_templates",
+    "workspace_directory": "xopera_workspace",
+    "xopera_api_url": "http://localhost:5000",
+    "default_timeout": 60,
+    "auto_cleanup": true
+  }
+}

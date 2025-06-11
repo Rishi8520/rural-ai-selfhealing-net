@@ -1,0 +1,17 @@
+{
+  "xopera_path": "opera",
+  "templates_directory": "tosca_templates/",
+  "deployment_timeout_seconds": 300,
+  "default_priority": "medium",
+  "logging": {
+    "level": "INFO",
+    "tosca_execution_logs": "tosca_executions.log"
+  },
+  "healing_strategy_mappings": {
+    "reroute_traffic": "traffic_rerouting.yaml",
+    "restart_device": "device_restart.yaml",
+    "escalate_human": "human_escalation.yaml",
+    "apply_policy": "policy_application.yaml",
+    "backup_power_switch": "backup_power.yaml"
+  }
+}
