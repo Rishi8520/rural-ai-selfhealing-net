@@ -1,0 +1,15 @@
+{
+  "shutdown_timestamp": "2025-06-13T04:09:55.609365",
+  "final_metrics": {
+    "healing_plans_received": 12,
+    "tosca_templates_generated": 12,
+    "ns3_plans_exported": 12,
+    "orchestration_executions": 12,
+    "successful_deployments": 0,
+    "failed_operations": 0,
+    "avg_processing_time": 0.008133808771769205
+  },
+  "total_active_orchestrations": 0,
+  "avg_processing_time": 0.008133808771769205,
+  "total_files_generated": 24
+}

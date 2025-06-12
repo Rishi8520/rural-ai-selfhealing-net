@@ -1,0 +1,53 @@
+{
+  "report_metadata": {
+    "report_id": "ORCH_REPORT_1749768352",
+    "generated_timestamp": "2025-06-13T04:15:52.129788",
+    "healing_plan_id": "HEAL_node_00_1749768352",
+    "node_id": "node_00"
+  },
+  "healing_plan_summary": {
+    "node_id": "node_00",
+    "severity": "high",
+    "total_healing_actions": 3,
+    "estimated_duration": 120,
+    "confidence": 0.8983333333333334
+  },
+  "tosca_template_details": {
+    "template_id": "TOSCA_HEAL_node_00_1749768352_1749768352",
+    "template_path": "tosca_templates/healing_tosca_node_00_20250613_041552.yaml",
+    "node_templates_count": 2,
+    "generated_timestamp": "2025-06-13T04:15:52.128800"
+  },
+  "ns3_integration_details": {
+    "plan_id": "NS3_HEAL_node_00_1749768352_1749768352",
+    "integration_path": "healing_plans_for_ns3/ns3_healing_plan_node_00_20250613_041552.json",
+    "topology_changes": 2,
+    "routing_updates": 4,
+    "config_changes": 0,
+    "generated_timestamp": "2025-06-13T04:15:52.129004"
+  },
+  "deployment_details": {
+    "status": "not_executed"
+  },
+  "orchestration_metrics": {
+    "healing_plans_received": 1,
+    "tosca_templates_generated": 1,
+    "ns3_plans_exported": 1,
+    "orchestration_executions": 0,
+    "successful_deployments": 0,
+    "failed_operations": 0,
+    "avg_processing_time": 0.0
+  },
+  "files_generated": {
+    "tosca_template": "tosca_templates/healing_tosca_node_00_20250613_041552.yaml",
+    "ns3_integration_plan": "healing_plans_for_ns3/ns3_healing_plan_node_00_20250613_041552.json",
+    "deployment_config": "deployment_configs/deployment_config_node_00_*.json"
+  },
+  "next_steps": [
+    "Execute NS3 simulation using: healing_plans_for_ns3/ns3_healing_plan_node_00_20250613_041552.json",
+    "Deploy TOSCA template using: tosca_templates/healing_tosca_node_00_20250613_041552.yaml",
+    "Monitor healing effectiveness through NS3 simulation results",
+    "Validate healing success criteria",
+    "Generate post-healing performance report"
+  ]
+}
