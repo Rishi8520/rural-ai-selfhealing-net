@@ -1,1290 +1,1360 @@
-"""
-Nokia Build-a-thon: AI Self-Healing Network Orchestrator Agent with xOpera TOSCA Integration
-Complete orchestration system for multi-agent coordination, healing workflows, and NS3 integration
-Implements FG-AINN standards with xOpera TOSCA orchestration capabilities
-"""
-
-from prometheus_client import start_http_server, Gauge, Counter, Histogram
-import asyncio
-import json
-import logging
-import time
 import os
-import sys
-import subprocess
-import tempfile
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # Hide GPU from TensorFlow
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'   # Reduce TensorFlow logging
+
+import asyncio
+import logging
+import json
+import time
 import yaml
-import shutil
-from pathlib import Path
-from dataclasses import dataclass, asdict
-from typing import Dict, List, Optional, Any, Union
-from datetime import datetime, timedelta
-from enum import Enum
-import threading
-from collections import defaultdict, deque
-import statistics
-
-# ZeroMQ for inter-agent communication
+import zmq
 import zmq.asyncio
+import subprocess
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Any, Optional
+from dataclasses import dataclass, asdict
 
-# Data processing and analysis
-import numpy as np
-import pandas as pd
-
-# Environment and configuration management
-from dotenv import load_dotenv
-
-# Advanced monitoring and metrics
+# Import your existing orchestration agent base class
 try:
-    import psutil
+    from orchestration_agent import OrchestrationAgent
 except ImportError:
-    psutil = None
-    logging.warning("psutil not available - system monitoring limited")
-
-# xOpera TOSCA orchestration
-try:
-    import requests
-    XOPERA_AVAILABLE = True
-except ImportError:
-    XOPERA_AVAILABLE = False
-    logging.warning("requests not available - xOpera integration limited")
-
-# Load environment variables
-load_dotenv()
-
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('orchestrator_agent.log'),
-        logging.StreamHandler()
-    ]
-)
+    # Fallback base class if original doesn't exist
+    class OrchestrationAgent:
+        def __init__(self, *args, **kwargs):
+            self.context = zmq.asyncio.Context()
+            self.is_running = False
+            pass
 
 logger = logging.getLogger(__name__)
 
-# Constants and Configuration
-ORCHESTRATOR_CONFIG_FILE = "config/orchestrator_config.json"
-HEALING_WORKFLOW_LOG = "healing_workflow_log.json"
-NETWORK_STATE_FILE = "network_state_snapshot.json"
-PERFORMANCE_METRICS_FILE = "orchestrator_performance_metrics.json"
-TOSCA_TEMPLATES_DIR = "tosca_templates"
-XOPERA_WORKSPACE_DIR = "xopera_workspace"
-
-# ZeroMQ Communication Addresses
-HEAL_ORCH_PULL_ADDRESS = "tcp://127.0.0.1:5558"  # Receives healing plans from Healing Agent
-ORCH_MCP_PUSH_ADDRESS = "tcp://127.0.0.1:5559"   # Sends reports to MCP Agent
-ORCH_NS3_CONTROL_ADDRESS = "tcp://127.0.0.1:5560"  # Controls NS3 simulation
-ORCH_STATUS_PUB_ADDRESS = "tcp://127.0.0.1:5561"   # Publishes status updates
-
-class WorkflowStatus(Enum):
-    """Enumeration for healing workflow statuses"""
-    PENDING = "pending"
-    IN_PROGRESS = "in_progress"
-    COMPLETED = "completed"
-    FAILED = "failed"
-    TIMEOUT = "timeout"
-    CANCELLED = "cancelled"
-
-class HealingStrategy(Enum):
-    """Types of healing strategies available"""
-    TRAFFIC_REROUTING = "traffic_rerouting"
-    POWER_STABILIZATION = "power_stabilization"
-    FIBER_REPAIR = "fiber_repair"
-    NODE_RESTART = "node_restart"
-    LOAD_BALANCING = "load_balancing"
-    REDUNDANCY_ACTIVATION = "redundancy_activation"
-    CONFIGURATION_ROLLBACK = "configuration_rollback"
-    EMERGENCY_ISOLATION = "emergency_isolation"
-
-class TOSCADeploymentStatus(Enum):
-    """TOSCA deployment status enumeration"""
-    CREATED = "created"
-    DEPLOYING = "deploying"
-    DEPLOYED = "deployed"
-    ERROR = "error"
-    UNDEPLOYING = "undeploying"
-    UNDEPLOYED = "undeployed"
-
 @dataclass
-class TOSCADeployment:
-    """TOSCA deployment tracking"""
-    deployment_id: str
-    template_name: str
-    template_path: str
-    inputs: Dict[str, Any]
-    status: TOSCADeploymentStatus
-    created_at: datetime
-    deployed_at: Optional[datetime]
-    error_message: Optional[str]
-    outputs: Dict[str, Any]
-
-@dataclass
-class NetworkTopology:
-    """Network topology information"""
-    nodes: Dict[str, Dict[str, Any]]
-    links: List[Dict[str, Any]]
-    core_nodes: List[str]
-    distribution_nodes: List[str]
-    access_nodes: List[str]
-    last_updated: datetime
-
-@dataclass
-class HealingWorkflowSpec:
-    """Specification for a healing workflow with TOSCA integration"""
-    workflow_id: str
+class ToscaTemplate:
+    """TOSCA template structure"""
+    template_id: str
     node_id: str
-    strategy: HealingStrategy
-    priority: int  # 1-5, where 1 is highest priority
-    estimated_duration: float  # seconds
-    prerequisites: List[str]
-    success_criteria: Dict[str, Any]
-    rollback_plan: Optional[str]
-    created_at: datetime
-    timeout: float = 300.0  # 5 minutes default
-    tosca_template: Optional[str] = None
-    tosca_inputs: Optional[Dict[str, Any]] = None
-    use_tosca: bool = True
+    template_name: str
+    tosca_version: str
+    description: str
+    node_templates: Dict[str, Any]
+    topology_template: Dict[str, Any]
+    generated_timestamp: str
+    file_path: str
 
 @dataclass
-class WorkflowExecution:
-    """Runtime execution state of a healing workflow"""
-    spec: HealingWorkflowSpec
-    status: WorkflowStatus
-    started_at: Optional[datetime]
-    completed_at: Optional[datetime]
-    progress_percentage: float
-    current_step: str
-    steps_completed: List[str]
-    error_message: Optional[str]
-    metrics: Dict[str, Any]
-    healing_effectiveness: float = 0.0
-    tosca_deployment: Optional[TOSCADeployment] = None
+class NS3IntegrationPlan:
+    """NS3 integration plan structure"""
+    plan_id: str
+    healing_plan_id: str
+    node_id: str
+    simulation_config: Dict[str, Any]
+    network_topology_changes: List[Dict[str, Any]]
+    routing_updates: List[Dict[str, Any]]
+    configuration_changes: List[Dict[str, Any]]
+    simulation_parameters: Dict[str, Any]
+    validation_criteria: Dict[str, Any]
+    generated_timestamp: str
+    file_path: str
 
-class XOperaIntegrator:
-    """xOpera TOSCA orchestrator integration for healing workflows"""
+@dataclass
+class OrchestrationMetrics:
+    """Orchestration performance metrics"""
+    healing_plans_received: int = 0
+    tosca_templates_generated: int = 0
+    ns3_plans_exported: int = 0
+    orchestration_executions: int = 0
+    successful_deployments: int = 0
+    failed_operations: int = 0
+    avg_processing_time: float = 0.0
+
+class EnhancedOrchestrationAgent(OrchestrationAgent):
+    """Enhanced Orchestration Agent with TOSCA generation and NS3 integration"""
     
-    def __init__(self, workspace_dir: str = XOPERA_WORKSPACE_DIR):
-        self.workspace_dir = Path(workspace_dir)
-        self.workspace_dir.mkdir(exist_ok=True)
-        self.active_deployments: Dict[str, TOSCADeployment] = {}
-        self.xopera_api_url = os.getenv('XOPERA_API_URL', 'http://localhost:5000')
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         
-        # Initialize TOSCA templates directory
-        self.templates_dir = Path(TOSCA_TEMPLATES_DIR)
-        self.templates_dir.mkdir(exist_ok=True)
+        # 🔗 Communication Setup
+        self.context = zmq.asyncio.Context()
+        self.healing_subscriber = None    # Receive healing plans from Healing Agent
+        self.status_publisher = None      # Send status updates
         
-        logger.info(f"xOpera integrator initialized with workspace: {self.workspace_dir}")
+        # 📁 Directory Structure
+        self.tosca_templates_dir = Path("tosca_templates")
+        self.ns3_integration_dir = Path("ns3_integration")
+        self.healing_plans_for_ns3_dir = Path("healing_plans_for_ns3")
+        self.orchestration_reports_dir = Path("orchestration_reports")
+        self.deployment_configs_dir = Path("deployment_configs")
         
-        # Ensure directory structure exists
-        self._ensure_directory_structure()
-    
-    def _ensure_directory_structure(self):
-        """Ensure all required directories exist"""
-        directories = [
-            self.templates_dir / "healing_workflows",
-            self.templates_dir / "node_types", 
-            self.templates_dir / "playbooks",
-            Path("config")
+        # Create directories
+        for directory in [self.tosca_templates_dir, self.ns3_integration_dir, 
+                         self.healing_plans_for_ns3_dir, self.orchestration_reports_dir,
+                         self.deployment_configs_dir]:
+            directory.mkdir(exist_ok=True)
+        
+        # 📊 Metrics and Tracking
+        self.metrics = OrchestrationMetrics()
+        self.active_orchestrations = {}
+        self.processing_queue = asyncio.Queue()
+        self.processing_times = []
+        
+        # 🎯 Nokia Rural Network Templates
+        self.network_templates = self.initialize_network_templates()
+        
+        # 🔧 NS3 Configuration
+        self.ns3_config = self.initialize_ns3_configuration()
+        
+        logger.info("✅ Enhanced Orchestration Agent initialized")
+        logger.info(f"📁 TOSCA Templates: {self.tosca_templates_dir}")
+        logger.info(f"📁 NS3 Integration: {self.ns3_integration_dir}")
+        logger.info(f"📁 Healing Plans for NS3: {self.healing_plans_for_ns3_dir}")
+
+    def initialize_network_templates(self) -> Dict[str, Any]:
+        """Initialize Nokia rural network TOSCA templates"""
+        return {
+            'base_template': {
+                'tosca_definitions_version': 'tosca_simple_yaml_1_3',
+                'description': 'Nokia Rural Network Self-Healing Infrastructure',
+                'metadata': {
+                    'template_name': 'nokia-rural-network-healing',
+                    'template_author': 'Nokia-AI-System',
+                    'template_version': '2.1.0'
+                },
+                'imports': [
+                    'tosca-normative-types:1.0',
+                    'nokia-rural-network-types:2.1'
+                ]
+            },
+            'node_type_mappings': {
+                'CORE': {
+                    'tosca_type': 'nokia.nodes.CoreNetworkFunction',
+                    'capabilities': ['high_throughput', 'load_balancing', 'failover'],
+                    'requirements': ['backup_connectivity', 'power_redundancy']
+                },
+                'DIST': {
+                    'tosca_type': 'nokia.nodes.DistributionNode',
+                    'capabilities': ['power_management', 'signal_boost', 'backup_routing'],
+                    'requirements': ['stable_power', 'backup_links']
+                },
+                'ACC': {
+                    'tosca_type': 'nokia.nodes.AccessNode',
+                    'capabilities': ['resource_scaling', 'load_shedding', 'service_migration'],
+                    'requirements': ['compute_resources', 'storage_capacity']
+                }
+            },
+            'healing_action_mappings': {
+                'traffic_rerouting': {
+                    'tosca_policy': 'nokia.policies.TrafficRerouting',
+                    'implementation': 'nokia.implementations.RoutingManager'
+                },
+                'power_optimization': {
+                    'tosca_policy': 'nokia.policies.PowerManagement',
+                    'implementation': 'nokia.implementations.PowerController'
+                },
+                'resource_reallocation': {
+                    'tosca_policy': 'nokia.policies.ResourceManagement',
+                    'implementation': 'nokia.implementations.ResourceOrchestrator'
+                },
+                'load_balancing': {
+                    'tosca_policy': 'nokia.policies.LoadBalancing',
+                    'implementation': 'nokia.implementations.LoadBalancer'
+                },
+                'emergency_restart': {
+                    'tosca_policy': 'nokia.policies.ServiceRestart',
+                    'implementation': 'nokia.implementations.ServiceManager'
+                }
+            }
+        }
+
+    def initialize_ns3_configuration(self) -> Dict[str, Any]:
+        """Initialize NS3 simulation configuration"""
+        return {
+            'simulation_defaults': {
+                'simulation_time': 300.0,  # 5 minutes
+                'animation_enabled': True,
+                'pcap_enabled': True,
+                'tracing_enabled': True,
+                'mobility_model': 'ns3::ConstantPositionMobilityModel',
+                'propagation_model': 'ns3::FriisPropagationLossModel',
+                'error_model': 'ns3::YansErrorRateModel'
+            },
+            'network_topology': {
+                'rural_network_size': '5x5km',
+                'node_density': 'sparse',
+                'connectivity_pattern': 'mesh_with_backbone',
+                'power_model': 'battery_with_solar'
+            },
+            'healing_validation': {
+                'metrics_collection_interval': 1.0,
+                'convergence_timeout': 60.0,
+                'success_criteria': {
+                    'throughput_recovery_threshold': 0.8,
+                    'latency_improvement_threshold': 0.5,
+                    'packet_loss_reduction_threshold': 0.3
+                }
+            }
+        }
+
+    async def initialize_communication(self):
+        """Initialize ZeroMQ communication channels"""
+        try:
+            # 👂 Healing Plans Subscriber - Receive from Healing Agent
+            self.healing_subscriber = self.context.socket(zmq.SUB)
+            self.healing_subscriber.connect("tcp://127.0.0.1:5558")
+            self.healing_subscriber.setsockopt_string(zmq.SUBSCRIBE, "")
+            
+            # 📤 Status Publisher - Send status updates
+            self.status_publisher = self.context.socket(zmq.PUB)
+            self.status_publisher.bind("tcp://127.0.0.1:5559")
+            
+            logger.info("✅ Enhanced Orchestration Agent communication initialized")
+            logger.info("👂 Healing Plans Subscriber: Port 5558 (from Healing Agent)")
+            logger.info("📤 Status Publisher: Port 5559 (status updates)")
+            
+            # Give time for socket binding
+            await asyncio.sleep(2)
+            
+        except Exception as e:
+            logger.error(f"❌ Communication initialization failed: {e}")
+            raise
+
+    async def start_with_ns3_integration(self):
+        """Start Enhanced Orchestration Agent with NS3 integration"""
+        logger.info("🚀 Starting Enhanced Orchestration Agent...")
+        
+        # Initialize communication
+        await self.initialize_communication()
+        
+        # Start processing tasks
+        self.is_running = True
+        
+        # Create background tasks
+        tasks = [
+            asyncio.create_task(self.listen_for_healing_plans()),
+            asyncio.create_task(self.process_orchestration_queue()),
+            asyncio.create_task(self.monitor_orchestration_performance()),
+            asyncio.create_task(self.generate_periodic_reports()),
+            asyncio.create_task(self.cleanup_old_files())
         ]
         
-        for directory in directories:
-            directory.mkdir(parents=True, exist_ok=True)
-            logger.info(f"Ensured directory exists: {directory}")
-    
-    def get_template_for_strategy(self, strategy: HealingStrategy) -> str:
-        """Get appropriate TOSCA template for healing strategy"""
-        template_mapping = {
-            HealingStrategy.POWER_STABILIZATION: 'healing_workflows/power_fluctuation_healing.yaml',
-            HealingStrategy.FIBER_REPAIR: 'healing_workflows/fiber_cut_healing.yaml', 
-            HealingStrategy.NODE_RESTART: 'healing_workflows/node_failure_healing.yaml',
-            HealingStrategy.TRAFFIC_REROUTING: 'healing_workflows/power_fluctuation_healing.yaml',
-            HealingStrategy.EMERGENCY_ISOLATION: 'healing_workflows/fiber_cut_healing.yaml',
-            HealingStrategy.LOAD_BALANCING: 'healing_workflows/node_failure_healing.yaml',
-            HealingStrategy.REDUNDANCY_ACTIVATION: 'healing_workflows/power_fluctuation_healing.yaml',
-            HealingStrategy.CONFIGURATION_ROLLBACK: 'healing_workflows/node_failure_healing.yaml'
-        }
-        
-        return template_mapping.get(strategy, 'healing_workflows/node_failure_healing.yaml')
-    
-    def prepare_tosca_inputs(self, workflow_spec: HealingWorkflowSpec, network_state: Dict[str, Any]) -> Dict[str, Any]:
-        """Prepare TOSCA template inputs from workflow specification"""
-        base_inputs = {
-            'target_node_id': workflow_spec.node_id,
-            'severity_level': 'HIGH' if workflow_spec.priority <= 2 else 'MEDIUM',
-            'workflow_id': workflow_spec.workflow_id
-        }
-        
-        # Add strategy-specific inputs
-        if workflow_spec.strategy == HealingStrategy.POWER_STABILIZATION:
-            base_inputs.update({
-                'backup_route_nodes': self._get_backup_nodes(workflow_spec.node_id, network_state)
-            })
-        elif workflow_spec.strategy == HealingStrategy.FIBER_REPAIR:
-            connected_nodes = self._get_connected_nodes(workflow_spec.node_id, network_state)
-            if connected_nodes:
-                base_inputs.update({
-                    'node_a_id': workflow_spec.node_id,
-                    'node_b_id': connected_nodes[0],
-                    'alternative_path_nodes': self._get_alternative_path(workflow_spec.node_id, connected_nodes[0], network_state)
-                })
-        elif workflow_spec.strategy == HealingStrategy.NODE_RESTART:
-            base_inputs.update({
-                'backup_configuration': True
-            })
-        
-        return base_inputs
-    
-    def _get_backup_nodes(self, node_id: str, network_state: Dict[str, Any]) -> List[str]:
-        """Get backup nodes for rerouting"""
-        try:
-            node_num = int(node_id.split('_')[1])
-            backup_nodes = []
-            for offset in [-2, -1, 1, 2]:
-                backup_node_num = node_num + offset
-                if 0 <= backup_node_num <= 49:
-                    backup_nodes.append(f"node_{backup_node_num:02d}")
-            return backup_nodes[:3]
-        except:
-            return [f"node_{i:02d}" for i in range(3)]
-    
-    def _get_connected_nodes(self, node_id: str, network_state: Dict[str, Any]) -> List[str]:
-        """Get nodes connected to the given node"""
-        try:
-            node_num = int(node_id.split('_')[1])
-            connected = []
-            # Simulate network connections (ring topology)
-            next_node = (node_num + 1) % 50
-            prev_node = (node_num - 1) % 50
-            connected.extend([f"node_{next_node:02d}", f"node_{prev_node:02d}"])
-            return connected
-        except:
-            return ["node_01", "node_02"]
-    
-    def _get_alternative_path(self, node_a: str, node_b: str, network_state: Dict[str, Any]) -> List[str]:
-        """Calculate alternative path between two nodes"""
-        try:
-            num_a = int(node_a.split('_')[1])
-            num_b = int(node_b.split('_')[1])
-            start = min(num_a, num_b)
-            end = max(num_a, num_b)
-            
-            alt_path = []
-            for i in range(start + 2, end, 2):
-                if i <= 49:
-                    alt_path.append(f"node_{i:02d}")
-            return alt_path[:3]
-        except:
-            return ["node_25", "node_26"]
-    
-    async def deploy_tosca_template(self, deployment_id: str, template_path: str, inputs: Dict[str, Any]) -> TOSCADeployment:
-        """Deploy TOSCA template using xOpera"""
-        deployment = TOSCADeployment(
-            deployment_id=deployment_id,
-            template_name=Path(template_path).name,
-            template_path=template_path,
-            inputs=inputs,
-            status=TOSCADeploymentStatus.CREATED,
-            created_at=datetime.now(),
-            deployed_at=None,
-            error_message=None,
-            outputs={}
-        )
+        logger.info("✅ Enhanced Orchestration Agent started successfully")
+        logger.info("👂 Listening for healing plans...")
+        logger.info("🎯 TOSCA template generation ready...")
+        logger.info("📊 NS3 integration ready...")
         
         try:
-            # Create deployment workspace
-            deployment_workspace = self.workspace_dir / deployment_id
-            deployment_workspace.mkdir(exist_ok=True)
-            
-            # Copy template to workspace
-            workspace_template = deployment_workspace / Path(template_path).name
-            if Path(template_path).exists():
-                shutil.copy2(template_path, workspace_template)
-            else:
-                logger.warning(f"Template not found: {template_path}, creating placeholder")
-                with open(workspace_template, 'w') as f:
-                    f.write("# Placeholder TOSCA template\n")
-            
-            # Create inputs file
-            inputs_file = deployment_workspace / 'inputs.yaml'
-            with open(inputs_file, 'w') as f:
-                yaml.dump(inputs, f, default_flow_style=False)
-            
-            deployment.status = TOSCADeploymentStatus.DEPLOYING
-            logger.info(f"Starting TOSCA deployment: {deployment_id}")
-            
-            # Execute xOpera deployment
-            if XOPERA_AVAILABLE:
-                success = await self._execute_xopera_deployment(deployment_workspace, workspace_template, inputs_file)
-            else:
-                # Simulate deployment
-                await asyncio.sleep(2.0)
-                success = True
-            
-            if success:
-                deployment.status = TOSCADeploymentStatus.DEPLOYED
-                deployment.deployed_at = datetime.now()
-                deployment.outputs = await self._get_deployment_outputs(deployment_workspace)
-                logger.info(f"TOSCA deployment successful: {deployment_id}")
-            else:
-                deployment.status = TOSCADeploymentStatus.ERROR
-                deployment.error_message = "Deployment failed"
-                logger.error(f"TOSCA deployment failed: {deployment_id}")
-                
-        except Exception as e:
-            deployment.status = TOSCADeploymentStatus.ERROR
-            deployment.error_message = str(e)
-            logger.error(f"Error in TOSCA deployment {deployment_id}: {e}")
-        
-        self.active_deployments[deployment_id] = deployment
-        return deployment
-    
-    async def _execute_xopera_deployment(self, workspace_dir: Path, template_path: Path, inputs_path: Path) -> bool:
-        """Execute xOpera deployment command"""
-        try:
-            original_cwd = os.getcwd()
-            os.chdir(workspace_dir)
-            
-            cmd = ['opera', 'deploy', '--inputs', str(inputs_path), str(template_path)]
-            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-            
-            os.chdir(original_cwd)
-            
-            if result.returncode == 0:
-                logger.info(f"xOpera deployment successful: {result.stdout}")
-                return True
-            else:
-                logger.error(f"xOpera deployment failed: {result.stderr}")
-                return False
-                
-        except subprocess.TimeoutExpired:
-            logger.error("xOpera deployment timed out")
-            return False
-        except Exception as e:
-            logger.error(f"Error executing xOpera deployment: {e}")
-            return False
+            # Wait for all tasks
+            await asyncio.gather(*tasks)
+        except KeyboardInterrupt:
+            logger.info("🛑 Shutdown requested")
         finally:
-            try:
-                os.chdir(original_cwd)
-            except:
-                pass
-    
-    async def _get_deployment_outputs(self, workspace_dir: Path) -> Dict[str, Any]:
-        """Get outputs from TOSCA deployment"""
-        try:
-            outputs_file = workspace_dir / '.opera' / 'outputs.yaml'
-            if outputs_file.exists():
-                with open(outputs_file, 'r') as f:
-                    return yaml.safe_load(f) or {}
-            
-            return {
-                'deployment_status': 'success',
-                'healing_actions_performed': ['power_stabilization', 'traffic_rerouting'],
-                'estimated_recovery_time': '45 seconds'
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting deployment outputs: {e}")
-            return {}
-    
-    async def undeploy_tosca_template(self, deployment_id: str) -> bool:
-        """Undeploy TOSCA template"""
-        if deployment_id not in self.active_deployments:
-            logger.warning(f"Deployment not found: {deployment_id}")
-            return False
-        
-        deployment = self.active_deployments[deployment_id]
-        
-        try:
-            deployment.status = TOSCADeploymentStatus.UNDEPLOYING
-            deployment_workspace = self.workspace_dir / deployment_id
-            
-            if XOPERA_AVAILABLE and deployment_workspace.exists():
-                original_cwd = os.getcwd()
-                os.chdir(deployment_workspace)
-                
-                cmd = ['opera', 'undeploy']
-                result = subprocess.run(cmd, capture_output=True, text=True, timeout=30)
-                
-                os.chdir(original_cwd)
-                
-                if result.returncode != 0:
-                    logger.warning(f"xOpera undeploy warnings: {result.stderr}")
-            
-            del self.active_deployments[deployment_id]
-            
-            if deployment_workspace.exists():
-                shutil.rmtree(deployment_workspace)
-            
-            logger.info(f"TOSCA deployment undeployed: {deployment_id}")
-            return True
-            
-        except Exception as e:
-            logger.error(f"Error undeploying TOSCA template {deployment_id}: {e}")
-            return False
+            await self.cleanup()
 
-class NetworkStateManager:
-    """Manages real-time network state and topology"""
-    
-    def __init__(self):
-        self.topology: Optional[NetworkTopology] = None
-        self.node_states: Dict[str, Dict[str, Any]] = {}
-        self.link_states: Dict[str, Dict[str, Any]] = {}
-        self.state_history: deque = deque(maxlen=1000)
-        self.last_update: Optional[datetime] = None
-    
-    async def update_topology(self, topology_data: Dict[str, Any]):
-        """Update network topology from NS3 or configuration"""
-        try:
-            self.topology = NetworkTopology(
-                nodes=topology_data.get('nodes', {}),
-                links=topology_data.get('links', []),
-                core_nodes=topology_data.get('core_nodes', []),
-                distribution_nodes=topology_data.get('distribution_nodes', []),
-                access_nodes=topology_data.get('access_nodes', []),
-                last_updated=datetime.now()
-            )
-            
-            logger.info(f"Network topology updated: {len(self.topology.nodes)} nodes, {len(self.topology.links)} links")
-            
-        except Exception as e:
-            logger.error(f"Error updating network topology: {e}")
-    
-    async def update_node_state(self, node_id: str, state_data: Dict[str, Any]):
-        """Update individual node state"""
-        self.node_states[node_id] = {
-            **state_data,
-            'last_updated': datetime.now(),
-            'update_count': self.node_states.get(node_id, {}).get('update_count', 0) + 1
-        }
-        
-        self.state_history.append({
-            'timestamp': datetime.now(),
-            'node_id': node_id,
-            'state': state_data.copy()
-        })
-        
-        self.last_update = datetime.now()
-    
-    def get_network_health_summary(self) -> Dict[str, Any]:
-        """Generate network health summary"""
-        if not self.node_states:
-            return {'status': 'unknown', 'reason': 'no_data'}
-        
-        total_nodes = len(self.node_states)
-        operational_nodes = sum(1 for state in self.node_states.values() 
-                              if state.get('operational', False))
-        
-        health_percentage = (operational_nodes / total_nodes) * 100 if total_nodes > 0 else 0
-        
-        return {
-            'status': 'healthy' if health_percentage >= 95 else 
-                     'degraded' if health_percentage >= 80 else 'critical',
-            'health_percentage': health_percentage,
-            'total_nodes': total_nodes,
-            'operational_nodes': operational_nodes,
-            'last_update': self.last_update.isoformat() if self.last_update else None
-        }
-
-class EnhancedHealingWorkflowEngine:
-    """Enhanced workflow engine with TOSCA orchestration capabilities"""
-    
-    def __init__(self, network_state_manager: NetworkStateManager):
-        self.network_state = network_state_manager
-        self.active_workflows: Dict[str, WorkflowExecution] = {}
-        self.workflow_queue: List[HealingWorkflowSpec] = []
-        self.completed_workflows: List[WorkflowExecution] = []
-        self.workflow_history: deque = deque(maxlen=500)
-        self.max_concurrent_workflows = 5
-        
-        # xOpera TOSCA integration
-        self.xopera_integrator = XOperaIntegrator()
-    
-    def create_workflow_spec(self, healing_action: Dict[str, Any]) -> HealingWorkflowSpec:
-        """Create enhanced workflow specification with TOSCA integration"""
-        node_id = healing_action.get('node_id', 'unknown')
-        action_description = healing_action.get('action', '')
-        strategy = self._determine_strategy(action_description)
-        priority = self._calculate_priority(healing_action)
-        
-        workflow_id = f"tosca_healing_{node_id}_{int(time.time())}"
-        
-        # Get TOSCA template for strategy
-        tosca_template = self.xopera_integrator.get_template_for_strategy(strategy)
-        tosca_template_path = str(self.xopera_integrator.templates_dir / tosca_template)
-        
-        # Prepare TOSCA inputs
-        tosca_inputs = self.xopera_integrator.prepare_tosca_inputs(
-            HealingWorkflowSpec(
-                workflow_id=workflow_id,
-                node_id=node_id,
-                strategy=strategy,
-                priority=priority,
-                estimated_duration=self._estimate_duration(strategy),
-                prerequisites=self._get_prerequisites(strategy, node_id),
-                success_criteria=self._define_success_criteria(strategy, node_id),
-                rollback_plan=self._create_rollback_plan(strategy, node_id),
-                created_at=datetime.now()
-            ),
-            self.network_state.node_states
-        )
-        
-        return HealingWorkflowSpec(
-            workflow_id=workflow_id,
-            node_id=node_id,
-            strategy=strategy,
-            priority=priority,
-            estimated_duration=self._estimate_duration(strategy),
-            prerequisites=self._get_prerequisites(strategy, node_id),
-            success_criteria=self._define_success_criteria(strategy, node_id),
-            rollback_plan=self._create_rollback_plan(strategy, node_id),
-            created_at=datetime.now(),
-            timeout=self._calculate_timeout(strategy),
-            tosca_template=tosca_template_path,
-            tosca_inputs=tosca_inputs,
-            use_tosca=True
-        )
-    
-    def _determine_strategy(self, action_description: str) -> HealingStrategy:
-        """Determine healing strategy from action description"""
-        action_lower = action_description.lower()
-        if any(keyword in action_lower for keyword in ['route', 'path', 'traffic']):
-            return HealingStrategy.TRAFFIC_REROUTING
-        elif any(keyword in action_lower for keyword in ['power', 'voltage', 'energy']):
-            return HealingStrategy.POWER_STABILIZATION
-        elif any(keyword in action_lower for keyword in ['fiber', 'cable', 'link']):
-            return HealingStrategy.FIBER_REPAIR
-        elif any(keyword in action_lower for keyword in ['restart', 'reboot', 'reset']):
-            return HealingStrategy.NODE_RESTART
-        elif any(keyword in action_lower for keyword in ['load', 'balance', 'distribute']):
-            return HealingStrategy.LOAD_BALANCING
-        elif any(keyword in action_lower for keyword in ['redundancy', 'backup', 'failover']):
-            return HealingStrategy.REDUNDANCY_ACTIVATION
-        elif any(keyword in action_lower for keyword in ['config', 'rollback', 'revert']):
-            return HealingStrategy.CONFIGURATION_ROLLBACK
-        elif any(keyword in action_lower for keyword in ['isolate', 'emergency', 'disconnect']):
-            return HealingStrategy.EMERGENCY_ISOLATION
-        else:
-            return HealingStrategy.NODE_RESTART
-    
-    def _calculate_priority(self, healing_action: Dict[str, Any]) -> int:
-        """Calculate workflow priority (1=highest, 5=lowest)"""
-        severity = healing_action.get('severity_classification', 'Medium')
-        node_type = healing_action.get('node_type', 'access')
-        
-        if severity == 'Critical':
-            return 1
-        elif severity == 'High':
-            return 2 if node_type == 'core' else 3
-        elif severity == 'Medium':
-            return 3 if node_type == 'core' else 4
-        else:
-            return 5
-    
-    def _estimate_duration(self, strategy: HealingStrategy) -> float:
-        """Estimate workflow duration in seconds"""
-        duration_map = {
-            HealingStrategy.TRAFFIC_REROUTING: 30.0,
-            HealingStrategy.POWER_STABILIZATION: 60.0,
-            HealingStrategy.FIBER_REPAIR: 300.0,
-            HealingStrategy.NODE_RESTART: 45.0,
-            HealingStrategy.LOAD_BALANCING: 25.0,
-            HealingStrategy.REDUNDANCY_ACTIVATION: 20.0,
-            HealingStrategy.CONFIGURATION_ROLLBACK: 15.0,
-            HealingStrategy.EMERGENCY_ISOLATION: 10.0
-        }
-        
-        return duration_map.get(strategy, 60.0)
-    
-    def _get_prerequisites(self, strategy: HealingStrategy, node_id: str) -> List[str]:
-        """Get prerequisites for the healing strategy"""
-        prereq_map = {
-            HealingStrategy.TRAFFIC_REROUTING: [f"verify_alternate_paths_{node_id}"],
-            HealingStrategy.POWER_STABILIZATION: [f"check_power_source_{node_id}"],
-            HealingStrategy.FIBER_REPAIR: [f"isolate_fiber_link_{node_id}"],
-            HealingStrategy.NODE_RESTART: [f"save_node_config_{node_id}"],
-            HealingStrategy.LOAD_BALANCING: [f"analyze_current_load_{node_id}"],
-            HealingStrategy.REDUNDANCY_ACTIVATION: [f"verify_backup_systems_{node_id}"],
-            HealingStrategy.CONFIGURATION_ROLLBACK: [f"backup_current_config_{node_id}"],
-            HealingStrategy.EMERGENCY_ISOLATION: []
-        }
-        
-        return prereq_map.get(strategy, [])
-    
-    def _define_success_criteria(self, strategy: HealingStrategy, node_id: str) -> Dict[str, Any]:
-        """Define success criteria for workflow completion"""
-        return {
-            'node_operational': True,
-            'connectivity_restored': True,
-            'performance_threshold': 0.8,
-            'error_rate_below': 0.01,
-            'validation_time': 30.0
-        }
-    
-    def _create_rollback_plan(self, strategy: HealingStrategy, node_id: str) -> str:
-        """Create rollback plan for the strategy"""
-        rollback_map = {
-            HealingStrategy.TRAFFIC_REROUTING: f"restore_original_routes_{node_id}",
-            HealingStrategy.POWER_STABILIZATION: f"reset_power_configuration_{node_id}",
-            HealingStrategy.FIBER_REPAIR: f"restore_backup_link_{node_id}",
-            HealingStrategy.NODE_RESTART: f"restore_previous_state_{node_id}",
-            HealingStrategy.LOAD_BALANCING: f"restore_load_distribution_{node_id}",
-            HealingStrategy.REDUNDANCY_ACTIVATION: f"deactivate_redundancy_{node_id}",
-            HealingStrategy.CONFIGURATION_ROLLBACK: f"restore_working_config_{node_id}",
-            HealingStrategy.EMERGENCY_ISOLATION: f"reconnect_node_{node_id}"
-        }
-        
-        return rollback_map.get(strategy, f"manual_intervention_{node_id}")
-    
-    def _calculate_timeout(self, strategy: HealingStrategy) -> float:
-        """Calculate workflow timeout"""
-        return self._estimate_duration(strategy) * 3
-    
-    async def queue_workflow(self, workflow_spec: HealingWorkflowSpec):
-        """Add workflow to execution queue"""
-        self.workflow_queue.append(workflow_spec)
-        self.workflow_queue.sort(key=lambda w: w.priority)
-        logger.info(f"TOSCA workflow queued: {workflow_spec.workflow_id} (Priority: {workflow_spec.priority})")
-    
-    async def execute_next_workflow(self) -> Optional[WorkflowExecution]:
-        """Execute the next workflow in queue with TOSCA orchestration"""
-        if not self.workflow_queue or len(self.active_workflows) >= self.max_concurrent_workflows:
-            return None
-        
-        workflow_spec = self.workflow_queue.pop(0)
-        execution = WorkflowExecution(
-            spec=workflow_spec,
-            status=WorkflowStatus.PENDING,
-            started_at=None,
-            completed_at=None,
-            progress_percentage=0.0,
-            current_step="initializing",
-            steps_completed=[],
-            error_message=None,
-            metrics={},
-            tosca_deployment=None
-        )
-        
-        self.active_workflows[workflow_spec.workflow_id] = execution
-        
-        # Start execution task
-        asyncio.create_task(self._execute_tosca_workflow(execution))
-        
-        return execution
-    
-    async def _execute_tosca_workflow(self, execution: WorkflowExecution):
-        """Execute healing workflow with TOSCA orchestration"""
-        workflow_id = execution.spec.workflow_id
-        logger.info(f"Starting TOSCA workflow execution: {workflow_id}")
-        
-        try:
-            execution.status = WorkflowStatus.IN_PROGRESS
-            execution.started_at = datetime.now()
-            execution.current_step = "tosca_deployment"
-            
-            # Step 1: Deploy TOSCA template
-            if execution.spec.use_tosca and execution.spec.tosca_template:
-                logger.info(f"Deploying TOSCA template for workflow: {workflow_id}")
-                tosca_deployment = await self.xopera_integrator.deploy_tosca_template(
-                    deployment_id=f"deploy_{workflow_id}",
-                    template_path=execution.spec.tosca_template,
-                    inputs=execution.spec.tosca_inputs or {}
-                )
-                
-                execution.tosca_deployment = tosca_deployment
-                execution.progress_percentage = 40.0
-                execution.steps_completed.append("tosca_deployment")
-                
-                if tosca_deployment.status == TOSCADeploymentStatus.ERROR:
-                    raise Exception(f"TOSCA deployment failed: {tosca_deployment.error_message}")
-            
-            # Step 2: Execute traditional workflow steps
-            execution.current_step = "prerequisite_check"
-            await self._execute_prerequisites(execution)
-            execution.progress_percentage = 60.0
-            execution.steps_completed.append("prerequisites")
-            
-            # Step 3: Strategy Implementation (enhanced with TOSCA outputs)
-            execution.current_step = "strategy_implementation"
-            await self._implement_tosca_strategy(execution)
-            execution.progress_percentage = 80.0
-            execution.steps_completed.append("implementation")
-            
-            # Step 4: Validation
-            execution.current_step = "validation"
-            success = await self._validate_tosca_healing(execution)
-            execution.progress_percentage = 95.0
-            execution.steps_completed.append("validation")
-            
-            # Step 5: Completion
-            execution.current_step = "completion"
-            if success:
-                execution.status = WorkflowStatus.COMPLETED
-                execution.healing_effectiveness = await self._calculate_tosca_effectiveness(execution)
-                logger.info(f"TOSCA workflow completed successfully: {workflow_id}")
-            else:
-                execution.status = WorkflowStatus.FAILED
-                execution.error_message = "Validation failed"
-                logger.warning(f"TOSCA workflow failed validation: {workflow_id}")
-            
-            execution.progress_percentage = 100.0
-            execution.completed_at = datetime.now()
-            
-        except asyncio.TimeoutError:
-            execution.status = WorkflowStatus.TIMEOUT
-            execution.error_message = "Workflow timed out"
-            logger.error(f"TOSCA workflow timed out: {workflow_id}")
-            
-        except Exception as e:
-            execution.status = WorkflowStatus.FAILED
-            execution.error_message = str(e)
-            logger.error(f"TOSCA workflow failed with error: {workflow_id} - {e}")
-            
-        finally:
-            # Cleanup TOSCA deployment if needed
-            if execution.tosca_deployment and execution.status != WorkflowStatus.COMPLETED:
-                try:
-                    await self.xopera_integrator.undeploy_tosca_template(execution.tosca_deployment.deployment_id)
-                except:
-                    pass
-            
-            # Move to completed workflows
-            if workflow_id in self.active_workflows:
-                self.completed_workflows.append(self.active_workflows.pop(workflow_id))
-                self.workflow_history.append(execution)
-    
-    async def _execute_prerequisites(self, execution: WorkflowExecution):
-        """Execute workflow prerequisites"""
-        for prereq in execution.spec.prerequisites:
-            logger.debug(f"Executing prerequisite: {prereq}")
-            await asyncio.sleep(1.0)
-    
-    async def _implement_tosca_strategy(self, execution: WorkflowExecution):
-        """Implement strategy with TOSCA orchestration support"""
-        strategy = execution.spec.strategy
-        node_id = execution.spec.node_id
-        
-        logger.info(f"Implementing TOSCA strategy {strategy.value} for node {node_id}")
-        
-        # Use TOSCA deployment outputs if available
-        if execution.tosca_deployment and execution.tosca_deployment.outputs:
-            logger.info(f"Using TOSCA outputs: {execution.tosca_deployment.outputs}")
-            execution.metrics['tosca_outputs'] = execution.tosca_deployment.outputs
-        
-        # Simulate strategy implementation
-        await asyncio.sleep(execution.spec.estimated_duration / 10)  # Reduced for demo
-    
-    async def _validate_tosca_healing(self, execution: WorkflowExecution) -> bool:
-        """Validate healing with TOSCA deployment status"""
-        node_id = execution.spec.node_id
-        criteria = execution.spec.success_criteria
-        
-        # Check TOSCA deployment status
-        tosca_success = True
-        if execution.tosca_deployment:
-            tosca_success = execution.tosca_deployment.status == TOSCADeploymentStatus.DEPLOYED
-        
-        # Check node operational status
-        node_state = self.network_state.node_states.get(node_id, {})
-        is_operational = node_state.get('operational', False)
-        
-        await asyncio.sleep(criteria.get('validation_time', 5.0) / 10)  # Reduced for demo
-        
-        # Enhanced validation with TOSCA integration
-        return tosca_success and (time.time() % 10 < 8.5)  # 85% success rate for demo
-    
-    async def _calculate_tosca_effectiveness(self, execution: WorkflowExecution) -> float:
-        """Calculate healing effectiveness including TOSCA deployment success"""
-        if execution.status == WorkflowStatus.COMPLETED:
-            base_effectiveness = 0.8
-            priority_bonus = (6 - execution.spec.priority) * 0.05
-            
-            # TOSCA bonus
-            tosca_bonus = 0.1 if execution.tosca_deployment and execution.tosca_deployment.status == TOSCADeploymentStatus.DEPLOYED else 0.0
-            
-            return min(1.0, base_effectiveness + priority_bonus + tosca_bonus)
-        
-        return 0.0
-
-class NetworkOrchestrationAgent:
-    """Main TOSCA-enabled Network Orchestration Agent"""
-    
-    def __init__(self):
-        self.config = self.load_config()
-        self.network_state = NetworkStateManager()
-        self.workflow_engine = EnhancedHealingWorkflowEngine(self.network_state)
-        
-        # ZeroMQ Setup
-        self.context = zmq.asyncio.Context()
-        self.healing_subscriber = None
-        self.mcp_publisher = None
-        self.ns3_controller = None
-        self.status_publisher = None
-        
-        # Runtime state
-        self.is_running = False
-        self.orchestration_metrics = {
-            'workflows_executed': 0,
-            'workflows_successful': 0,
-            'workflows_failed': 0,
-            'average_healing_time': 0.0,
-            'average_effectiveness': 0.0,
-            'tosca_deployments_successful': 0,
-            'start_time': None
-        }
-        
-        self.performance_history = deque(maxlen=1000)
-        
-        logger.info("🎭 Nokia TOSCA-enabled Orchestration Agent initialized")
-        
-        self.setup_prometheus_metrics()
-        start_http_server(8003)  # Orchestration metrics on port 8003
-        logger.info("📊 TOSCA Orchestration Prometheus metrics on port 8003")
-    
-    def setup_prometheus_metrics(self):
-        """Setup Prometheus metrics with unique names and error handling"""
-        try:
-            self.active_workflows_gauge = Gauge(
-                'nokia_orchestrator_active_workflows',
-                'Number of active TOSCA workflows'
-            )
-            
-            self.workflow_success_counter = Counter(
-                'nokia_orchestrator_workflows_successful_total',
-                'Total successful TOSCA workflows',
-                ['strategy', 'node_type']
-            )
-            
-            self.workflow_failure_counter = Counter(
-                'nokia_orchestrator_workflows_failed_total',
-                'Total failed TOSCA workflows', 
-                ['strategy', 'node_type', 'error_type']
-            )
-            
-            self.healing_effectiveness_gauge = Gauge(
-                'nokia_orchestrator_healing_effectiveness_percentage',
-                'Healing effectiveness percentage',
-                ['workflow_id', 'strategy']
-            )
-            
-            self.workflow_duration_histogram = Histogram(
-                'nokia_orchestrator_workflow_duration_seconds',
-                'TOSCA workflow execution duration',
-                ['strategy', 'status']
-            )
-            
-            logger.info("✅ Orchestrator Prometheus metrics setup completed")
-            
-        except ValueError as e:
-            logger.warning(f"Some metrics already registered, continuing: {e}")
-        except Exception as e:
-            logger.error(f"Error setting up Prometheus metrics: {e}")
-    
-    def load_config(self) -> Dict[str, Any]:
-        """Load orchestrator configuration"""
-        try:
-            if os.path.exists(ORCHESTRATOR_CONFIG_FILE):
-                with open(ORCHESTRATOR_CONFIG_FILE, 'r') as f:
-                    config = json.load(f)
-                logger.info(f"Configuration loaded from {ORCHESTRATOR_CONFIG_FILE}")
-                return config
-            else:
-                logger.warning(f"Configuration file {ORCHESTRATOR_CONFIG_FILE} not found. Creating default.")
-                config = self.get_default_config()
-                self.save_config(config)
-                return config
-        except Exception as e:
-            logger.error(f"Error loading config: {e}")
-            return self.get_default_config()
-    
-    def save_config(self, config: Dict[str, Any]):
-        """Save configuration to file"""
-        try:
-            os.makedirs(os.path.dirname(ORCHESTRATOR_CONFIG_FILE), exist_ok=True)
-            with open(ORCHESTRATOR_CONFIG_FILE, 'w') as f:
-                json.dump(config, f, indent=2)
-            logger.info(f"Configuration saved to {ORCHESTRATOR_CONFIG_FILE}")
-        except Exception as e:
-            logger.error(f"Error saving config: {e}")
-    
-    def get_default_config(self) -> Dict[str, Any]:
-        """Get default configuration with TOSCA settings"""
-        return {
-            "orchestration": {
-                "max_concurrent_workflows": 5,
-                "workflow_timeout": 300.0,
-                "health_check_interval": 10.0,
-                "performance_monitoring": True,
-                "tosca_enabled": True
-            },
-            "communication": {
-                "healing_subscriber_address": HEAL_ORCH_PULL_ADDRESS,
-                "mcp_publisher_address": ORCH_MCP_PUSH_ADDRESS,
-                "ns3_controller_address": ORCH_NS3_CONTROL_ADDRESS,
-                "status_publisher_address": ORCH_STATUS_PUB_ADDRESS
-            },
-            "network": {
-                "total_nodes": 50,
-                "core_nodes": ["node_00", "node_01", "node_02", "node_03", "node_04"],
-                "distribution_nodes": [f"node_{i:02d}" for i in range(5, 20)],
-                "access_nodes": [f"node_{i:02d}" for i in range(20, 50)]
-            },
-            "healing": {
-                "priority_levels": 5,
-                "effectiveness_threshold": 0.7,
-                "automatic_rollback": True,
-                "learning_enabled": True,
-                "tosca_enabled": True
-            },
-            "reporting": {
-                "nokia_integration": True,
-                "real_time_dashboard": True,
-                "sla_monitoring": True,
-                "performance_analytics": True,
-                "tosca_metrics": True
-            },
-            "tosca": {
-                "templates_directory": TOSCA_TEMPLATES_DIR,
-                "workspace_directory": XOPERA_WORKSPACE_DIR,
-                "xopera_api_url": "http://localhost:5000",
-                "default_timeout": 60,
-                "auto_cleanup": True
-            }
-        }
-    
-    async def initialize_communication(self):
-        """Initialize ZeroMQ communication sockets"""
-        try:
-            # Healing Agent subscriber
-            self.healing_subscriber = self.context.socket(zmq.PULL)
-            self.healing_subscriber.bind(self.config['communication']['healing_subscriber_address'])
-            logger.info(f"🔗 Healing subscriber bound to {self.config['communication']['healing_subscriber_address']}")
-            
-            # MCP Agent publisher
-            self.mcp_publisher = self.context.socket(zmq.PUSH)
-            self.mcp_publisher.bind(self.config['communication']['mcp_publisher_address'])
-            logger.info(f"📊 MCP publisher bound to {self.config['communication']['mcp_publisher_address']}")
-            
-            # NS3 controller
-            self.ns3_controller = self.context.socket(zmq.REQ)
-            self.ns3_controller.bind(self.config['communication']['ns3_controller_address'])
-            logger.info(f"🌐 NS3 controller bound to {self.config['communication']['ns3_controller_address']}")
-            
-            # Status publisher
-            self.status_publisher = self.context.socket(zmq.PUB)
-            self.status_publisher.bind(self.config['communication']['status_publisher_address'])
-            logger.info(f"📡 Status publisher bound to {self.config['communication']['status_publisher_address']}")
-            
-        except Exception as e:
-            logger.error(f"Error initializing communication: {e}")
-            raise
-    
-    async def initialize_network_topology(self):
-        """Initialize network topology from configuration"""
-        topology_data = {
-            'nodes': {node_id: {'type': 'core', 'id': node_id} 
-                     for node_id in self.config['network']['core_nodes']},
-            'links': [],
-            'core_nodes': self.config['network']['core_nodes'],
-            'distribution_nodes': self.config['network']['distribution_nodes'],
-            'access_nodes': self.config['network']['access_nodes']
-        }
-        
-        for node_id in self.config['network']['distribution_nodes']:
-            topology_data['nodes'][node_id] = {'type': 'distribution', 'id': node_id}
-            
-        for node_id in self.config['network']['access_nodes']:
-            topology_data['nodes'][node_id] = {'type': 'access', 'id': node_id}
-        
-        await self.network_state.update_topology(topology_data)
-        logger.info("🌐 Network topology initialized with TOSCA integration")
-    
-    async def healing_message_loop(self):
-        """Main loop for processing healing messages with TOSCA orchestration"""
-        logger.info("🔄 Starting TOSCA healing message processing loop...")
+    async def listen_for_healing_plans(self):
+        """Listen for healing plans from Healing Agent"""
+        logger.info("👂 Starting healing plans listener...")
         
         while self.is_running:
             try:
+                # Non-blocking receive with timeout
                 message = await asyncio.wait_for(
                     self.healing_subscriber.recv_json(),
                     timeout=1.0
                 )
                 
-                logger.info(f"📥 Received healing message: {message.get('node_id', 'unknown')}")
+                if message.get('message_type') == 'healing_plan':
+                    await self.handle_incoming_healing_plan(message)
+                    
+            except asyncio.TimeoutError:
+                continue
+            except Exception as e:
+                logger.error(f"❌ Error receiving healing plan: {e}")
+                self.metrics.failed_operations += 1
+                await asyncio.sleep(1)
+
+    async def handle_incoming_healing_plan(self, plan_message: Dict[str, Any]):
+        """Handle incoming healing plan with validation and queuing"""
+        try:
+            healing_plan_data = plan_message.get('healing_plan_data', {})
+            
+            if not healing_plan_data:
+                logger.error("❌ Invalid healing plan received")
+                return
+            
+            plan_id = healing_plan_data.get('plan_id', 'unknown')
+            node_id = healing_plan_data.get('node_id', 'unknown')
+            severity = healing_plan_data.get('severity', 'unknown')
+            
+            logger.info(f"🎯 Healing plan received: {plan_id}")
+            logger.info(f"📍 Node: {node_id} | Severity: {severity}")
+            logger.info(f"🔧 Actions: {len(healing_plan_data.get('healing_actions', []))}")
+            
+            self.metrics.healing_plans_received += 1
+            
+            # Add to processing queue
+            await self.processing_queue.put(healing_plan_data)
+            
+        except Exception as e:
+            logger.error(f"❌ Error handling healing plan: {e}")
+            self.metrics.failed_operations += 1
+
+    async def process_orchestration_queue(self):
+        """Process orchestration requests from the queue"""
+        logger.info("🔄 Starting orchestration queue processor...")
+        
+        while self.is_running:
+            try:
+                # Get healing plan from queue (with timeout)
+                healing_plan_data = await asyncio.wait_for(
+                    self.processing_queue.get(),
+                    timeout=5.0
+                )
                 
-                # Create TOSCA-enabled workflow specification
-                workflow_spec = self.workflow_engine.create_workflow_spec(message)
+                # Process the orchestration request
+                start_time = time.time()
+                await self.execute_comprehensive_orchestration(healing_plan_data)
+                processing_time = time.time() - start_time
                 
-                # Queue workflow for execution
-                await self.workflow_engine.queue_workflow(workflow_spec)
+                # Track performance
+                self.processing_times.append(processing_time)
+                self.metrics.orchestration_executions += 1
                 
-                # Update metrics
-                self.orchestration_metrics['workflows_executed'] += 1
+                # Update average processing time
+                self.metrics.avg_processing_time = sum(self.processing_times) / len(self.processing_times)
                 
-                # Send acknowledgment to MCP
-                await self.send_workflow_status_to_mcp(workflow_spec.workflow_id, "queued", message)
+                logger.info(f"✅ Orchestration completed in {processing_time:.2f}s")
+                
+                # Mark task as done
+                self.processing_queue.task_done()
                 
             except asyncio.TimeoutError:
                 continue
             except Exception as e:
-                logger.error(f"Error processing healing message: {e}")
-                await asyncio.sleep(1.0)
-    
-    async def workflow_execution_loop(self):
-        """Main loop for executing TOSCA workflows"""
-        logger.info("⚙️ Starting TOSCA workflow execution loop...")
-        
-        while self.is_running:
-            try:
-                # Execute next workflow if capacity available
-                execution = await self.workflow_engine.execute_next_workflow()
-                if execution:
-                    logger.info(f"🚀 Started TOSCA workflow execution: {execution.spec.workflow_id}")
-                    await self.send_workflow_status_to_mcp(
-                        execution.spec.workflow_id, 
-                        "started", 
-                        asdict(execution.spec)
-                    )
-                
-                # Check for completed workflows
-                await self.process_completed_workflows()
-                
-                await asyncio.sleep(0.5)
-                
-            except Exception as e:
-                logger.error(f"Error in workflow execution loop: {e}")
-                await asyncio.sleep(1.0)
-    
-    async def process_completed_workflows(self):
-        """Enhanced process completed TOSCA workflows with Prometheus metrics"""
-        for execution in list(self.workflow_engine.completed_workflows):
-            if execution.completed_at:
-                execution_time = (execution.completed_at - execution.started_at).total_seconds()
-                
-                # Update Prometheus metrics with error handling
-                try:
-                    if execution.status == WorkflowStatus.COMPLETED:
-                        self.orchestration_metrics['workflows_successful'] += 1
-                        
-                        # Update Prometheus counters and histograms
-                        if hasattr(self, 'workflow_success_counter'):
-                            self.workflow_success_counter.labels(
-                                strategy=execution.spec.strategy.value,
-                                node_type="rural_access"
-                            ).inc()
-                        
-                        if hasattr(self, 'workflow_duration_histogram'):
-                            self.workflow_duration_histogram.labels(
-                                strategy=execution.spec.strategy.value,
-                                status="success"
-                            ).observe(execution_time)
-                        
-                        # Update healing effectiveness
-                        if hasattr(self, 'healing_effectiveness_gauge') and hasattr(execution, 'healing_effectiveness'):
-                            self.healing_effectiveness_gauge.labels(
-                                workflow_id=execution.spec.workflow_id,
-                                strategy=execution.spec.strategy.value
-                            ).set(execution.healing_effectiveness * 100)
-                        
-                        # TOSCA deployment success tracking
-                        if execution.tosca_deployment and execution.tosca_deployment.status == TOSCADeploymentStatus.DEPLOYED:
-                            self.orchestration_metrics['tosca_deployments_successful'] += 1
-                    
-                    else:
-                        self.orchestration_metrics['workflows_failed'] += 1
-                        
-                        # Update failure metrics
-                        if hasattr(self, 'workflow_failure_counter'):
-                            self.workflow_failure_counter.labels(
-                                strategy=execution.spec.strategy.value,
-                                node_type="rural_access",
-                                error_type=str(getattr(execution, 'error_message', 'unknown'))[:50]
-                            ).inc()
-                        
-                        if hasattr(self, 'workflow_duration_histogram'):
-                            self.workflow_duration_histogram.labels(
-                                strategy=execution.spec.strategy.value,
-                                status="failed"
-                            ).observe(execution_time)
-                    
-                    # Update active workflows count
-                    if hasattr(self, 'active_workflows_gauge'):
-                        self.active_workflows_gauge.set(len(self.workflow_engine.active_workflows))
-                        
-                except Exception as metric_error:
-                    logger.warning(f"Error updating Prometheus metrics: {metric_error}")
-                
-                # Existing functionality
-                self.update_performance_metrics(execution, execution_time)
-                await self.send_completion_report_to_mcp(execution)
-                await self.publish_status_update(execution)
-                
-                # Remove from completed list
-                self.workflow_engine.completed_workflows.remove(execution)
-    
-    def update_performance_metrics(self, execution: WorkflowExecution, execution_time: float):
-        """Update orchestration performance metrics"""
-        total_workflows = self.orchestration_metrics['workflows_successful'] + self.orchestration_metrics['workflows_failed']
-        
-        if total_workflows > 0:
-            # Update average healing time
-            current_avg_time = self.orchestration_metrics['average_healing_time']
-            self.orchestration_metrics['average_healing_time'] = (
-                (current_avg_time * (total_workflows - 1) + execution_time) / total_workflows
-            )
-            
-            # Update average effectiveness
-            current_avg_eff = self.orchestration_metrics['average_effectiveness']
-            self.orchestration_metrics['average_effectiveness'] = (
-                (current_avg_eff * (total_workflows - 1) + execution.healing_effectiveness) / total_workflows
-            )
-        
-        # Store in performance history
-        self.performance_history.append({
-            'timestamp': datetime.now(),
-            'workflow_id': execution.spec.workflow_id,
-            'execution_time': execution_time,
-            'effectiveness': execution.healing_effectiveness,
-            'strategy': execution.spec.strategy.value,
-            'node_id': execution.spec.node_id,
-            'tosca_deployment_successful': execution.tosca_deployment.status == TOSCADeploymentStatus.DEPLOYED if execution.tosca_deployment else False
-        })
-    
-    async def send_workflow_status_to_mcp(self, workflow_id: str, status: str, data: Dict[str, Any]):
-        """Send workflow status update to MCP Agent"""
+                logger.error(f"❌ Error processing orchestration queue: {e}")
+                self.metrics.failed_operations += 1
+
+    async def execute_comprehensive_orchestration(self, healing_plan_data: Dict[str, Any]):
+        """Execute comprehensive orchestration with TOSCA and NS3 integration"""
         try:
-            message = {
-                'timestamp': datetime.now().isoformat(),
-                'source': 'TOSCAOrchestrationAgent',
-                'type': 'tosca_workflow_status',
-                'workflow_id': workflow_id,
-                'status': status,
-                'data': data
-            }
+            plan_id = healing_plan_data.get('plan_id', 'unknown')
+            node_id = healing_plan_data.get('node_id', 'unknown')
             
-            await self.mcp_publisher.send_json(message)
-            logger.debug(f"📤 Sent TOSCA workflow status to MCP: {workflow_id} - {status}")
+            logger.info(f"🎯 Executing comprehensive orchestration: {plan_id}")
+            
+            # 1. Generate TOSCA Template
+            tosca_template = await self.generate_enhanced_tosca_template(healing_plan_data)
+            
+            # 2. Generate NS3 Integration Plan
+            ns3_plan = await self.generate_ns3_integration_plan(healing_plan_data)
+            
+            # 3. Create Deployment Configuration
+            deployment_config = await self.create_deployment_configuration(healing_plan_data, tosca_template)
+            
+            # 4. Execute Orchestration (if auto-execute enabled)
+            execution_result = None
+            if not healing_plan_data.get('requires_approval', False):
+                execution_result = await self.execute_orchestration_deployment(
+                    tosca_template, deployment_config
+                )
+            
+            # 5. Send Status Updates
+            await self.send_orchestration_status_update(
+                plan_id, tosca_template, ns3_plan, execution_result
+            )
+            
+            # 6. Generate Comprehensive Report
+            await self.generate_orchestration_report(
+                healing_plan_data, tosca_template, ns3_plan, execution_result
+            )
+            
+            logger.info(f"✅ Comprehensive orchestration completed: {plan_id}")
             
         except Exception as e:
-            logger.error(f"Error sending workflow status to MCP: {e}")
-    
-    async def send_completion_report_to_mcp(self, execution: WorkflowExecution):
-        """Send detailed completion report to MCP Agent"""
+            logger.error(f"❌ Comprehensive orchestration failed: {e}")
+            self.metrics.failed_operations += 1
+
+    async def generate_enhanced_tosca_template(self, healing_plan_data: Dict[str, Any]) -> ToscaTemplate:
+        """Generate enhanced TOSCA template from healing plan"""
         try:
-            execution_time = (execution.completed_at - execution.started_at).total_seconds()
+            plan_id = healing_plan_data.get('plan_id', 'unknown')
+            node_id = healing_plan_data.get('node_id', 'unknown')
+            healing_actions = healing_plan_data.get('healing_actions', [])
             
-            report = {
-                'timestamp': datetime.now().isoformat(),
-                'source': 'TOSCAOrchestrationAgent',
-                'type': 'tosca_workflow_completion_report',
-                'workflow_id': execution.spec.workflow_id,
-                'node_id': execution.spec.node_id,
-                'strategy': execution.spec.strategy.value,
-                'status': execution.status.value,
-                'execution_time': execution_time,
-                'healing_effectiveness': execution.healing_effectiveness,
-                'steps_completed': execution.steps_completed,
-                'error_message': execution.error_message,
-                'tosca_deployment': {
-                    'deployment_id': execution.tosca_deployment.deployment_id if execution.tosca_deployment else None,
-                    'template_name': execution.tosca_deployment.template_name if execution.tosca_deployment else None,
-                    'status': execution.tosca_deployment.status.value if execution.tosca_deployment else None,
-                    'outputs': execution.tosca_deployment.outputs if execution.tosca_deployment else {}
+            logger.info(f"📋 Generating TOSCA template for {plan_id}...")
+            
+            # Get node type for template selection
+            node_type = self.determine_node_type(node_id)
+            node_template_config = self.network_templates['node_type_mappings'].get(node_type, {})
+            
+            # Build TOSCA template structure
+            tosca_template_data = {
+                **self.network_templates['base_template'],
+                'metadata': {
+                    **self.network_templates['base_template']['metadata'],
+                    'healing_plan_id': plan_id,
+                    'target_node_id': node_id,
+                    'node_type': node_type,
+                    'generated_timestamp': datetime.now().isoformat()
                 },
-                'performance_metrics': self.orchestration_metrics.copy()
+                'topology_template': {
+                    'description': f'Self-healing orchestration for {node_id}',
+                    'node_templates': self.build_node_templates(node_id, node_type, healing_actions),
+                    'policies': self.build_healing_policies(healing_actions),
+                    'workflows': self.build_healing_workflows(healing_actions)
+                }
             }
             
-            await self.mcp_publisher.send_json(report)
-            logger.info(f"📋 Sent TOSCA completion report to MCP: {execution.spec.workflow_id}")
+            # Generate unique template filename
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            template_filename = f"healing_tosca_{node_id}_{timestamp}.yaml"
+            template_path = self.tosca_templates_dir / template_filename
+            
+            # Save TOSCA template to file
+            with open(template_path, 'w') as f:
+                yaml.dump(tosca_template_data, f, default_flow_style=False, indent=2)
+            
+            # Create ToscaTemplate object
+            tosca_template = ToscaTemplate(
+                template_id=f"TOSCA_{plan_id}_{int(time.time())}",
+                node_id=node_id,
+                template_name=template_filename,
+                tosca_version=tosca_template_data['tosca_definitions_version'],
+                description=tosca_template_data['topology_template']['description'],
+                node_templates=tosca_template_data['topology_template']['node_templates'],
+                topology_template=tosca_template_data['topology_template'],
+                generated_timestamp=datetime.now().isoformat(),
+                file_path=str(template_path)
+            )
+            
+            self.metrics.tosca_templates_generated += 1
+            logger.info(f"✅ TOSCA template generated: {template_path}")
+            
+            return tosca_template
             
         except Exception as e:
-            logger.error(f"Error sending completion report to MCP: {e}")
-    
-    async def publish_status_update(self, execution: WorkflowExecution):
-        """Publish real-time status update"""
+            logger.error(f"❌ Error generating TOSCA template: {e}")
+            raise
+
+    def determine_node_type(self, node_id: str) -> str:
+        """Determine node type from node ID"""
+        try:
+            node_num = int(node_id.split('_')[1])
+            if node_num in [0, 1]:
+                return "CORE"
+            elif node_num in [5, 7]:
+                return "DIST"
+            elif node_num in [20, 25]:
+                return "ACC"
+            else:
+                return "GENERIC"
+        except:
+            return "GENERIC"
+
+    def build_node_templates(self, node_id: str, node_type: str, healing_actions: List[Dict]) -> Dict[str, Any]:
+        """Build TOSCA node templates"""
+        node_config = self.network_templates['node_type_mappings'].get(node_type, {})
+        
+        node_templates = {
+            f"{node_id.replace('_', '-')}-healing": {
+                'type': node_config.get('tosca_type', 'nokia.nodes.GenericNode'),
+                'properties': {
+                    'node_id': node_id,
+                    'node_type': node_type,
+                    'healing_enabled': True,
+                    'monitoring_interval': 10,
+                    'health_check_timeout': 30
+                },
+                'capabilities': {
+                    cap: {'enabled': True} for cap in node_config.get('capabilities', [])
+                },
+                'requirements': [
+                    {'dependency': f"{node_id.replace('_', '-')}-monitor"}
+                ],
+                'interfaces': {
+                    'Nokia.Healing': {
+                        'operations': {
+                            action['action_type']: {
+                                'implementation': self.network_templates['healing_action_mappings']
+                                .get(action['action_type'], {})
+                                .get('implementation', 'nokia.implementations.GenericAction'),
+                                'inputs': action.get('parameters', {})
+                            }
+                            for action in healing_actions
+                        }
+                    }
+                }
+            },
+            f"{node_id.replace('_', '-')}-monitor": {
+                'type': 'nokia.nodes.MonitoringService',
+                'properties': {
+                    'target_node': node_id,
+                    'metrics_collection': True,
+                    'alerting_enabled': True,
+                    'retention_period': '7d'
+                }
+            }
+        }
+        
+        return node_templates
+
+    def build_healing_policies(self, healing_actions: List[Dict]) -> List[Dict[str, Any]]:
+        """Build TOSCA healing policies"""
+        policies = []
+        
+        for i, action in enumerate(healing_actions):
+            action_type = action.get('action_type', 'generic_action')
+            policy_config = self.network_templates['healing_action_mappings'].get(action_type, {})
+            
+            policy = {
+                f"healing-policy-{i+1}": {
+                    'type': policy_config.get('tosca_policy', 'nokia.policies.GenericHealing'),
+                    'description': action.get('description', 'Healing action policy'),
+                    'properties': {
+                        'priority': action.get('priority', 3),
+                        'estimated_duration': action.get('estimated_duration', 60),
+                        'success_probability': action.get('success_probability', 0.8),
+                        'rollback_enabled': True,
+                        'approval_required': action.get('priority', 3) <= 1
+                    },
+                    'targets': [action.get('target_node', 'all_nodes')]
+                }
+            }
+            policies.append(policy)
+        
+        return policies
+
+    def build_healing_workflows(self, healing_actions: List[Dict]) -> Dict[str, Any]:
+        """Build TOSCA healing workflows"""
+        workflow_steps = []
+        
+        for i, action in enumerate(healing_actions):
+            step = {
+                f"step_{i+1}_{action.get('action_type', 'action')}": {
+                    'target': f"healing-policy-{i+1}",
+                    'activities': [
+                        {
+                            'set_state': 'executing'
+                        },
+                        {
+                            'call_operation': {
+                                'operation': f"Nokia.Healing.{action.get('action_type', 'generic_action')}",
+                                'inputs': action.get('parameters', {})
+                            }
+                        },
+                        {
+                            'set_state': 'completed'
+                        }
+                    ],
+                    'on_success': f"step_{i+2}" if i < len(healing_actions) - 1 else 'workflow_complete',
+                    'on_failure': 'rollback_workflow'
+                }
+            }
+            workflow_steps.append(step)
+        
+        workflows = {
+            'healing_workflow': {
+                'description': 'Automated healing workflow execution',
+                'steps': {step_name: step_config for step_dict in workflow_steps for step_name, step_config in step_dict.items()},
+                'inputs': {
+                    'healing_plan_id': {
+                        'type': 'string',
+                        'description': 'ID of the healing plan being executed'
+                    }
+                },
+                'outputs': {
+                    'execution_status': {
+                        'type': 'string',
+                        'description': 'Overall execution status'
+                    },
+                    'execution_report': {
+                        'type': 'string',
+                        'description': 'Detailed execution report'
+                    }
+                }
+            }
+        }
+        
+        return workflows
+
+    async def generate_ns3_integration_plan(self, healing_plan_data: Dict[str, Any]) -> NS3IntegrationPlan:
+        """Generate NS3-compatible integration plan"""
+        try:
+            plan_id = healing_plan_data.get('plan_id', 'unknown')
+            node_id = healing_plan_data.get('node_id', 'unknown')
+            healing_actions = healing_plan_data.get('healing_actions', [])
+            
+            logger.info(f"📊 Generating NS3 integration plan for {plan_id}...")
+            
+            # Build NS3 simulation configuration
+            simulation_config = {
+                **self.ns3_config['simulation_defaults'],
+                'healing_scenario': {
+                    'target_node': node_id,
+                    'fault_injection_time': 60.0,
+                    'healing_start_time': 120.0,
+                    'validation_duration': 180.0
+                }
+            }
+            
+            # Generate network topology changes
+            topology_changes = self.generate_ns3_topology_changes(node_id, healing_actions)
+            
+            # Generate routing updates
+            routing_updates = self.generate_ns3_routing_updates(node_id, healing_actions)
+            
+            # Generate configuration changes
+            config_changes = self.generate_ns3_config_changes(node_id, healing_actions)
+            
+            # Generate simulation parameters
+            sim_parameters = self.generate_ns3_simulation_parameters(healing_plan_data)
+            
+            # Generate validation criteria
+            validation_criteria = self.generate_ns3_validation_criteria(healing_actions)
+            
+            # Generate unique filename
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            ns3_filename = f"ns3_healing_plan_{node_id}_{timestamp}.json"
+            ns3_path = self.healing_plans_for_ns3_dir / ns3_filename
+            
+            # Create NS3IntegrationPlan object
+            ns3_plan = NS3IntegrationPlan(
+                plan_id=f"NS3_{plan_id}_{int(time.time())}",
+                healing_plan_id=plan_id,
+                node_id=node_id,
+                simulation_config=simulation_config,
+                network_topology_changes=topology_changes,
+                routing_updates=routing_updates,
+                configuration_changes=config_changes,
+                simulation_parameters=sim_parameters,
+                validation_criteria=validation_criteria,
+                generated_timestamp=datetime.now().isoformat(),
+                file_path=str(ns3_path)
+            )
+            
+            # Build complete NS3 integration JSON
+            ns3_integration_data = {
+                'ns3_integration_metadata': {
+                    'plan_id': ns3_plan.plan_id,
+                    'healing_plan_id': plan_id,
+                    'target_node': node_id,
+                    'generated_timestamp': ns3_plan.generated_timestamp,
+                    'orchestrator_version': 'Nokia-Rural-Network-v2.1.0',
+                    'ns3_compatibility_version': '3.35+',
+                    'export_format': 'healing_commands_json'
+                },
+                'simulation_configuration': simulation_config,
+                'network_topology_changes': topology_changes,
+                'routing_updates': routing_updates,
+                'configuration_changes': config_changes,
+                'simulation_parameters': sim_parameters,
+                'validation_criteria': validation_criteria,
+                'original_healing_plan': healing_plan_data,
+                'ns3_execution_commands': self.generate_ns3_execution_commands(ns3_filename)
+            }
+            
+            # Save NS3 integration plan to file
+            with open(ns3_path, 'w') as f:
+                json.dump(ns3_integration_data, f, indent=2, default=str)
+            
+            self.metrics.ns3_plans_exported += 1
+            logger.info(f"✅ NS3 integration plan generated: {ns3_path}")
+            
+            return ns3_plan
+            
+        except Exception as e:
+            logger.error(f"❌ Error generating NS3 integration plan: {e}")
+            raise
+
+    def generate_ns3_topology_changes(self, node_id: str, healing_actions: List[Dict]) -> List[Dict[str, Any]]:
+        """Generate NS3 topology modification commands"""
+        topology_changes = []
+        
+        for action in healing_actions:
+            action_type = action.get('action_type', '')
+            
+            if action_type == 'traffic_rerouting':
+                topology_changes.append({
+                    'command': 'modify_routing_table',
+                    'target_node': node_id,
+                    'action': 'activate_backup_path',
+                    'parameters': {
+                        'backup_path_priority': 1,
+                        'reroute_percentage': action.get('parameters', {}).get('reroute_percentage', 50),
+                        'convergence_time': 30.0
+                    },
+                    'validation': {
+                        'expected_throughput_recovery': 0.8,
+                        'max_convergence_time': 60.0
+                    }
+                })
+                
+            elif action_type == 'load_balancing':
+                topology_changes.append({
+                    'command': 'enable_load_balancing',
+                    'target_node': node_id,
+                    'action': 'distribute_traffic',
+                    'parameters': {
+                        'balancing_algorithm': action.get('parameters', {}).get('balancing_algorithm', 'round_robin'),
+                        'load_threshold': action.get('parameters', {}).get('load_threshold', 0.8),
+                        'rebalancing_interval': 10.0
+                    },
+                    'validation': {
+                        'load_distribution_variance': 0.2,
+                        'throughput_improvement': 0.3
+                    }
+                })
+        
+        return topology_changes
+
+    def generate_ns3_routing_updates(self, node_id: str, healing_actions: List[Dict]) -> List[Dict[str, Any]]:
+        """Generate NS3 routing protocol updates"""
+        routing_updates = []
+        
+        node_type = self.determine_node_type(node_id)
+        
+        for action in healing_actions:
+            if action.get('action_type') in ['traffic_rerouting', 'load_balancing']:
+                
+                # Dynamic routing protocol updates
+                routing_updates.append({
+                    'protocol': 'OLSR',  # OLSR for rural mesh networks
+                    'target_node': node_id,
+                    'update_type': 'emergency_reroute',
+                    'parameters': {
+                        'hello_interval': 0.5,  # Faster neighbor detection
+                        'tc_interval': 1.0,     # Faster topology updates
+                        'neighbor_hold_time': 10.0,
+                        'mpr_coverage': 2,      # Redundant multipoint relays
+                        'link_quality_threshold': 0.3
+                    },
+                    'affected_neighbors': self.get_node_neighbors(node_id),
+                    'convergence_timeout': 30.0
+                })
+                
+                # Static route backup injection
+                routing_updates.append({
+                    'protocol': 'STATIC',
+                    'target_node': node_id,
+                    'update_type': 'backup_route_injection',
+                    'parameters': {
+                        'backup_routes': self.generate_backup_routes(node_id, node_type),
+                        'route_priority': 10,   # Lower priority than dynamic routes
+                        'metric_adjustment': 100
+                    }
+                })
+        
+        return routing_updates
+
+    def generate_ns3_config_changes(self, node_id: str, healing_actions: List[Dict]) -> List[Dict[str, Any]]:
+        """Generate NS3 configuration changes"""
+        config_changes = []
+        
+        for action in healing_actions:
+            action_type = action.get('action_type', '')
+            
+            if action_type == 'power_optimization':
+                config_changes.append({
+                    'config_type': 'energy_model',
+                    'target_node': node_id,
+                    'parameters': {
+                        'tx_power_dbm': 25,  # Increase transmission power
+                        'energy_source': 'backup_battery',
+                        'power_management_mode': 'emergency',
+                        'sleep_mode_disabled': True,
+                        'energy_harvesting': 'solar_boost'
+                    },
+                    'validation': {
+                        'signal_strength_improvement': 3.0,  # dB
+                        'coverage_area_expansion': 1.2
+                    }
+                })
+                
+            elif action_type == 'resource_reallocation':
+                config_changes.append({
+                    'config_type': 'resource_allocation',
+                    'target_node': node_id,
+                    'parameters': {
+                        'cpu_allocation_increase': action.get('parameters', {}).get('cpu_limit_increase', 20),
+                        'memory_pool_expansion': True,
+                        'buffer_size_multiplier': 1.5,
+                        'queue_management': 'priority_based',
+                        'congestion_control': 'enhanced'
+                    },
+                    'validation': {
+                        'processing_capacity_improvement': 0.25,
+                        'queue_length_reduction': 0.4
+                    }
+                })
+                
+            elif action_type == 'emergency_restart':
+                config_changes.append({
+                    'config_type': 'service_management',
+                    'target_node': node_id,
+                    'parameters': {
+                        'restart_sequence': 'graceful_with_state_preservation',
+                        'service_migration_enabled': True,
+                        'connection_preservation': True,
+                        'restart_timeout': 60.0,
+                        'health_check_frequency': 5.0
+                    },
+                    'validation': {
+                        'service_downtime': 'max_30_seconds',
+                        'connection_recovery_rate': 0.95
+                    }
+                })
+        
+        return config_changes
+
+    def generate_ns3_simulation_parameters(self, healing_plan_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Generate NS3 simulation parameters"""
+        severity = healing_plan_data.get('severity', 'medium')
+        
+        # Adjust simulation parameters based on severity
+        simulation_time = 600.0 if severity == 'critical' else 300.0
+        
+        return {
+            'simulation_time': simulation_time,
+            'healing_validation_interval': 10.0,
+            'fault_injection': {
+                'enabled': True,
+                'fault_type': 'progressive_degradation',
+                'severity_level': severity,
+                'injection_time': 60.0,
+                'duration': 120.0
+            },
+            'metrics_collection': {
+                'throughput': {'enabled': True, 'interval': 1.0},
+                'latency': {'enabled': True, 'interval': 1.0},
+                'packet_loss': {'enabled': True, 'interval': 1.0},
+                'energy_consumption': {'enabled': True, 'interval': 5.0},
+                'routing_convergence': {'enabled': True, 'interval': 1.0},
+                'link_quality': {'enabled': True, 'interval': 2.0}
+            },
+            'output_configuration': {
+                'animation_file': f"healing_animation_{healing_plan_data.get('node_id', 'unknown')}.xml",
+                'pcap_enabled': True,
+                'ascii_trace_enabled': True,
+                'flow_monitor_enabled': True,
+                'results_directory': f"results/healing_{healing_plan_data.get('plan_id', 'unknown')}"
+            }
+        }
+
+    def generate_ns3_validation_criteria(self, healing_actions: List[Dict]) -> Dict[str, Any]:
+        """Generate NS3 validation criteria"""
+        return {
+            'healing_success_criteria': {
+                'throughput_recovery_threshold': 0.8,
+                'latency_improvement_threshold': 0.5,
+                'packet_loss_reduction_threshold': 0.7,
+                'energy_efficiency_maintenance': 0.9,
+                'convergence_time_limit': 60.0
+            },
+            'performance_benchmarks': {
+                'baseline_throughput': 'measured_before_fault',
+                'acceptable_latency_increase': 0.2,
+                'maximum_packet_loss': 0.05,
+                'energy_consumption_limit': 1.1  # 10% increase allowed
+            },
+            'validation_timeline': {
+                'immediate_response': '0-30s',
+                'short_term_recovery': '30s-2min',
+                'long_term_stability': '2min-5min',
+                'performance_verification': '5min-10min'
+            },
+            'failure_conditions': {
+                'healing_timeout': 300.0,
+                'consecutive_failures': 3,
+                'performance_degradation_threshold': 0.5,
+                'network_partition_detection': True
+            }
+        }
+
+    def get_node_neighbors(self, node_id: str) -> List[str]:
+        """Get neighboring nodes for routing updates"""
+        # This would typically query the actual network topology
+        # For now, provide realistic neighbor sets based on node type
+        node_num = int(node_id.split('_')[1])
+        
+        if node_num in [0, 1]:  # CORE nodes
+            return [f"node_{i:02d}" for i in [2, 3, 4, 5, 6, 7]]
+        elif node_num in [5, 7]:  # DIST nodes  
+            return [f"node_{i:02d}" for i in [0, 1, 8, 9, 10, 20, 21, 22]]
+        elif node_num in [20, 25]:  # ACC nodes
+            return [f"node_{i:02d}" for i in [5, 7, 18, 19, 23, 24, 26, 27]]
+        else:
+            return []
+
+    def generate_backup_routes(self, node_id: str, node_type: str) -> List[Dict[str, Any]]:
+        """Generate backup routes for the node"""
+        backup_routes = []
+        
+        if node_type == 'CORE':
+            backup_routes = [
+                {
+                    'destination': '0.0.0.0/0',  # Default route
+                    'next_hop': 'backup_core_node',
+                    'metric': 150,
+                    'interface': 'backup_interface'
+                }
+            ]
+        elif node_type == 'DIST':
+            backup_routes = [
+                {
+                    'destination': 'core_network/16',
+                    'next_hop': 'alternate_dist_node',
+                    'metric': 120,
+                    'interface': 'wireless_backup'
+                }
+            ]
+        elif node_type == 'ACC':
+            backup_routes = [
+                {
+                    'destination': 'distribution_network/24',
+                    'next_hop': 'neighbor_acc_node',
+                    'metric': 100,
+                    'interface': 'mesh_backup'
+                }
+            ]
+        
+        return backup_routes
+
+    def generate_ns3_execution_commands(self, ns3_filename: str) -> List[str]:
+        """Generate NS3 execution commands"""
+        return [
+            f"# Load healing plan in NS3 simulation:",
+            f"# 1. Copy {ns3_filename} to ns3/src/rural-network/examples/",
+            f"# 2. Run: ./waf --run 'rural-network-healing --healing-plan={ns3_filename}'",
+            f"# 3. Monitor results in ns3/results/healing_validation/",
+            f"# 4. Generate reports: python3 scripts/analyze_healing_results.py",
+            f"# 5. Visualization: python3 scripts/visualize_healing_performance.py"
+        ]
+
+    async def create_deployment_configuration(self, healing_plan_data: Dict[str, Any], tosca_template: ToscaTemplate) -> Dict[str, Any]:
+        """Create deployment configuration"""
+        try:
+            deployment_config = {
+                'deployment_metadata': {
+                    'deployment_id': f"DEPLOY_{healing_plan_data.get('plan_id', 'unknown')}_{int(time.time())}",
+                    'tosca_template_path': tosca_template.file_path,
+                    'target_environment': 'nokia_rural_network',
+                    'deployment_type': 'healing_orchestration',
+                    'created_timestamp': datetime.now().isoformat()
+                },
+                'orchestrator_config': {
+                    'orchestrator_type': 'nokia_orchestrator',
+                    'api_endpoint': 'https://orchestrator.nokia.rural/api/v2',
+                    'authentication': {
+                        'type': 'service_account',
+                        'credentials_path': 'config/orchestrator_credentials.json'
+                    },
+                    'timeout_settings': {
+                        'deployment_timeout': 600,
+                        'health_check_timeout': 120,
+                        'rollback_timeout': 300
+                    }
+                },
+                'deployment_parameters': {
+                    'auto_approve': not healing_plan_data.get('requires_approval', False),
+                    'rollback_on_failure': True,
+                    'dry_run': False,
+                    'validate_before_deploy': True,
+                    'notification_endpoints': [
+                        'healing-agent@nokia.rural',
+                        'orchestration-alerts@nokia.rural'
+                    ]
+                },
+                'resource_requirements': {
+                    'compute_resources': self.calculate_compute_requirements(healing_plan_data),
+                    'network_resources': self.calculate_network_requirements(healing_plan_data),
+                    'storage_resources': self.calculate_storage_requirements(healing_plan_data)
+                }
+            }
+            
+            # Save deployment configuration
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            config_filename = f"deployment_config_{healing_plan_data.get('node_id', 'unknown')}_{timestamp}.json"
+            config_path = self.deployment_configs_dir / config_filename
+            
+            with open(config_path, 'w') as f:
+                json.dump(deployment_config, f, indent=2, default=str)
+            
+            logger.info(f"✅ Deployment configuration created: {config_path}")
+            
+            return deployment_config
+            
+        except Exception as e:
+            logger.error(f"❌ Error creating deployment configuration: {e}")
+            raise
+
+    def calculate_compute_requirements(self, healing_plan_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Calculate compute resource requirements"""
+        healing_actions = healing_plan_data.get('healing_actions', [])
+        severity = healing_plan_data.get('severity', 'medium')
+        
+        base_cpu = 0.5  # Base CPU cores
+        base_memory = 1024  # Base memory in MB
+        
+        # Adjust based on number of healing actions
+        cpu_per_action = 0.2
+        memory_per_action = 256
+        
+        # Severity multiplier
+        severity_multiplier = {'low': 1.0, 'medium': 1.2, 'high': 1.5, 'critical': 2.0}.get(severity, 1.0)
+        
+        return {
+            'cpu_cores': (base_cpu + len(healing_actions) * cpu_per_action) * severity_multiplier,
+            'memory_mb': int((base_memory + len(healing_actions) * memory_per_action) * severity_multiplier),
+            'disk_space_mb': 100,  # Log storage
+            'network_bandwidth_mbps': 10 * severity_multiplier
+        }
+
+    def calculate_network_requirements(self, healing_plan_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Calculate network resource requirements"""
+        return {
+            'bandwidth_requirements': {
+                'control_plane': '1Mbps',
+                'data_plane': '10Mbps',
+                'monitoring': '0.5Mbps'
+            },
+            'connectivity_requirements': [
+                'management_network_access',
+                'node_control_interface',
+                'monitoring_system_connection'
+            ],
+            'security_requirements': [
+                'encrypted_communication',
+                'certificate_based_auth',
+                'firewall_rules_update'
+            ]
+        }
+
+    def calculate_storage_requirements(self, healing_plan_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Calculate storage resource requirements"""
+        return {
+            'configuration_storage': '50MB',
+            'log_storage': '200MB',
+            'backup_storage': '100MB',
+            'temporary_storage': '50MB',
+            'retention_policy': '7_days'
+        }
+
+    async def execute_orchestration_deployment(self, tosca_template: ToscaTemplate, deployment_config: Dict[str, Any]) -> Dict[str, Any]:
+        """Execute orchestration deployment (simulation)"""
+        try:
+            logger.info(f"🚀 Executing orchestration deployment: {tosca_template.template_id}")
+            
+            # Simulate deployment execution
+            execution_start = time.time()
+            
+            # Phase 1: Validation
+            await asyncio.sleep(2)  # Simulate validation time
+            logger.info("✅ Phase 1: Template validation completed")
+            
+            # Phase 2: Resource preparation
+            await asyncio.sleep(3)  # Simulate resource preparation
+            logger.info("✅ Phase 2: Resource preparation completed")
+            
+            # Phase 3: Deployment execution
+            await asyncio.sleep(5)  # Simulate deployment execution
+            logger.info("✅ Phase 3: Deployment execution completed")
+            
+            # Phase 4: Health checks
+            await asyncio.sleep(2)  # Simulate health checks
+            logger.info("✅ Phase 4: Health checks completed")
+            
+            execution_duration = time.time() - execution_start
+            
+            execution_result = {
+                'execution_id': f"EXEC_{int(time.time())}",
+                'status': 'success',
+                'execution_duration': execution_duration,
+                'phases_completed': ['validation', 'resource_preparation', 'deployment', 'health_checks'],
+                'deployed_components': list(tosca_template.node_templates.keys()),
+                'deployment_summary': {
+                    'total_nodes_affected': 1,
+                    'total_services_deployed': len(tosca_template.node_templates),
+                    'successful_deployments': len(tosca_template.node_templates),
+                    'failed_deployments': 0
+                },
+                'resource_usage': {
+                    'cpu_utilization': '45%',
+                    'memory_utilization': '60%',
+                    'network_utilization': '25%'
+                },
+                'completion_timestamp': datetime.now().isoformat()
+            }
+            
+            self.metrics.successful_deployments += 1
+            logger.info(f"✅ Orchestration deployment completed in {execution_duration:.2f}s")
+            
+            return execution_result
+            
+        except Exception as e:
+            logger.error(f"❌ Orchestration deployment failed: {e}")
+            self.metrics.failed_operations += 1
+            
+            return {
+                'execution_id': f"EXEC_FAILED_{int(time.time())}",
+                'status': 'failed',
+                'error': str(e),
+                'failure_timestamp': datetime.now().isoformat()
+            }
+
+    async def send_orchestration_status_update(self, plan_id: str, tosca_template: ToscaTemplate, 
+                                             ns3_plan: NS3IntegrationPlan, execution_result: Optional[Dict[str, Any]]):
+        """Send orchestration status update"""
         try:
             status_update = {
+                'message_type': 'orchestration_status',
                 'timestamp': datetime.now().isoformat(),
-                'type': 'tosca_orchestration_status',
-                'workflow_id': execution.spec.workflow_id,
-                'node_id': execution.spec.node_id,
-                'status': execution.status.value,
-                'progress': execution.progress_percentage,
-                'healing_effectiveness': execution.healing_effectiveness,
-                'tosca_deployment_status': execution.tosca_deployment.status.value if execution.tosca_deployment else None,
-                'network_health': self.network_state.get_network_health_summary()
+                'source_agent': 'orchestration_agent',
+                'plan_id': plan_id,
+                'orchestration_summary': {
+                    'tosca_template_generated': True,
+                    'tosca_template_path': tosca_template.file_path,
+                    'ns3_plan_generated': True,
+                    'ns3_plan_path': ns3_plan.file_path,
+                    'deployment_executed': execution_result is not None,
+                    'deployment_status': execution_result.get('status', 'not_executed') if execution_result else 'not_executed'
+                },
+                'performance_metrics': {
+                    'total_processing_time': self.metrics.avg_processing_time,
+                    'tosca_templates_generated': self.metrics.tosca_templates_generated,
+                    'ns3_plans_exported': self.metrics.ns3_plans_exported,
+                    'successful_deployments': self.metrics.successful_deployments
+                }
             }
             
             await self.status_publisher.send_json(status_update)
+            logger.info(f"📤 Orchestration status update sent for {plan_id}")
             
         except Exception as e:
-            logger.error(f"Error publishing status update: {e}")
-    
-    async def start(self):
-        """Start the TOSCA-enabled Orchestration Agent"""
-        logger.info("=" * 80)
-        logger.info("🚀 STARTING NOKIA AI SELF-HEALING NETWORK ORCHESTRATOR")
-        logger.info("🎭 Enhanced with xOpera TOSCA Orchestration Capabilities")
-        logger.info("🔧 Purpose: Multi-agent coordination and healing workflow orchestration")
-        logger.info("🌐 Integration: Monitor → Calculation → Healing → TOSCA Orchestration")
-        logger.info("=" * 80)
-        
-        try:
-            self.is_running = True
-            self.orchestration_metrics['start_time'] = datetime.now()
-            
-            # Initialize communication
-            await self.initialize_communication()
-            
-            # Initialize network topology
-            await self.initialize_network_topology()
-            
-            # Start main loops concurrently
-            await asyncio.gather(
-                self.healing_message_loop(),
-                self.workflow_execution_loop(),
-                return_exceptions=True
-            )
-            
-        except Exception as e:
-            logger.error(f"Error starting TOSCA Orchestration Agent: {e}")
-            raise
-        finally:
-            await self.stop()
-    
-    async def stop(self):
-        """Stop the TOSCA-enabled Orchestration Agent"""
-        logger.info("🛑 Stopping TOSCA Orchestration Agent...")
-        self.is_running = False
-        
-        # Close ZeroMQ sockets
-        if self.healing_subscriber:
-            self.healing_subscriber.close()
-        if self.mcp_publisher:
-            self.mcp_publisher.close()
-        if self.ns3_controller:
-            self.ns3_controller.close()
-        if self.status_publisher:
-            self.status_publisher.close()
-        
-        # Terminate context
-        self.context.term()
-        
-        logger.info("✅ TOSCA Orchestration Agent stopped successfully")
+            logger.error(f"❌ Failed to send orchestration status update: {e}")
 
-# Main execution
+    async def generate_orchestration_report(self, healing_plan_data: Dict[str, Any], tosca_template: ToscaTemplate,
+                                          ns3_plan: NS3IntegrationPlan, execution_result: Optional[Dict[str, Any]]):
+        """Generate comprehensive orchestration report"""
+        try:
+            report = {
+                'report_metadata': {
+                    'report_id': f"ORCH_REPORT_{int(time.time())}",
+                    'generated_timestamp': datetime.now().isoformat(),
+                    'healing_plan_id': healing_plan_data.get('plan_id', 'unknown'),
+                    'node_id': healing_plan_data.get('node_id', 'unknown')
+                },
+                'healing_plan_summary': {
+                    'node_id': healing_plan_data.get('node_id', 'unknown'),
+                    'severity': healing_plan_data.get('severity', 'unknown'),
+                    'total_healing_actions': len(healing_plan_data.get('healing_actions', [])),
+                    'estimated_duration': healing_plan_data.get('total_estimated_duration', 0),
+                    'confidence': healing_plan_data.get('confidence', 0.0)
+                },
+                'tosca_template_details': {
+                    'template_id': tosca_template.template_id,
+                    'template_path': tosca_template.file_path,
+                    'node_templates_count': len(tosca_template.node_templates),
+                    'generated_timestamp': tosca_template.generated_timestamp
+                },
+                'ns3_integration_details': {
+                    'plan_id': ns3_plan.plan_id,
+                    'integration_path': ns3_plan.file_path,
+                    'topology_changes': len(ns3_plan.network_topology_changes),
+                    'routing_updates': len(ns3_plan.routing_updates),
+                    'config_changes': len(ns3_plan.configuration_changes),
+                    'generated_timestamp': ns3_plan.generated_timestamp
+                },
+                'deployment_details': execution_result if execution_result else {'status': 'not_executed'},
+                'orchestration_metrics': asdict(self.metrics),
+                'files_generated': {
+                    'tosca_template': tosca_template.file_path,
+                    'ns3_integration_plan': ns3_plan.file_path,
+                    'deployment_config': f"deployment_configs/deployment_config_{healing_plan_data.get('node_id', 'unknown')}_*.json"
+                },
+                'next_steps': [
+                    f"Execute NS3 simulation using: {ns3_plan.file_path}",
+                    f"Deploy TOSCA template using: {tosca_template.file_path}",
+                    "Monitor healing effectiveness through NS3 simulation results",
+                    "Validate healing success criteria",
+                    "Generate post-healing performance report"
+                ]
+            }
+            
+            # Save report
+            timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+            report_filename = f"orchestration_report_{healing_plan_data.get('node_id', 'unknown')}_{timestamp}.json"
+            report_path = self.orchestration_reports_dir / report_filename
+            
+            with open(report_path, 'w') as f:
+                json.dump(report, f, indent=2, default=str)
+            
+            logger.info(f"📋 Orchestration report generated: {report_path}")
+            
+        except Exception as e:
+            logger.error(f"❌ Error generating orchestration report: {e}")
+
+    async def monitor_orchestration_performance(self):
+        """Monitor orchestration performance metrics"""
+        logger.info("📊 Starting orchestration performance monitoring...")
+        
+        while self.is_running:
+            try:
+                await asyncio.sleep(60)  # Check every minute
+                
+                # Log performance summary
+                logger.info(f"📊 Orchestration Performance Summary:")
+                logger.info(f"   • Healing Plans Received: {self.metrics.healing_plans_received}")
+                logger.info(f"   • TOSCA Templates Generated: {self.metrics.tosca_templates_generated}")
+                logger.info(f"   • NS3 Plans Exported: {self.metrics.ns3_plans_exported}")
+                logger.info(f"   • Orchestration Executions: {self.metrics.orchestration_executions}")
+                logger.info(f"   • Successful Deployments: {self.metrics.successful_deployments}")
+                logger.info(f"   • Failed Operations: {self.metrics.failed_operations}")
+                logger.info(f"   • Avg Processing Time: {self.metrics.avg_processing_time:.2f}s")
+                logger.info(f"   • Active Orchestrations: {len(self.active_orchestrations)}")
+                
+                # Clean up old processing times (keep last 100)
+                if len(self.processing_times) > 100:
+                    self.processing_times = self.processing_times[-100:]
+                
+            except Exception as e:
+                logger.error(f"❌ Error in orchestration performance monitoring: {e}")
+
+    async def generate_periodic_reports(self):
+        """Generate periodic orchestration reports"""
+        logger.info("📋 Starting periodic orchestration report generation...")
+        
+        while self.is_running:
+            try:
+                await asyncio.sleep(3600)  # Generate report every hour
+                
+                periodic_report = {
+                    'report_timestamp': datetime.now().isoformat(),
+                    'reporting_period': '1 hour',
+                    'orchestration_metrics': asdict(self.metrics),
+                    'performance_summary': {
+                        'avg_processing_time': self.metrics.avg_processing_time,
+                        'success_rate': (
+                            (self.metrics.successful_deployments / 
+                             max(self.metrics.orchestration_executions, 1)) * 100
+                        ),
+                        'throughput_per_hour': self.metrics.orchestration_executions,
+                        'error_rate': (
+                            (self.metrics.failed_operations / 
+                             max(self.metrics.orchestration_executions, 1)) * 100
+                        )
+                    },
+                    'file_generation_summary': {
+                        'tosca_templates_generated': self.metrics.tosca_templates_generated,
+                        'ns3_plans_exported': self.metrics.ns3_plans_exported,
+                        'total_files_created': (
+                            self.metrics.tosca_templates_generated + 
+                            self.metrics.ns3_plans_exported
+                        )
+                    }
+                }
+                
+                # Save periodic report
+                report_file = self.orchestration_reports_dir / f"periodic_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                with open(report_file, 'w') as f:
+                    json.dump(periodic_report, f, indent=2, default=str)
+                
+                logger.info(f"📋 Periodic orchestration report generated: {report_file}")
+                
+            except Exception as e:
+                logger.error(f"❌ Error generating periodic orchestration report: {e}")
+
+    async def cleanup_old_files(self):
+        """Cleanup old files periodically"""
+        logger.info("🧹 Starting periodic file cleanup...")
+        
+        while self.is_running:
+            try:
+                await asyncio.sleep(86400)  # Cleanup daily
+                
+                # Cleanup files older than 7 days
+                cutoff_time = time.time() - (7 * 24 * 3600)  # 7 days ago
+                
+                directories_to_clean = [
+                    self.tosca_templates_dir,
+                    self.healing_plans_for_ns3_dir,
+                    self.orchestration_reports_dir,
+                    self.deployment_configs_dir
+                ]
+                
+                files_cleaned = 0
+                for directory in directories_to_clean:
+                    for file_path in directory.glob('*'):
+                        if file_path.is_file() and file_path.stat().st_mtime < cutoff_time:
+                            file_path.unlink()
+                            files_cleaned += 1
+                
+                logger.info(f"🧹 Cleaned up {files_cleaned} old files")
+                
+            except Exception as e:
+                logger.error(f"❌ Error in file cleanup: {e}")
+
+    async def cleanup(self):
+        """Cleanup resources and connections"""
+        try:
+            self.is_running = False
+            
+            # Close ZeroMQ sockets
+            if self.healing_subscriber:
+                self.healing_subscriber.close()
+            if self.status_publisher:
+                self.status_publisher.close()
+            if self.context:
+                self.context.term()
+            
+            # Generate final orchestration report
+            final_report = {
+                'shutdown_timestamp': datetime.now().isoformat(),
+                'final_metrics': asdict(self.metrics),
+                'total_active_orchestrations': len(self.active_orchestrations),
+                'avg_processing_time': self.metrics.avg_processing_time,
+                'total_files_generated': (
+                    self.metrics.tosca_templates_generated + 
+                    self.metrics.ns3_plans_exported
+                )
+            }
+            
+            final_report_file = self.orchestration_reports_dir / f"final_orchestration_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            with open(final_report_file, 'w') as f:
+                json.dump(final_report, f, indent=2, default=str)
+            
+            logger.info("✅ Enhanced Orchestration Agent cleanup completed")
+            logger.info(f"📋 Final report saved: {final_report_file}")
+            
+        except Exception as e:
+            logger.error(f"❌ Cleanup error: {e}")
+
+# Main execution function
 async def main():
-    """Main execution function"""
+    """Main execution function for Enhanced Orchestration Agent"""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+    
+    # Initialize agent
+    agent = EnhancedOrchestrationAgent()
+    
     try:
-        # Initialize and start TOSCA orchestrator
-        orchestrator = NetworkOrchestrationAgent()
-        await orchestrator.start()
+        print('🎯 Enhanced Orchestration Agent starting...')
+        print('👂 Listening for healing plans from Healing Agent')
+        print('📋 Ready to generate TOSCA templates')
+        print('📊 Ready to export NS3 integration plans')
+        print('🚀 Ready to execute orchestration deployments')
+        print(f'📁 TOSCA Templates: {agent.tosca_templates_dir}')
+        print(f'📁 NS3 Integration: {agent.healing_plans_for_ns3_dir}')
+        print(f'📊 Reports: {agent.orchestration_reports_dir}')
+        
+        await agent.start_with_ns3_integration()
         
     except KeyboardInterrupt:
-        logger.info("TOSCA Orchestration Agent stopped by user")
+        logger.info("🛑 Shutdown requested")
     except Exception as e:
-        logger.error(f"Error in TOSCA orchestration main: {e}")
+        logger.error(f"❌ Fatal error: {e}")
+    finally:
+        await agent.cleanup()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     asyncio.run(main())
