@@ -1,0 +1,167 @@
+description: Nokia Rural Network Self-Healing Infrastructure
+imports:
+- tosca-normative-types:1.0
+- nokia-rural-network-types:2.1
+metadata:
+  generated_timestamp: '2025-06-13T04:15:55.317658'
+  healing_plan_id: HEAL_node_25_1749768355
+  node_type: ACC
+  target_node_id: node_25
+  template_author: Nokia-AI-System
+  template_name: nokia-rural-network-healing
+  template_version: 2.1.0
+topology_template:
+  description: Self-healing orchestration for node_25
+  node_templates:
+    node-25-healing:
+      capabilities:
+        load_shedding:
+          enabled: true
+        resource_scaling:
+          enabled: true
+        service_migration:
+          enabled: true
+      interfaces:
+        Nokia.Healing:
+          operations:
+            emergency_restart:
+              implementation: nokia.implementations.ServiceManager
+              inputs: &id002
+                backup_configuration: true
+                health_check_interval: 10
+                restart_type: graceful
+            enhanced_monitoring:
+              implementation: nokia.implementations.GenericAction
+              inputs: &id004
+                alert_threshold_reduction: 0.1
+                detailed_logging: true
+                monitoring_interval: 5
+            load_shedding:
+              implementation: nokia.implementations.GenericAction
+              inputs: &id003
+                priority_preservation: high_priority_users
+                recovery_criteria: resource_availability
+                shedding_percentage: 25
+            resource_reallocation:
+              implementation: nokia.implementations.ResourceOrchestrator
+              inputs: &id001
+                buffer_size_optimization: true
+                cpu_limit_increase: 20
+                memory_cleanup: true
+      properties:
+        healing_enabled: true
+        health_check_timeout: 30
+        monitoring_interval: 10
+        node_id: node_25
+        node_type: ACC
+      requirements:
+      - dependency: node-25-monitor
+      type: nokia.nodes.AccessNode
+    node-25-monitor:
+      properties:
+        alerting_enabled: true
+        metrics_collection: true
+        retention_period: 7d
+        target_node: node_25
+      type: nokia.nodes.MonitoringService
+  policies:
+  - healing-policy-1:
+      description: Reallocate system resources dynamically
+      properties:
+        approval_required: true
+        estimated_duration: 90
+        priority: 1
+        rollback_enabled: true
+        success_probability: 0.8
+      targets:
+      - all_nodes
+      type: nokia.policies.ResourceManagement
+  - healing-policy-2:
+      description: Emergency service restart to restore functionality
+      properties:
+        approval_required: true
+        estimated_duration: 120
+        priority: 1
+        rollback_enabled: true
+        success_probability: 0.95
+      targets:
+      - all_nodes
+      type: nokia.policies.ServiceRestart
+  - healing-policy-3:
+      description: Implement selective load shedding
+      properties:
+        approval_required: false
+        estimated_duration: 30
+        priority: 2
+        rollback_enabled: true
+        success_probability: 0.9
+      targets:
+      - all_nodes
+      type: nokia.policies.GenericHealing
+  - healing-policy-4:
+      description: Increase monitoring frequency and alerting sensitivity
+      properties:
+        approval_required: false
+        estimated_duration: 30
+        priority: 3
+        rollback_enabled: true
+        success_probability: 0.99
+      targets:
+      - all_nodes
+      type: nokia.policies.GenericHealing
+  workflows:
+    healing_workflow:
+      description: Automated healing workflow execution
+      inputs:
+        healing_plan_id:
+          description: ID of the healing plan being executed
+          type: string
+      outputs:
+        execution_report:
+          description: Detailed execution report
+          type: string
+        execution_status:
+          description: Overall execution status
+          type: string
+      steps:
+        step_1_resource_reallocation:
+          activities:
+          - set_state: executing
+          - call_operation:
+              inputs: *id001
+              operation: Nokia.Healing.resource_reallocation
+          - set_state: completed
+          on_failure: rollback_workflow
+          on_success: step_2
+          target: healing-policy-1
+        step_2_emergency_restart:
+          activities:
+          - set_state: executing
+          - call_operation:
+              inputs: *id002
+              operation: Nokia.Healing.emergency_restart
+          - set_state: completed
+          on_failure: rollback_workflow
+          on_success: step_3
+          target: healing-policy-2
+        step_3_load_shedding:
+          activities:
+          - set_state: executing
+          - call_operation:
+              inputs: *id003
+              operation: Nokia.Healing.load_shedding
+          - set_state: completed
+          on_failure: rollback_workflow
+          on_success: step_4
+          target: healing-policy-3
+        step_4_enhanced_monitoring:
+          activities:
+          - set_state: executing
+          - call_operation:
+              inputs: *id004
+              operation: Nokia.Healing.enhanced_monitoring
+          - set_state: completed
+          on_failure: rollback_workflow
+          on_success: workflow_complete
+          target: healing-policy-4
+tosca_definitions_version: tosca_simple_yaml_1_3

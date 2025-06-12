@@ -1,0 +1,140 @@
+description: Nokia Rural Network Self-Healing Infrastructure
+imports:
+- tosca-normative-types:1.0
+- nokia-rural-network-types:2.1
+metadata:
+  generated_timestamp: '2025-06-13T04:15:52.122820'
+  healing_plan_id: HEAL_node_00_1749768352
+  node_type: CORE
+  target_node_id: node_00
+  template_author: Nokia-AI-System
+  template_name: nokia-rural-network-healing
+  template_version: 2.1.0
+topology_template:
+  description: Self-healing orchestration for node_00
+  node_templates:
+    node-00-healing:
+      capabilities:
+        failover:
+          enabled: true
+        high_throughput:
+          enabled: true
+        load_balancing:
+          enabled: true
+      interfaces:
+        Nokia.Healing:
+          operations:
+            enhanced_monitoring:
+              implementation: nokia.implementations.GenericAction
+              inputs: &id003
+                alert_threshold_reduction: 0.1
+                detailed_logging: true
+                monitoring_interval: 5
+            load_balancing:
+              implementation: nokia.implementations.LoadBalancer
+              inputs: &id002
+                balancing_algorithm: weighted_round_robin
+                load_threshold: 0.8
+                monitoring_window: 60
+            traffic_rerouting:
+              implementation: nokia.implementations.RoutingManager
+              inputs: &id001
+                backup_path_priority: high
+                monitoring_interval: 30
+                reroute_percentage: 50
+      properties:
+        healing_enabled: true
+        health_check_timeout: 30
+        monitoring_interval: 10
+        node_id: node_00
+        node_type: CORE
+      requirements:
+      - dependency: node-00-monitor
+      type: nokia.nodes.CoreNetworkFunction
+    node-00-monitor:
+      properties:
+        alerting_enabled: true
+        metrics_collection: true
+        retention_period: 7d
+        target_node: node_00
+      type: nokia.nodes.MonitoringService
+  policies:
+  - healing-policy-1:
+      description: Reroute traffic through backup paths
+      properties:
+        approval_required: true
+        estimated_duration: 30
+        priority: 1
+        rollback_enabled: true
+        success_probability: 0.9
+      targets:
+      - all_nodes
+      type: nokia.policies.TrafficRerouting
+  - healing-policy-2:
+      description: Implement dynamic load balancing
+      properties:
+        approval_required: false
+        estimated_duration: 60
+        priority: 2
+        rollback_enabled: true
+        success_probability: 0.85
+      targets:
+      - all_nodes
+      type: nokia.policies.LoadBalancing
+  - healing-policy-3:
+      description: Increase monitoring frequency and alerting sensitivity
+      properties:
+        approval_required: false
+        estimated_duration: 30
+        priority: 3
+        rollback_enabled: true
+        success_probability: 0.99
+      targets:
+      - all_nodes
+      type: nokia.policies.GenericHealing
+  workflows:
+    healing_workflow:
+      description: Automated healing workflow execution
+      inputs:
+        healing_plan_id:
+          description: ID of the healing plan being executed
+          type: string
+      outputs:
+        execution_report:
+          description: Detailed execution report
+          type: string
+        execution_status:
+          description: Overall execution status
+          type: string
+      steps:
+        step_1_traffic_rerouting:
+          activities:
+          - set_state: executing
+          - call_operation:
+              inputs: *id001
+              operation: Nokia.Healing.traffic_rerouting
+          - set_state: completed
+          on_failure: rollback_workflow
+          on_success: step_2
+          target: healing-policy-1
+        step_2_load_balancing:
+          activities:
+          - set_state: executing
+          - call_operation:
+              inputs: *id002
+              operation: Nokia.Healing.load_balancing
+          - set_state: completed
+          on_failure: rollback_workflow
+          on_success: step_3
+          target: healing-policy-2
+        step_3_enhanced_monitoring:
+          activities:
+          - set_state: executing
+          - call_operation:
+              inputs: *id003
+              operation: Nokia.Healing.enhanced_monitoring
+          - set_state: completed
+          on_failure: rollback_workflow
+          on_success: workflow_complete
+          target: healing-policy-3
+tosca_definitions_version: tosca_simple_yaml_1_3
