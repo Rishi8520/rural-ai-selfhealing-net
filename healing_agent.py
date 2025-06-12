@@ -1,987 +1,1000 @@
-# healing_agent.py
-import asyncio
-import json
-import numpy as np
-import zmq.asyncio
-import sys
-import time
-import logging
-# New imports for enhancements
 import os
-from dotenv import load_dotenv # For loading environment variables from .env
-import google.generativeai as genai # For Gemini API
-import google.api_core.exceptions # For Gemini API specific exceptions
-from tenacity import retry, wait_exponential, stop_after_attempt, retry_if_exception_type # For robust error handling
-from sentence_transformers import SentenceTransformer # For advanced RAG
-import faiss # For efficient similarity search with dense vectors
-import sqlite3 # Added for database operations
-import platform # For Windows-specific event loop policy
-import torch
-from prometheus_client import start_http_server, Gauge, Counter, Histogram
+os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # Hide GPU from TensorFlow
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'   # Reduce TensorFlow logging
 
-# Set Windows-specific event loop policy for ZeroMQ compatibility
-if platform.system() == "Windows":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+import asyncio
+import logging
+import json
+import time
+import zmq
+import zmq.asyncio
+import google.generativeai as genai
+import numpy as np
+import pandas as pd
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Any, Optional
+from dataclasses import dataclass
 
-# Load environment variables from .env file
-load_dotenv()
+# Import your existing healing agent base class
+try:
+    from healing_agent import HealingAgent
+except ImportError:
+    # Fallback base class if original doesn't exist
+    class HealingAgent:
+        def __init__(self, *args, **kwargs):
+            self.context = zmq.asyncio.Context()
+            self.is_running = False
+            pass
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
-# --- ADDED CODE FOR DEBUGGING GOOGLE_API_KEY ---
-api_key_status = os.getenv("GOOGLE_API_KEY")
-if api_key_status:
-    logger.info(f"GOOGLE_API_KEY is loaded: {api_key_status[:5]}...{api_key_status[-5:]}")
-else:
-    logger.error("GOOGLE_API_KEY is NOT loaded. Please ensure it's set or in your .env file.")
+@dataclass
+class AnomalyAlert:
+    """Structured anomaly alert data"""
+    message_id: str
+    node_id: str
+    anomaly_id: str
+    anomaly_score: float
+    severity: str
+    detection_timestamp: str
+    network_context: Dict[str, Any]
+    confidence: float = 0.95
 
-# --- Database Manager Class ---
-class DatabaseManager:
-    def __init__(self, db_path='rural_network_knowledge_base.db'):
-        self.db_path = db_path
-        self.conn = None
-        self.cursor = None
-        self._connect()
-        self._ensure_tables()
+@dataclass
+class HealingAction:
+    """Individual healing action"""
+    action_id: str
+    action_type: str
+    priority: int
+    description: str
+    parameters: Dict[str, Any]
+    estimated_duration: int
+    success_probability: float
+
+@dataclass
+class HealingPlan:
+    """Complete healing plan"""
+    plan_id: str
+    anomaly_id: str
+    node_id: str
+    severity: str
+    healing_actions: List[HealingAction]
+    total_estimated_duration: int
+    confidence: float
+    requires_approval: bool
+    generated_timestamp: str
+
+class EnhancedHealingAgent(HealingAgent):
+    """Enhanced Healing Agent with Gemini AI integration and robust communication"""
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
         
-        try:
-            self.load_ns3_data_files()
-            logger.info("✅ NS3 database initialization completed successfully")
-        except Exception as e:
-            logger.warning(f"⚠️ NS3 data loading had issues: {e}")
-
-    def _connect(self):
-        try:
-            self.conn = sqlite3.connect(self.db_path)
-            self.cursor = self.conn.cursor()
-            logger.info(f"Connected to database: {self.db_path}")
-        except sqlite3.Error as e:
-            logger.error(f"Database connection failed: {e}")
-            raise
-
-    def _ensure_tables(self):
-        """Enhanced table creation with NS3 integration"""
-        try:
-            self.cursor.executescript("""
-                CREATE TABLE IF NOT EXISTS NetworkLayers (
-                    layer_id INTEGER PRIMARY KEY,
-                    layer_name VARCHAR(100) NOT NULL,
-                    description TEXT
-                );
-
-                CREATE TABLE IF NOT EXISTS NodeTypes (
-                    node_type_id INTEGER PRIMARY KEY,
-                    node_type_name VARCHAR(100) NOT NULL,
-                    description TEXT
-                );
-
-                CREATE TABLE IF NOT EXISTS Nodes (
-                    node_id VARCHAR(50) PRIMARY KEY,
-                    node_name VARCHAR(100),
-                    layer_id INTEGER,
-                    node_type_id INTEGER,
-                    ip_address VARCHAR(50),
-                    location VARCHAR(200),
-                    status VARCHAR(20),
-                    FOREIGN KEY (layer_id) REFERENCES NetworkLayers(layer_id),
-                    FOREIGN KEY (node_type_id) REFERENCES NodeTypes(node_type_id)
-                );
-
-                CREATE TABLE IF NOT EXISTS Links (
-                    link_id VARCHAR(50) PRIMARY KEY,
-                    source_node_id VARCHAR(50),
-                    target_node_id VARCHAR(50),
-                    destination_node_id VARCHAR(50),                  
-                    link_type VARCHAR(50),
-                    bandwidth_gbps REAL,
-                    total_bandwidth_mbps REAL,
-                    current_bandwidth_util_percent REAL,
-                    latency_ms REAL,
-                    status VARCHAR(20),
-                    FOREIGN KEY (source_node_id) REFERENCES Nodes(node_id),
-                    FOREIGN KEY (target_node_id) REFERENCES Nodes(node_id)
-                );
-
-                CREATE TABLE IF NOT EXISTS Anomalies (
-                    anomaly_id VARCHAR(50) PRIMARY KEY,
-                    node_id VARCHAR(50),
-                    anomaly_type VARCHAR(100),
-                    description TEXT,
-                    severity VARCHAR(20),
-                    timestamp REAL,
-                    status VARCHAR(20),
-                    FOREIGN KEY (node_id) REFERENCES Nodes(node_id)
-                );
-
-                CREATE TABLE IF NOT EXISTS RecoveryTactics (
-                    tactic_id VARCHAR(50) PRIMARY KEY,
-                    tactic_name VARCHAR(100),
-                    description TEXT,
-                    estimated_time_seconds INTEGER,
-                    priority VARCHAR(20)
-                );
-
-                CREATE TABLE IF NOT EXISTS Policies (
-                    policy_id VARCHAR(50) PRIMARY KEY,
-                    policy_name VARCHAR(100),
-                    policy_type VARCHAR(50),
-                    description TEXT
-                );
-
-                CREATE TABLE IF NOT EXISTS TrafficFlows (
-                    flow_id VARCHAR(50) PRIMARY KEY,
-                    source_node_id VARCHAR(50),
-                    destination_node_id VARCHAR(50),
-                    bandwidth_usage_gbps REAL,
-                    flow_type VARCHAR(50),
-                    timestamp REAL,
-                    FOREIGN KEY (source_node_id) REFERENCES Nodes(node_id),
-                    FOREIGN KEY (destination_node_id) REFERENCES Nodes(node_id)
-                );
-
-                CREATE TABLE IF NOT EXISTS UserFeedback (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    anomaly_id VARCHAR(50) NOT NULL,
-                    timestamp INTEGER NOT NULL,
-                    proposed_plan TEXT,
-                    user_decision VARCHAR(50),
-                    user_input TEXT,
-                    classified_intent VARCHAR(100),
-                    extracted_entities TEXT
-                );
-
-                CREATE TABLE IF NOT EXISTS NS3Metrics (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    node_id VARCHAR(50) NOT NULL,
-                    timestamp REAL NOT NULL,
-                    throughput REAL,
-                    latency REAL,
-                    packet_loss REAL,
-                    cpu_usage REAL,
-                    memory_usage REAL,
-                    FOREIGN KEY (node_id) REFERENCES Nodes(node_id)
-                );
-
-                CREATE TABLE IF NOT EXISTS AnomaliesMetrics (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    node_id VARCHAR(50) NOT NULL,
-                    anomaly_id VARCHAR(50),
-                    metric_name VARCHAR(100),
-                    metric_value REAL,
-                    timestamp REAL,
-                    FOREIGN KEY (node_id) REFERENCES Nodes(node_id),
-                    FOREIGN KEY (anomaly_id) REFERENCES Anomalies(anomaly_id)
-                );
-            """)
-            self.conn.commit()
-            logger.info("Database tables ensured with NS3 and TOSCA integration.")
-        except sqlite3.Error as e:
-            logger.error(f"Error ensuring database tables: {e}")
-            self.conn.rollback()
-            raise
-
-    def load_ns3_data_files(self, ns3_data_path="data/ns3_simulation/database/"):
-        """Load NS3 simulation data with duplicate prevention"""
-        try:
-            ns3_files = [
-                "fault_demo_database_schema.sql",
-                "fault_demo_database_nodes.sql", 
-                "fault_demo_database_links.sql",
-                "fault_demo_database_anomalies.sql",
-                "fault_demo_database_recovery_tactics.sql",
-                "fault_demo_database_policies.sql",
-                "fault_demo_database_traffic_flows.sql"
-            ]
-            
-            for file_name in ns3_files:
-                file_path = os.path.join(ns3_data_path, file_name)
-                if os.path.exists(file_path):
-                    logger.info(f"Loading NS3 data from {file_path}")
-                    
-                    if "schema" in file_name.lower():
-                        logger.info(f"Skipping schema file execution: {file_name} - tables already exist")
-                        continue
-                    
-                    table_name = self._get_table_name_from_file(file_name)
-                    if table_name and self._table_has_data(table_name):
-                        logger.info(f"Table {table_name} already has data, skipping {file_name}")
-                        continue
-                    
-                    with open(file_path, 'r') as f:
-                        sql_content = f.read()
-                        sql_content = sql_content.replace('INSERT INTO', 'INSERT OR IGNORE INTO')
-                        self.cursor.executescript(sql_content)
-                    self.conn.commit()
-                    logger.info(f"Successfully loaded {file_name}")
-                else:
-                    logger.warning(f"NS3 data file not found: {file_path}")
-            
-            logger.info("NS3 database loading completed")
-            
-        except Exception as e:
-            logger.error(f"Error loading NS3 data files: {e}")
-            self.conn.rollback()
-
-    def _get_table_name_from_file(self, file_name):
-        """Helper to extract table name from file name"""
-        table_mapping = {
-            "fault_demo_database_nodes.sql": "Nodes",
-            "fault_demo_database_links.sql": "Links",
-            "fault_demo_database_anomalies.sql": "Anomalies", 
-            "fault_demo_database_recovery_tactics.sql": "RecoveryTactics",
-            "fault_demo_database_policies.sql": "Policies",
-            "fault_demo_database_traffic_flows.sql": "TrafficFlows"
+        # 🤖 Gemini AI Configuration
+        self.gemini_api_key = os.getenv('GEMINI_API_KEY', 'YOUR_GEMINI_API_KEY_HERE')
+        self.gemini_model = None
+        self.initialize_gemini()
+        
+        # 🔗 Communication Setup
+        self.context = zmq.asyncio.Context()
+        self.a2a_subscriber = None    # Receive anomaly alerts from Calculation Agent
+        self.mcp_publisher = None     # Send healing responses back
+        self.orchestrator_publisher = None  # Send to Orchestrator
+        
+        # 📊 Communication Metrics
+        self.comm_metrics = {
+            'alerts_received': 0,
+            'healing_plans_generated': 0,
+            'responses_sent': 0,
+            'failed_operations': 0
         }
-        return table_mapping.get(file_name)
+        
+        # 📁 Storage Setup
+        self.healing_plans_dir = Path("healing_plans")
+        self.healing_reports_dir = Path("healing_reports")
+        self.healing_plans_dir.mkdir(exist_ok=True)
+        self.healing_reports_dir.mkdir(exist_ok=True)
+        
+        # 🎯 Nokia Rural Network Knowledge Base
+        self.network_knowledge = self.initialize_network_knowledge()
+        
+        # 🔄 Processing Queue
+        self.processing_queue = asyncio.Queue()
+        self.active_healing_plans = {}
+        
+        # ⏱️ Performance Tracking
+        self.processing_times = []
+        self.success_rates = {}
+        
+        logger.info("✅ Enhanced Healing Agent initialized")
+        logger.info(f"📁 Healing plans directory: {self.healing_plans_dir}")
+        logger.info(f"📊 Reports directory: {self.healing_reports_dir}")
 
-    def _table_has_data(self, table_name):
-        """Check if table already contains data"""
+    def initialize_gemini(self):
+        """Initialize Gemini AI for healing plan generation"""
         try:
-            self.cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-            count = self.cursor.fetchone()[0]
-            return count > 0
-        except:
-            return False
+            if self.gemini_api_key and self.gemini_api_key != 'YOUR_GEMINI_API_KEY_HERE':
+                genai.configure(api_key=self.gemini_api_key)
+                self.gemini_model = genai.GenerativeModal('gemini-2.0-flash',)
+                logger.info("✅ Gemini AI initialized successfully")
+            else:
+                logger.warning("⚠️ Gemini API key not provided, using fallback healing generation")
+                self.gemini_model = None
+        except Exception as e:
+            logger.error(f"❌ Gemini AI initialization failed: {e}")
+            self.gemini_model = None
 
-    def _execute_query(self, query, params=()):
-        try:
-            self.cursor.execute(query, params)
-            self.conn.commit()
-            return self.cursor
-        except sqlite3.Error as e:
-            logger.error(f"Database query failed: {e}")
-            self.conn.rollback()
-            raise
-
-    def load_initial_data(self, data_files):
-        """
-        Loads initial data from SQL data files into the database.
-        It handles reference data and larger datasets.
-        """
-        try:
-            # Insert reference data directly, ensuring it's only added once
-            # This is crucial for tables like NetworkLayers and NodeTypes that might be small
-            # and required before other tables.
-            self.cursor.execute("SELECT COUNT(*) FROM NetworkLayers")
-            if self.cursor.fetchone()[0] == 0:
-                self.cursor.executescript("""
-                    INSERT INTO NetworkLayers VALUES (1, 'Core', 'High-capacity backbone routing and switching');
-                    INSERT INTO NetworkLayers VALUES (2, 'Distribution', 'Regional traffic aggregation and distribution');
-                    INSERT INTO NetworkLayers VALUES (3, 'Access', 'End-user connection points and edge access');
-                """)
-                logger.info("NetworkLayers reference data inserted.")
-
-            self.cursor.execute("SELECT COUNT(*) FROM NodeTypes")
-            if self.cursor.fetchone()[0] == 0:
-                self.cursor.executescript("""
-                    INSERT INTO NodeTypes VALUES (1, 'Core_Router', 'High-performance core network router');
-                    INSERT INTO NodeTypes VALUES (2, 'Distribution_Switch', 'Regional distribution switch');
-                    INSERT INTO NodeTypes VALUES (3, 'Access_Point', 'End-user access point');
-                """)
-                logger.info("NodeTypes reference data inserted.")
-
-            self.cursor.execute("SELECT COUNT(*) FROM Policies")
-            if self.cursor.fetchone()[0] == 0:
-                self.cursor.executescript("""
-                    INSERT INTO Policies VALUES (1, 'FCC_Rural_Broadband_Policy', 'Compliance', 'FCC regulations for rural broadband infrastructure');
-                """)
-                logger.info("Policies reference data inserted.")
-
-            self.cursor.execute("SELECT COUNT(*) FROM RecoveryTactics")
-            if self.cursor.fetchone()[0] == 0:
-                self.cursor.executescript("""
-                    INSERT INTO RecoveryTactics VALUES (1, 'Emergency_Reroute', 'Immediately reroute traffic through alternative paths', 30, 'medium');
-                    INSERT INTO RecoveryTactics VALUES (2, 'Physical_Repair', 'Dispatch repair team for physical fiber restoration', 7200, 'low');
-                    INSERT INTO RecoveryTactics VALUES (3, 'Backup_Power_Switch', 'Switch to backup power source', 120, 'medium');
-                """)
-                self.conn.commit() # Commit after all reference data inserts
-                logger.info("RecoveryTactics reference data inserted.")
-            self.conn.commit() # Commit any pending reference data inserts
-
-            # Load data from individual files (Nodes, Links, Anomalies, TrafficFlows)
-            # Only load if the respective table is empty to avoid duplicate data inserts
-            for data_file in data_files:
-                table_name_map = {
-                    'rag_training_database_nodes.sql': 'Nodes',
-                    'rag_training_database_links.sql': 'Links',
-                    'rag_training_database_anomalies.sql': 'Anomalies',
-                    'rag_training_database_traffic_flows.sql': 'TrafficFlows',
-                    'rag_training_database_policies.sql': 'Policies', # Include these for completeness, though they are also in direct inserts
-                    'rag_training_database_recovery_tactics.sql': 'RecoveryTactics' # Same as above
+    def initialize_network_knowledge(self) -> Dict[str, Any]:
+        """Initialize Nokia Rural Network specific knowledge base"""
+        return {
+            'node_types': {
+                'CORE': {
+                    'description': 'Core network nodes handling main traffic',
+                    'critical_metrics': ['throughput', 'latency', 'packet_loss'],
+                    'common_faults': ['hardware_failure', 'overload', 'routing_issues'],
+                    'healing_strategies': ['load_balancing', 'failover', 'traffic_rerouting']
+                },
+                'DIST': {
+                    'description': 'Distribution nodes connecting core to access',
+                    'critical_metrics': ['power_stability', 'link_utilization', 'signal_strength'],
+                    'common_faults': ['power_issues', 'link_degradation', 'interference'],
+                    'healing_strategies': ['power_optimization', 'backup_path_activation', 'signal_boost']
+                },
+                'ACC': {
+                    'description': 'Access nodes serving end users',
+                    'critical_metrics': ['cpu_usage', 'memory_usage', 'buffer_occupancy'],
+                    'common_faults': ['resource_exhaustion', 'congestion', 'equipment_failure'],
+                    'healing_strategies': ['resource_reallocation', 'load_shedding', 'service_migration']
                 }
+            },
+            'fault_patterns': {
+                'throughput_loss': {
+                    'symptoms': ['low_throughput', 'high_latency', 'packet_loss'],
+                    'causes': ['congestion', 'hardware_failure', 'routing_loops'],
+                    'healing_actions': ['traffic_rerouting', 'load_balancing', 'hardware_replacement']
+                },
+                'power_instability': {
+                    'symptoms': ['voltage_fluctuation', 'power_drops', 'equipment_restarts'],
+                    'causes': ['power_grid_issues', 'battery_degradation', 'power_management_failure'],
+                    'healing_actions': ['backup_power_activation', 'power_optimization', 'equipment_restart']
+                },
+                'equipment_overload': {
+                    'symptoms': ['high_cpu', 'high_memory', 'buffer_overflow'],
+                    'causes': ['traffic_spike', 'resource_leak', 'inadequate_capacity'],
+                    'healing_actions': ['load_shedding', 'resource_reallocation', 'service_migration']
+                }
+            },
+            'healing_templates': {
+                'emergency_rerouting': {
+                    'duration': 30,
+                    'success_rate': 0.9,
+                    'prerequisites': ['backup_path_available', 'routing_table_access']
+                },
+                'power_management': {
+                    'duration': 60,
+                    'success_rate': 0.85,
+                    'prerequisites': ['backup_power_available', 'power_control_access']
+                },
+                'resource_optimization': {
+                    'duration': 120,
+                    'success_rate': 0.8,
+                    'prerequisites': ['resource_monitoring', 'configuration_access']
+                }
+            }
+        }
 
-                # Determine the actual table name from the file path
-                table_name = None
-                for file_path_key, mapped_table_name in table_name_map.items():
-                    if data_file.endswith(file_path_key):
-                        table_name = mapped_table_name
-                        break
-
-                if not table_name:
-                    logger.warning(f"Skipping unknown data file: {data_file}")
-                    continue
-
-                try:
-                    self.cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
-                    if self.cursor.fetchone()[0] == 0:
-                        with open(data_file, 'r') as f:
-                            data_sql = f.read()
-                            self.cursor.executescript(data_sql)
-                            self.conn.commit()
-                            logger.info(f"Data loaded from {data_file} into {table_name}.")
-                    else:
-                        logger.info(f"Table '{table_name}' already contains data. Skipping loading from {data_file}.")
-                except sqlite3.Error as e:
-                    logger.error(f"Error loading data from {data_file} into {table_name}: {e}")
-                    self.conn.rollback()
-
-            logger.info("Initial database data loading process completed.")
-
-        except FileNotFoundError as e:
-            logger.error(f"Error loading initial data: File not found - {e}")
-        except sqlite3.Error as e:
-            logger.error(f"Error executing SQL during data load: {e}")
-            self.conn.rollback()
+    async def initialize_communication(self):
+        """Initialize ZeroMQ communication channels"""
+        try:
+            # 👂 A2A Subscriber - Receive anomaly alerts from Calculation Agent
+            self.a2a_subscriber = self.context.socket(zmq.SUB)
+            self.a2a_subscriber.connect("tcp://127.0.0.1:5555")
+            self.a2a_subscriber.setsockopt_string(zmq.SUBSCRIBE, "")
+            
+            # 📤 MCP Publisher - Send healing responses back to Calculation Agent
+            self.mcp_publisher = self.context.socket(zmq.PUB)
+            self.mcp_publisher.bind("tcp://127.0.0.1:5556")
+            
+            # 📡 Orchestrator Publisher - Send healing plans to Orchestrator
+            self.orchestrator_publisher = self.context.socket(zmq.PUB)
+            self.orchestrator_publisher.bind("tcp://127.0.0.1:5558")
+            
+            logger.info("✅ Enhanced Healing Agent communication initialized")
+            logger.info("👂 A2A Subscriber: Port 5555 (from Calculation Agent)")
+            logger.info("📤 MCP Publisher: Port 5556 (to Calculation Agent)")
+            logger.info("📡 Orchestrator Publisher: Port 5558 (to Orchestrator)")
+            
+            # Give time for socket binding
+            await asyncio.sleep(2)
+            
         except Exception as e:
-            logger.error(f"An unexpected error occurred during data loading: {e}")
-
-    def fetch_all_nodes(self):
-        """Fetches all nodes from the Nodes table."""
-        try:
-            self.cursor.execute("""
-                SELECT n.node_id, n.node_name, nl.layer_name, nt.node_type_name, n.ip_address, n.location, n.status
-                FROM Nodes n
-                JOIN NetworkLayers nl ON n.layer_id = nl.layer_id
-                JOIN NodeTypes nt ON n.node_type_id = nt.node_type_id
-            """)
-            columns = [description[0] for description in self.cursor.description]
-            return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
-        except sqlite3.Error as e:
-            logger.error(f"Error fetching all nodes: {e}")
-            return []
-
-    def fetch_node_by_id(self, node_id):
-        """Fetches a single node by its ID."""
-        try:
-            self.cursor.execute("""
-                SELECT n.node_id, n.node_name, nl.layer_name, nt.node_type_name, n.ip_address, n.location, n.status
-                FROM Nodes n
-                JOIN NetworkLayers nl ON n.layer_id = nl.layer_id
-                JOIN NodeTypes nt ON n.node_type_id = nt.node_type_id
-                WHERE n.node_id = ?
-            """, (node_id,))
-            columns = [description[0] for description in self.cursor.description]
-            row = self.cursor.fetchone()
-            return dict(zip(columns, row)) if row else None
-        except sqlite3.Error as e:
-            logger.error(f"Error fetching node by ID {node_id}: {e}")
-            return None
-
-    def fetch_links_for_node(self, node_id):
-        """Fetches links connected to a given node."""
-        try:
-            self.cursor.execute("""
-                SELECT link_id, source_node_id, target_node_id, link_type, bandwidth_gbps, latency_ms, status
-                FROM Links
-                WHERE source_node_id = ? OR target_node_id = ?
-            """, (node_id, node_id))
-            columns = [description[0] for description in self.cursor.description]
-            return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
-        except sqlite3.Error as e:
-            logger.error(f"Error fetching links for node {node_id}: {e}")
-            return []
-
-    def fetch_anomalies_for_node(self, node_id):
-        """Fetches anomalies associated with a given node."""
-        try:
-            self.cursor.execute("""
-                SELECT anomaly_id, timestamp, node_id, severity, description
-                FROM Anomalies
-                WHERE node_id = ?
-                ORDER BY timestamp DESC
-                LIMIT 5
-            """, (node_id,)) # Limit to last 5 anomalies for brevity in RAG
-            columns = [description[0] for description in self.cursor.description]
-            return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
-        except sqlite3.Error as e:
-            logger.error(f"Error fetching anomalies for node {node_id}: {e}")
-            return []
-
-    def fetch_traffic_flows_for_node(self, node_id):
-        """Fetches traffic flows involving a given node as source or destination."""
-        try:
-            self.cursor.execute("""
-                SELECT flow_id, source_node_id, destination_node_id, bandwidth_usage_gbps, flow_type
-                FROM TrafficFlows
-                WHERE source_node_id = ? OR destination_node_id = ?
-                LIMIT 5
-            """, (node_id, node_id)) # Limit to last 5 flows for brevity
-            columns = [description[0] for description in self.cursor.description]
-            return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
-        except sqlite3.Error as e:
-            logger.error(f"Error fetching traffic flows for node {node_id}: {e}")
-            return []
-
-    def fetch_policies_for_node(self, node_id):
-        """Fetches policies applicable to a given node."""
-        # This is a simplified example; in a real system, policy application might be more complex.
-        # Here, we assume a direct mapping or that all policies are relevant.
-        try:
-            self.cursor.execute("""
-                SELECT policy_id, policy_name, policy_type, description
-                FROM Policies
-                LIMIT 5
-            """) # Fetch some policies, assuming they might be generally relevant or specific to nodes
-            columns = [description[0] for description in self.cursor.description]
-            return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
-        except sqlite3.Error as e:
-            logger.error(f"Error fetching policies for node {node_id}: {e}")
-            return []
-
-    def fetch_recovery_tactics_for_node(self, node_id):
-        """Fetches potential recovery tactics relevant to a given node (simplified)."""
-        try:
-            self.cursor.execute("""
-                SELECT tactic_id, tactic_name, description, estimated_time_seconds, priority
-                FROM RecoveryTactics
-                LIMIT 5
-            """) # Fetch some tactics, assuming general relevance or specific to nodes
-            columns = [description[0] for description in self.cursor.description]
-            return [dict(zip(columns, row)) for row in self.cursor.fetchall()]
-        except sqlite3.Error as e:
-            logger.error(f"Error fetching recovery tactics for node {node_id}: {e}")
-            return []
-
-    def store_user_feedback(self, anomaly_id, proposed_plan, user_decision, user_input, classified_intent, extracted_entities):
-        """
-        Stores user feedback into the UserFeedback table.
-        """
-        try:
-            self.cursor.execute(
-                """
-                INSERT INTO UserFeedback (anomaly_id, timestamp, proposed_plan, user_decision, user_input, classified_intent, extracted_entities)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-                """,
-                (anomaly_id, int(time.time()), json.dumps(proposed_plan), user_decision, user_input, classified_intent, json.dumps(extracted_entities))
-            )
-            self.conn.commit()
-            logger.info(f"User feedback stored for anomaly {anomaly_id}. Decision: {user_decision}")
-        except sqlite3.Error as e:
-            logger.error(f"Error storing user feedback for anomaly {anomaly_id}: {e}")
-            self.conn.rollback()
+            logger.error(f"❌ Communication initialization failed: {e}")
             raise
 
-    def close(self):
-        """Closes the database connection."""
-        if self.conn:
-            self.conn.close()
-            logger.info("Database connection closed.")
-
-# --- HealingAgent Class ---
-class HealingAgent:
-    def __init__(self, context, sub_socket_address_a2a, push_socket_address_mcp):
-        self.context = context
-        self.a2a_subscriber_socket = self.context.socket(zmq.SUB)
-        self.a2a_subscriber_socket.connect(sub_socket_address_a2a)
-        self.a2a_subscriber_socket.setsockopt_string(zmq.SUBSCRIBE, "")
-        self.mcp_push_socket = self.context.socket(zmq.PUSH)
-        self.mcp_push_socket.connect(push_socket_address_mcp)
-        self.llm = self._initialize_llm()
-        self.embedding_model = self._initialize_gpu_embeddings()
-        self.setup_healing_prometheus_metrics()
-        start_http_server(8004)  # Healing agent metrics on port 8004
-        logger.info("📊 Healing Agent Prometheus metrics on port 8004")
-        logger.info("Load pretrained SentenceTransformer: all-MiniLM-L6-v2")
-        self.db_manager = DatabaseManager('rural_network_knowledge_base.db')  # Use consistent DB name
-        self.rag_index = None
-        self.rag_documents = []
-        self._load_rag_data() # Load RAG data from database
-        self.anomaly_queue = asyncio.Queue()
-        self.in_progress_anomalies = {}
-        self.processed_anomaly_ids = set()
-        logger.info("LLM (Gemini) initialized successfully.")
-        logger.info("Healing Agent started. Listening for anomalies...")
-
-    def _initialize_gpu_embeddings(self):
-        """
-        🎯 Initialize SentenceTransformer with GPU acceleration
-        """
+    async def start_with_enhanced_communication(self):
+        """Start Enhanced Healing Agent with full communication setup"""
+        logger.info("🚀 Starting Enhanced Healing Agent...")
+        
+        # Initialize communication
+        await self.initialize_communication()
+        
+        # Start processing tasks
+        self.is_running = True
+        
+        # Create background tasks
+        tasks = [
+            asyncio.create_task(self.listen_for_anomaly_alerts()),
+            asyncio.create_task(self.process_healing_queue()),
+            asyncio.create_task(self.monitor_healing_performance()),
+            asyncio.create_task(self.generate_periodic_reports())
+        ]
+        
+        logger.info("✅ Enhanced Healing Agent started successfully")
+        logger.info("👂 Listening for anomaly alerts...")
+        logger.info("🔄 Processing queue active...")
+        logger.info("📊 Performance monitoring active...")
+        
         try:
-            # Check if CUDA is available for PyTorch (SentenceTransformer uses PyTorch)
-            if torch.cuda.is_available():
-                device = "cuda"
-                gpu_name = torch.cuda.get_device_name(0)
-                logger.info(f"🖥️  GPU detected for embeddings: {gpu_name}")
-                logger.info(f"🚀 SentenceTransformer will use GPU acceleration")
-            else:
-                device = "cpu"
-                logger.warning("⚠️ No CUDA GPU detected for SentenceTransformer, using CPU")
+            # Wait for all tasks
+            await asyncio.gather(*tasks)
+        except KeyboardInterrupt:
+            logger.info("🛑 Shutdown requested")
+        finally:
+            await self.cleanup()
+
+    async def listen_for_anomaly_alerts(self):
+        """Enhanced anomaly alert listener with robust error handling"""
+        logger.info("👂 Starting anomaly alert listener...")
+        
+        while self.is_running:
+            try:
+                # Non-blocking receive with timeout
+                message = await asyncio.wait_for(
+                    self.a2a_subscriber.recv_json(),
+                    timeout=1.0
+                )
+                
+                if message.get('message_type') == 'anomaly_alert':
+                    await self.handle_incoming_anomaly_alert(message)
+                    
+            except asyncio.TimeoutError:
+                continue
+            except Exception as e:
+                logger.error(f"❌ Error receiving anomaly alert: {e}")
+                self.comm_metrics['failed_operations'] += 1
+                await asyncio.sleep(1)
+
+    async def handle_incoming_anomaly_alert(self, alert_message: Dict[str, Any]):
+        """Handle incoming anomaly alert with validation and queuing"""
+        try:
+            # Parse and validate alert
+            anomaly_alert = self.parse_anomaly_alert(alert_message)
             
-            # Initialize with device specification
-            model = SentenceTransformer('all-MiniLM-L6-v2', device=device)
+            if anomaly_alert is None:
+                logger.error("❌ Invalid anomaly alert received")
+                return
+                
+            logger.info(f"🚨 Anomaly alert received: {anomaly_alert.anomaly_id}")
+            logger.info(f"📍 Node: {anomaly_alert.node_id} | Severity: {anomaly_alert.severity}")
+            logger.info(f"📊 Score: {anomaly_alert.anomaly_score:.3f}")
             
-            logger.info(f"✅ SentenceTransformer loaded on: {device}")
+            self.comm_metrics['alerts_received'] += 1
             
-            # If GPU is available, test it with a sample encoding
-            if device == "cuda":
-                try:
-                    test_embedding = model.encode(["GPU test"], show_progress_bar=False)
-                    logger.info("🔥 GPU embedding test successful")
-                except Exception as e:
-                    logger.warning(f"GPU embedding test failed: {e}, falling back to CPU")
-                    model = SentenceTransformer('all-MiniLM-L6-v2', device="cpu")
-            
-            return model
+            # Add to processing queue
+            await self.processing_queue.put(anomaly_alert)
             
         except Exception as e:
-            logger.error(f"Error initializing embeddings: {e}")
-            # Fallback to CPU
-            return SentenceTransformer('all-MiniLM-L6-v2', device="cpu")
+            logger.error(f"❌ Error handling anomaly alert: {e}")
+            self.comm_metrics['failed_operations'] += 1
 
-    def setup_healing_prometheus_metrics(self):
-        """Setup Prometheus metrics for healing agent"""
-        self.healing_plan_generation_counter = Counter(
-            'nokia_healing_plans_generated_total',
-            'Total healing plans generated',
-            ['node_id', 'severity', 'strategy']
-        )
-        
-        self.healing_plan_effectiveness_gauge = Gauge(
-            'nokia_healing_plan_effectiveness_percentage',
-            'Healing plan effectiveness percentage',
-            ['plan_id', 'strategy']
-        )
-        
-        self.gemini_llm_response_time = Histogram(
-            'nokia_gemini_llm_response_time_seconds',
-            'Gemini LLM response time',
-            ['query_type']
-        )
-        
-        self.rag_retrieval_accuracy_gauge = Gauge(
-            'nokia_rag_retrieval_accuracy',
-            'RAG retrieval accuracy score',
-            ['query_type']
-        )
-
-    def _initialize_llm(self):
-        """Initializes the GenerativeModel with the API key."""
-        google_api_key = os.getenv("GOOGLE_API_KEY")
-        if not google_api_key:
-            logger.error("GOOGLE_API_KEY not found in environment variables.")
-            raise ValueError("GOOGLE_API_KEY is not set. Please set it in your .env file or environment.")
-        genai.configure(api_key=google_api_key)
-        # Use a model that supports function calling if needed, e.g., 'gemini-1.5-pro'
-        # For general text generation, 'gemini-pro' is also suitable.
-        return genai.GenerativeModel('gemini-pro')
-
-    @retry(wait=wait_exponential(multiplier=1, min=4, max=10), stop=stop_after_attempt(3),
-           retry=retry_if_exception_type(google.api_core.exceptions.ResourceExhausted))
-    async def _send_llm_request(self, prompt, temperature=0.7, max_output_tokens=1024):
-        """Sends a request to the LLM with retry logic."""
+    def parse_anomaly_alert(self, alert_message: Dict[str, Any]) -> Optional[AnomalyAlert]:
+        """Parse and validate incoming anomaly alert"""
         try:
-            response = self.llm.generate_content(
-                prompt,
-                generation_config=genai.types.GenerationConfig(
-                    temperature=temperature,
-                    max_output_tokens=max_output_tokens,
-                ),
-                safety_settings=[
-                    {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-                    {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-                    {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-                    {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-                ]
+            anomaly_details = alert_message.get('anomaly_details', {})
+            network_context = alert_message.get('network_context', {})
+            
+            return AnomalyAlert(
+                message_id=alert_message.get('message_id', ''),
+                node_id=anomaly_details.get('node_id', ''),
+                anomaly_id=anomaly_details.get('anomaly_id', ''),
+                anomaly_score=anomaly_details.get('anomaly_score', 0.0),
+                severity=anomaly_details.get('severity', 'unknown'),
+                detection_timestamp=anomaly_details.get('detection_timestamp', ''),
+                network_context=network_context,
+                confidence=anomaly_details.get('confidence', 0.95)
             )
-            # Access the text attribute if response.text is not directly available
-            if hasattr(response, 'text'):
-                return response.text
-            elif hasattr(response, 'candidates') and response.candidates:
-                # Assuming the first candidate's content.parts[0].text holds the response
-                return response.candidates[0].content.parts[0].text
-            else:
-                logger.error(f"LLM response did not contain expected text content: {response}")
-                return None
-        except google.api_core.exceptions.ResourceExhausted as e:
-            logger.warning(f"ResourceExhausted error from LLM, retrying: {e}")
-            raise # Re-raise to trigger tenacity retry
+            
         except Exception as e:
-            logger.error(f"Error calling LLM: {e}")
+            logger.error(f"❌ Error parsing anomaly alert: {e}")
             return None
 
-    async def _handle_anomaly(self, anomaly_message):
-        anomaly_id = anomaly_message.get('anomaly_id')
-        if anomaly_id in self.processed_anomaly_ids:
-            logger.info(f"Anomaly {anomaly_id} already processed. Skipping.")
-            return
-
-        if anomaly_id in self.in_progress_anomalies:
-            logger.info(f"Anomaly {anomaly_id} is already being processed. Skipping duplicate.")
-            return
-
-        self.in_progress_anomalies[anomaly_id] = time.time()
-        logger.info(f"Received anomaly: {anomaly_message}")
-
-        node_id = anomaly_message.get('node_id')
-        if not node_id:
-            logger.error(f"Anomaly message {anomaly_id} missing 'node_id'. Cannot process.")
-            del self.in_progress_anomalies[anomaly_id]
-            return
-
-        # Step 1: Contextualization using RAG
-        context_info = self._get_rag_context(node_id, anomaly_message.get('description', ''))
-
-        # Step 2: Anomaly Analysis and Healing Plan Generation with LLM
-        prompt = self._construct_llm_prompt(anomaly_message, context_info)
-        start_time = time.time()
-
-        healing_plan_json = await self._send_llm_request(prompt)
-
-        if healing_plan_json:
+    async def process_healing_queue(self):
+        """Process healing requests from the queue"""
+        logger.info("🔄 Starting healing queue processor...")
+        
+        while self.is_running:
             try:
-                healing_plan = json.loads(healing_plan_json)
-                logger.info(f"Generated Healing Plan for {anomaly_id}: {healing_plan}")
-
-                # 🆕 ADD: Update Prometheus metrics after successful plan generation
-                try:
-                    node_id = anomaly_message.get('node_id', 'unknown')
-                    severity = anomaly_message.get('severity', 'medium')
-                    strategy = "ai_generated"  # or extract from healing_plan if available
+                # Get anomaly alert from queue (with timeout)
+                anomaly_alert = await asyncio.wait_for(
+                    self.processing_queue.get(),
+                    timeout=5.0
+                )
+                
+                # Process the healing request
+                start_time = time.time()
+                healing_plan = await self.generate_comprehensive_healing_plan(anomaly_alert)
+                processing_time = time.time() - start_time
+                
+                if healing_plan:
+                    # Send healing plan responses
+                    await self.send_healing_responses(anomaly_alert, healing_plan)
                     
-                    # Increment healing plan counter
-                    self.healing_plan_generation_counter.labels(
-                        node_id=node_id,
-                        severity=severity,
-                        strategy=strategy
-                    ).inc()
+                    # Track performance
+                    self.processing_times.append(processing_time)
+                    self.comm_metrics['healing_plans_generated'] += 1
                     
-                    # Record LLM response time
-                    llm_response_time = time.time() - start_time
-                    self.gemini_llm_response_time.labels(
-                        query_type="healing_plan_generation"
-                    ).observe(llm_response_time)
-                    
-                    logger.info(f"📊 Healing metrics updated for {node_id}")
-                    
-                except Exception as e:
-                    logger.error(f"Error updating healing metrics: {e}")
-
-                # --- NEW: User Confirmation Step ---
-                print(f"\n--- PROPOSED HEALING PLAN for Anomaly {anomaly_id} ---")
-                print(json.dumps(healing_plan, indent=2))
-                user_response = input("Do you approve this plan? (yes/no/other input for feedback): ").strip().lower()
-
-                if user_response == 'yes':
-                    logger.info(f"User approved healing plan for anomaly {anomaly_id}. Sending to MCP.")
-                    await self._send_to_mcp(healing_plan)
-                    self.db_manager.store_user_feedback(anomaly_id, healing_plan, 'approved', 'User approved the plan.', None, None)
-                    self.processed_anomaly_ids.add(anomaly_id) # Mark as processed
+                    logger.info(f"✅ Healing plan generated in {processing_time:.2f}s: {healing_plan.plan_id}")
                 else:
-                    logger.info(f"User did not approve healing plan for anomaly {anomaly_id}. Processing feedback.")
-                    await self._process_user_feedback(anomaly_message, healing_plan, user_response)
-                    # We don't mark as processed if not approved, allowing for re-evaluation or manual intervention
-                    # depending on the desired workflow after feedback.
-                    # self.processed_anomaly_ids.add(anomaly_id) # Only uncomment if disapproved also means 'processed'
-                # --- END NEW: User Confirmation Step ---
-
-            except json.JSONDecodeError as e:
-                logger.error(f"Failed to parse healing plan JSON for {anomaly_id}: {e}. Raw response: {healing_plan_json[:500]}...")
+                    logger.error(f"❌ Failed to generate healing plan for {anomaly_alert.anomaly_id}")
+                    self.comm_metrics['failed_operations'] += 1
+                
+                # Mark task as done
+                self.processing_queue.task_done()
+                
+            except asyncio.TimeoutError:
+                continue
             except Exception as e:
-                logger.error(f"An unexpected error occurred while processing healing plan for {anomaly_id}: {e}")
-        else:
-            logger.warning(f"No healing plan generated for anomaly {anomaly_id}.")
+                logger.error(f"❌ Error processing healing queue: {e}")
+                self.comm_metrics['failed_operations'] += 1
 
-        del self.in_progress_anomalies[anomaly_id]
-
-    async def _process_user_feedback(self, original_anomaly_message, proposed_healing_plan, user_raw_input):
-        """
-        Processes user feedback, classifying its intent and extracting entities,
-        then stores it in the database. This is the 'intent translation' part for user feedback.
-        """
-        logger.info(f"User feedback received: '{user_raw_input}' for anomaly {original_anomaly_message.get('anomaly_id')}")
-
-        classified_intent = "unclassified"
-        extracted_entities = {}
-        user_decision = "disapproved" # Default if not 'yes'
-
-        if user_raw_input.lower() == 'no':
-            user_decision = "disapproved"
-            classified_intent = "explicit_disapproval"
-            logger.info("User explicitly disapproved the plan.")
-        else:
-            user_decision = "other_input"
-            # Use LLM to classify intent and extract entities from user's free-form input
-            feedback_prompt = (
-                f"You are an AI assistant tasked with understanding user feedback on proposed network healing plans. "
-                f"Given the user's input, classify its primary intent and extract any relevant entities.\n\n"
-                f"Possible Intents:\n"
-                f"- 'correction': User suggests a specific change or alternative action.\n"
-                f"- 'request_more_info': User wants more details or context.\n"
-                f"- 'new_information': User provides new data relevant to the anomaly.\n"
-                f"- 'general_disapproval': User disapproves without a specific alternative.\n"
-                f"- 'other': Any other type of input.\n\n"
-                f"Extract Entities (if applicable): node_id, link_id, alternative_tactic, desired_info, etc.\n\n"
-                f"Original Anomaly: {original_anomaly_message.get('description')}\n"
-                f"Proposed Plan: {json.dumps(proposed_healing_plan)}\n"
-                f"User Input: '{user_raw_input}'\n\n"
-                f"Provide your response as a JSON object with 'intent' and 'entities' (an object).\n"
-                f"Example: {{ \"intent\": \"correction\", \"entities\": {{ \"alternative_tactic\": \"restart_device_firmware\" }} }}"
-            )
-
-            feedback_classification_json = await self._send_llm_request(feedback_prompt)
-            if feedback_classification_json:
-                try:
-                    feedback_data = json.loads(feedback_classification_json)
-                    classified_intent = feedback_data.get('intent', 'unclassified')
-                    extracted_entities = feedback_data.get('entities', {})
-                    logger.info(f"User feedback classified as intent: '{classified_intent}' with entities: {extracted_entities}")
-                except json.JSONDecodeError as e:
-                    logger.error(f"Failed to parse feedback classification JSON: {e}. Raw response: {feedback_classification_json[:500]}")
-                    classified_intent = "parse_error"
-                    extracted_entities = {"raw_json_error": feedback_classification_json}
-            else:
-                logger.warning("LLM failed to classify user feedback.")
-                classified_intent = "llm_failure"
-
-        # Store the feedback in the database
+    async def generate_comprehensive_healing_plan(self, anomaly_alert: AnomalyAlert) -> Optional[HealingPlan]:
+        """Generate comprehensive healing plan using AI and knowledge base"""
         try:
-            self.db_manager.store_user_feedback(
-                original_anomaly_message.get('anomaly_id'),
-                proposed_healing_plan,
-                user_decision,
-                user_raw_input,
-                classified_intent,
-                extracted_entities
+            logger.info(f"💡 Generating healing plan for {anomaly_alert.anomaly_id}...")
+            
+            # Analyze network context
+            network_analysis = self.analyze_network_context(anomaly_alert)
+            
+            # Generate healing actions using multiple strategies
+            healing_actions = []
+            
+            # 1. Knowledge-based healing actions
+            kb_actions = self.generate_knowledge_based_actions(anomaly_alert, network_analysis)
+            healing_actions.extend(kb_actions)
+            
+            # 2. AI-generated healing actions (if Gemini available)
+            if self.gemini_model:
+                ai_actions = await self.generate_ai_healing_actions(anomaly_alert, network_analysis)
+                healing_actions.extend(ai_actions)
+            
+            # 3. Template-based healing actions
+            template_actions = self.generate_template_based_actions(anomaly_alert, network_analysis)
+            healing_actions.extend(template_actions)
+            
+            # Remove duplicates and prioritize
+            healing_actions = self.prioritize_and_deduplicate_actions(healing_actions)
+            
+            if not healing_actions:
+                logger.error(f"❌ No healing actions generated for {anomaly_alert.anomaly_id}")
+                return None
+            
+            # Create comprehensive healing plan
+            healing_plan = HealingPlan(
+                plan_id=f"HEAL_{anomaly_alert.node_id}_{int(time.time())}",
+                anomaly_id=anomaly_alert.anomaly_id,
+                node_id=anomaly_alert.node_id,
+                severity=anomaly_alert.severity,
+                healing_actions=healing_actions,
+                total_estimated_duration=sum(action.estimated_duration for action in healing_actions),
+                confidence=self.calculate_plan_confidence(healing_actions),
+                requires_approval=anomaly_alert.severity in ['critical', 'high'],
+                generated_timestamp=datetime.now().isoformat()
             )
+            
+            # Save healing plan
+            await self.save_healing_plan(healing_plan)
+            
+            # Track active healing plan
+            self.active_healing_plans[healing_plan.plan_id] = healing_plan
+            
+            logger.info(f"✅ Comprehensive healing plan generated: {healing_plan.plan_id}")
+            logger.info(f"🔧 Actions: {len(healing_actions)} | Duration: {healing_plan.total_estimated_duration}s")
+            logger.info(f"📊 Confidence: {healing_plan.confidence:.2f}")
+            
+            return healing_plan
+            
         except Exception as e:
-            logger.error(f"Failed to store user feedback: {e}")
+            logger.error(f"❌ Error generating healing plan: {e}")
+            return None
 
-    async def _send_to_mcp(self, healing_plan):
-        """Sends the healing plan to the MCP via ZeroMQ PUSH socket."""
+    def analyze_network_context(self, anomaly_alert: AnomalyAlert) -> Dict[str, Any]:
+        """Analyze network context from anomaly alert"""
         try:
-            message = json.dumps(healing_plan).encode('utf-8')
-            await self.mcp_push_socket.send(message)
-            logger.info(f"Healing plan sent to MCP for anomaly: {healing_plan.get('anomaly_id')}")
+            network_context = anomaly_alert.network_context
+            
+            # Determine node type
+            node_type = network_context.get('node_type', 'GENERIC')
+            fault_pattern = network_context.get('fault_pattern', 'unknown')
+            
+            # Get node-specific knowledge
+            node_knowledge = self.network_knowledge['node_types'].get(node_type, {})
+            fault_knowledge = self.network_knowledge['fault_patterns'].get(fault_pattern, {})
+            
+            analysis = {
+                'node_type': node_type,
+                'fault_pattern': fault_pattern,
+                'critical_metrics': node_knowledge.get('critical_metrics', []),
+                'common_faults': node_knowledge.get('common_faults', []),
+                'healing_strategies': node_knowledge.get('healing_strategies', []),
+                'fault_symptoms': fault_knowledge.get('symptoms', []),
+                'fault_causes': fault_knowledge.get('causes', []),
+                'recommended_actions': fault_knowledge.get('healing_actions', []),
+                'severity_level': anomaly_alert.severity,
+                'anomaly_score': anomaly_alert.anomaly_score,
+                'spatial_context': network_context.get('spatial_context', {})
+            }
+            
+            return analysis
+            
         except Exception as e:
-            logger.error(f"Failed to send healing plan to MCP: {e}")
+            logger.error(f"❌ Error analyzing network context: {e}")
+            return {}
 
-    def _get_rag_context(self, node_id, anomaly_description):
+    def generate_knowledge_based_actions(self, anomaly_alert: AnomalyAlert, analysis: Dict[str, Any]) -> List[HealingAction]:
+        """Generate healing actions based on knowledge base"""
+        actions = []
+        
+        try:
+            node_type = analysis.get('node_type', 'GENERIC')
+            fault_pattern = analysis.get('fault_pattern', 'unknown')
+            
+            # Generate actions based on node type and fault pattern
+            if node_type == 'CORE' and fault_pattern == 'throughput_loss':
+                actions.extend([
+                    HealingAction(
+                        action_id=f"KB_REROUTE_{int(time.time())}",
+                        action_type="traffic_rerouting",
+                        priority=1,
+                        description="Reroute traffic through backup paths",
+                        parameters={
+                            'backup_path_priority': 'high',
+                            'reroute_percentage': 50,
+                            'monitoring_interval': 30
+                        },
+                        estimated_duration=30,
+                        success_probability=0.9
+                    ),
+                    HealingAction(
+                        action_id=f"KB_BALANCE_{int(time.time())}",
+                        action_type="load_balancing",
+                        priority=2,
+                        description="Implement dynamic load balancing",
+                        parameters={
+                            'load_threshold': 0.8,
+                            'balancing_algorithm': 'weighted_round_robin',
+                            'monitoring_window': 60
+                        },
+                        estimated_duration=60,
+                        success_probability=0.85
+                    )
+                ])
+                
+            elif node_type == 'DIST' and fault_pattern == 'power_instability':
+                actions.extend([
+                    HealingAction(
+                        action_id=f"KB_POWER_{int(time.time())}",
+                        action_type="power_optimization",
+                        priority=1,
+                        description="Activate backup power and optimize power consumption",
+                        parameters={
+                            'backup_power_activation': True,
+                            'power_saving_mode': 'emergency',
+                            'voltage_regulation': 'strict'
+                        },
+                        estimated_duration=60,
+                        success_probability=0.8
+                    ),
+                    HealingAction(
+                        action_id=f"KB_SIGNAL_{int(time.time())}",
+                        action_type="signal_boost",
+                        priority=2,
+                        description="Boost signal strength to maintain connectivity",
+                        parameters={
+                            'power_increase_db': 3,
+                            'antenna_optimization': True,
+                            'interference_mitigation': True
+                        },
+                        estimated_duration=45,
+                        success_probability=0.75
+                    )
+                ])
+                
+            elif node_type == 'ACC' and fault_pattern == 'equipment_overload':
+                actions.extend([
+                    HealingAction(
+                        action_id=f"KB_RESOURCE_{int(time.time())}",
+                        action_type="resource_reallocation",
+                        priority=1,
+                        description="Reallocate system resources dynamically",
+                        parameters={
+                            'cpu_limit_increase': 20,
+                            'memory_cleanup': True,
+                            'buffer_size_optimization': True
+                        },
+                        estimated_duration=90,
+                        success_probability=0.8
+                    ),
+                    HealingAction(
+                        action_id=f"KB_SHED_{int(time.time())}",
+                        action_type="load_shedding",
+                        priority=2,
+                        description="Implement selective load shedding",
+                        parameters={
+                            'priority_preservation': 'high_priority_users',
+                            'shedding_percentage': 25,
+                            'recovery_criteria': 'resource_availability'
+                        },
+                        estimated_duration=30,
+                        success_probability=0.9
+                    )
+                ])
+            
+            logger.info(f"✅ Generated {len(actions)} knowledge-based actions")
+            
+        except Exception as e:
+            logger.error(f"❌ Error generating knowledge-based actions: {e}")
+        
+        return actions
+
+    async def generate_ai_healing_actions(self, anomaly_alert: AnomalyAlert, analysis: Dict[str, Any]) -> List[HealingAction]:
+        """Generate AI-powered healing actions using Gemini"""
+        actions = []
+        
+        if not self.gemini_model:
+            logger.warning("⚠️ Gemini AI not available, skipping AI-generated actions")
+            return actions
+        
+        try:
+            # Prepare prompt for Gemini
+            prompt = self.build_gemini_prompt(anomaly_alert, analysis)
+            
+            # Generate response from Gemini
+            response = await self.gemini_model.generate_content_async(prompt)
+            
+            # Parse Gemini response into healing actions
+            ai_actions = self.parse_gemini_response(response.text)
+            actions.extend(ai_actions)
+            
+            logger.info(f"✅ Generated {len(ai_actions)} AI-powered actions")
+            
+        except Exception as e:
+            logger.error(f"❌ Error generating AI healing actions: {e}")
+        
+        return actions
+
+    def build_gemini_prompt(self, anomaly_alert: AnomalyAlert, analysis: Dict[str, Any]) -> str:
+        """Build detailed prompt for Gemini AI"""
+        prompt = f"""
+        You are an expert Nokia rural network healing specialist. Generate specific healing actions for the following network anomaly:
+
+        ANOMALY DETAILS:
+        - Node ID: {anomaly_alert.node_id}
+        - Anomaly Score: {anomaly_alert.anomaly_score:.3f}
+        - Severity: {anomaly_alert.severity}
+        - Node Type: {analysis.get('node_type', 'unknown')}
+        - Fault Pattern: {analysis.get('fault_pattern', 'unknown')}
+
+        NETWORK CONTEXT:
+        - Critical Metrics: {', '.join(analysis.get('critical_metrics', []))}
+        - Detected Symptoms: {', '.join(analysis.get('fault_symptoms', []))}
+        - Possible Causes: {', '.join(analysis.get('fault_causes', []))}
+
+        Please generate 2-3 specific healing actions in JSON format with the following structure:
+        {{
+            "actions": [
+                {{
+                    "action_type": "specific_action_name",
+                    "description": "detailed description of the action",
+                    "priority": 1-3,
+                    "parameters": {{"key": "value"}},
+                    "estimated_duration": seconds,
+                    "success_probability": 0.0-1.0
+                }}
+            ]
+        }}
+
+        Focus on Nokia rural network best practices and ensure actions are:
+        1. Technically feasible for rural network infrastructure
+        2. Prioritized by impact and urgency
+        3. Include specific parameters for implementation
+        4. Realistic duration and success probability estimates
         """
-        Retrieves relevant context from the RAG knowledge base using embeddings.
-        """
-        if not self.rag_index or not self.rag_documents:
-            logger.warning("RAG index not built or documents empty. Providing limited context.")
-            # Fallback to basic node info if RAG is not available
-            node_info = self.db_manager.fetch_node_by_id(node_id)
-            if node_info:
-                return f"Basic node information for {node_id}: {node_info}"
-            return "No additional context available."
-
-        query_text = f"Information about node {node_id} and anomaly: {anomaly_description}"
-        query_embedding = self.embedding_model.encode([query_text]).astype('float32')
-
-        D, I = self.rag_index.search(query_embedding, k=3) # Search for top 3 relevant documents
-
-        context_docs = [self.rag_documents[i] for i in I[0] if i != -1]
-
-        if context_docs:
-            logger.info(f"Retrieved {len(context_docs)} RAG context documents for node {node_id}.")
-            return "\n\n".join(context_docs)
-        else:
-            logger.info(f"No specific RAG context found for node {node_id}. Fetching basic node info.")
-            node_info = self.db_manager.fetch_node_by_id(node_id)
-            if node_info:
-                return f"Basic node information for {node_id}: {node_info}"
-            return "No relevant context found in RAG."
-
-    def _construct_llm_prompt(self, anomaly_message, context_info):
-        """
-        Constructs a detailed prompt for the LLM based on the anomaly and RAG context.
-        """
-        prompt = (
-            f"You are an AI-powered network healing agent. Your task is to analyze network anomalies "
-            f"and propose a detailed healing plan in JSON format. "
-            f"The goal is to restore network health with minimal disruption.\n\n"
-            f"Anomaly Details:\n"
-            f"Anomaly ID: {anomaly_message.get('anomaly_id')}\n"
-            f"Timestamp: {anomaly_message.get('timestamp')}\n"
-            f"Node ID: {anomaly_message.get('node_id')}\n"
-            f"Severity: {anomaly_message.get('severity')}\n"
-            f"Description: {anomaly_message.get('description')}\n\n"
-            f"Relevant Network Context (RAG):\n"
-            f"{context_info}\n\n"
-            f"Based on the anomaly details and network context, generate a healing plan. "
-            f"The plan should be a JSON object with the following structure:\n"
-            f"{{\n"
-            f"  \"anomaly_id\": \"<anomaly_id_from_message>\",\n"
-            f"  \"healing_actions\": [\n"
-            f"    {{\n"
-            f"      \"action_id\": \"<unique_action_id>\",\n"
-            f"      \"type\": \"<type_of_action>\", (e.g., 'reroute_traffic', 'restart_device', 'escalate_human', 'apply_policy')\n"
-            f"      \"target_node_id\": \"<node_id_affected_by_action>\", (Optional, if action is node-specific)\n"
-            f"      \"target_link_id\": \"<link_id_affected_by_action>\", (Optional, if action is link-specific)\n"
-            f"      \"description\": \"<brief_description_of_action>\",\n"
-            f"      \"priority\": \"<priority>\", (e.g., 'high', 'medium', 'low')\n"
-            f"      \"estimated_time_seconds\": <estimated_time_in_seconds> (integer),\n"
-            f"      \"reasoning\": \"<brief_explanation_for_this_action>\"\n"
-            f"    }}\n"
-            f"    // ... potentially more actions\n"
-            f"  ],\n"
-            f"  \"overall_strategy\": \"<brief_summary_of_the_overall_healing_approach>\"\n"
-            f"}}\n\n"
-            f"Ensure the JSON is valid and directly parsable. Do not include any additional text or formatting outside the JSON object."
-        )
+        
         return prompt
 
-    def _load_rag_data(self):
-        """
-        Loads knowledge base data from the database and builds the RAG index.
-        """
-        logger.info("Rebuilding RAG index from database...")
-
-        # --- MODIFIED CALL TO LOAD INITIAL DATA ---
-        # schema_file is no longer needed as schema is created in _ensure_tables
-        data_files = [
-            'rag_training_database_nodes.sql',
-            'rag_training_database_links.sql',
-            'rag_training_database_anomalies.sql',
-            'rag_training_database_traffic_flows.sql',
-            'rag_training_database_policies.sql',
-            'rag_training_database_recovery_tactics.sql'
-        ]
+    def parse_gemini_response(self, response_text: str) -> List[HealingAction]:
+        """Parse Gemini AI response into healing actions"""
+        actions = []
+        
         try:
-            self.db_manager.load_initial_data(data_files)
+            # Extract JSON from response
+            import re
+            json_match = re.search(r'\{.*\}', response_text, re.DOTALL)
+            
+            if json_match:
+                response_data = json.loads(json_match.group())
+                action_data_list = response_data.get('actions', [])
+                
+                for i, action_data in enumerate(action_data_list):
+                    action = HealingAction(
+                        action_id=f"AI_{int(time.time())}_{i}",
+                        action_type=action_data.get('action_type', 'ai_action'),
+                        priority=action_data.get('priority', 3),
+                        description=action_data.get('description', 'AI-generated action'),
+                        parameters=action_data.get('parameters', {}),
+                        estimated_duration=action_data.get('estimated_duration', 60),
+                        success_probability=action_data.get('success_probability', 0.7)
+                    )
+                    actions.append(action)
+            
         except Exception as e:
-            logger.error(f"Failed to load initial database data: {e}")
-            # Decide if you want to stop or continue with an empty RAG
-            # For now, we continue and the RAG will be empty, leading to the warning below.
-        # --- END OF MODIFIED CALL ---
+            logger.error(f"❌ Error parsing Gemini response: {e}")
+        
+        return actions
 
+    def generate_template_based_actions(self, anomaly_alert: AnomalyAlert, analysis: Dict[str, Any]) -> List[HealingAction]:
+        """Generate healing actions based on predefined templates"""
+        actions = []
+        
         try:
-            nodes = self.db_manager.fetch_all_nodes()
-            if not nodes:
-                logger.warning("No knowledge entries found in the database to build RAG index. RAG will not be effective without knowledge.")
-                return
+            severity = anomaly_alert.severity
+            node_type = analysis.get('node_type', 'GENERIC')
+            
+            # Emergency actions for critical severity
+            if severity == 'critical':
+                actions.append(HealingAction(
+                    action_id=f"EMERG_RESTART_{int(time.time())}",
+                    action_type="emergency_restart",
+                    priority=1,
+                    description="Emergency service restart to restore functionality",
+                    parameters={
+                        'restart_type': 'graceful',
+                        'backup_configuration': True,
+                        'health_check_interval': 10
+                    },
+                    estimated_duration=120,
+                    success_probability=0.95
+                ))
+            
+            # Monitoring enhancement (universal)
+            actions.append(HealingAction(
+                action_id=f"MONITOR_{int(time.time())}",
+                action_type="enhanced_monitoring",
+                priority=3,
+                description="Increase monitoring frequency and alerting sensitivity",
+                parameters={
+                    'monitoring_interval': 5,
+                    'alert_threshold_reduction': 0.1,
+                    'detailed_logging': True
+                },
+                estimated_duration=30,
+                success_probability=0.99
+            ))
+            
+            logger.info(f"✅ Generated {len(actions)} template-based actions")
+            
+        except Exception as e:
+            logger.error(f"❌ Error generating template-based actions: {e}")
+        
+        return actions
 
-            self.rag_documents = []
-            for node in nodes:
-                node_id = node['node_id']
-                # Construct a comprehensive document for each node
-                doc_parts = [
-                    f"Node ID: {node['node_id']}",
-                    f"Node Name: {node['node_name']}",
-                    f"Layer: {node['layer_name']}",
-                    f"Type: {node['node_type_name']}",
-                    f"IP Address: {node['ip_address']}",
-                    f"Location: {node['location']}",
-                    f"Status: {node['status']}"
+    def prioritize_and_deduplicate_actions(self, actions: List[HealingAction]) -> List[HealingAction]:
+        """Prioritize and remove duplicate healing actions"""
+        try:
+            # Remove duplicates based on action_type
+            unique_actions = {}
+            for action in actions:
+                key = action.action_type
+                if key not in unique_actions or action.priority < unique_actions[key].priority:
+                    unique_actions[key] = action
+            
+            # Sort by priority (lower number = higher priority)
+            sorted_actions = sorted(unique_actions.values(), key=lambda x: x.priority)
+            
+            # Limit to maximum 5 actions to avoid complexity
+            final_actions = sorted_actions[:5]
+            
+            logger.info(f"✅ Prioritized and deduplicated: {len(final_actions)} final actions")
+            
+            return final_actions
+            
+        except Exception as e:
+            logger.error(f"❌ Error prioritizing actions: {e}")
+            return actions
+
+    def calculate_plan_confidence(self, actions: List[HealingAction]) -> float:
+        """Calculate overall confidence for the healing plan"""
+        if not actions:
+            return 0.0
+        
+        # Weighted average based on priority (higher priority actions have more weight)
+        total_weight = 0
+        weighted_confidence = 0
+        
+        for action in actions:
+            weight = (4 - action.priority)  # Priority 1 = weight 3, Priority 3 = weight 1
+            weighted_confidence += action.success_probability * weight
+            total_weight += weight
+        
+        return weighted_confidence / total_weight if total_weight > 0 else 0.0
+
+    async def save_healing_plan(self, healing_plan: HealingPlan):
+        """Save healing plan to disk"""
+        try:
+            plan_file = self.healing_plans_dir / f"{healing_plan.plan_id}.json"
+            
+            plan_data = {
+                'plan_id': healing_plan.plan_id,
+                'anomaly_id': healing_plan.anomaly_id,
+                'node_id': healing_plan.node_id,
+                'severity': healing_plan.severity,
+                'generated_timestamp': healing_plan.generated_timestamp,
+                'total_estimated_duration': healing_plan.total_estimated_duration,
+                'confidence': healing_plan.confidence,
+                'requires_approval': healing_plan.requires_approval,
+                'healing_actions': [
+                    {
+                        'action_id': action.action_id,
+                        'action_type': action.action_type,
+                        'priority': action.priority,
+                        'description': action.description,
+                        'parameters': action.parameters,
+                        'estimated_duration': action.estimated_duration,
+                        'success_probability': action.success_probability
+                    }
+                    for action in healing_plan.healing_actions
                 ]
-
-                # Fetch and add related information (links, anomalies, policies, traffic flows, recovery tactics)
-                links = self.db_manager.fetch_links_for_node(node_id)
-                if links:
-                    doc_parts.append("Connected Links:")
-                    for link in links:
-                        doc_parts.append(f"  - Link ID: {link['link_id']}, From: {link['source_node_id']}, To: {link['target_node_id']}, Type: {link['link_type']}, Bandwidth: {link['bandwidth_gbps']} Gbps, Latency: {link['latency_ms']} ms, Status: {link['status']}")
-
-                anomalies = self.db_manager.fetch_anomalies_for_node(node_id)
-                if anomalies:
-                    doc_parts.append("Known Anomalies:")
-                    for anomaly in anomalies:
-                        doc_parts.append(f"  - Anomaly ID: {anomaly['anomaly_id']}, Timestamp: {anomaly['timestamp']}, Severity: {anomaly['severity']}, Description: {anomaly['description']}")
-
-                traffic_flows = self.db_manager.fetch_traffic_flows_for_node(node_id)
-                if traffic_flows:
-                    doc_parts.append("Associated Traffic Flows:")
-                    for flow in traffic_flows:
-                        doc_parts.append(f"  - Flow ID: {flow['flow_id']}, Source: {flow['source_node_id']}, Destination: {flow['destination_node_id']}, Bandwidth: {flow['bandwidth_usage_gbps']} Gbps, Type: {flow['flow_type']}")
-
-                policies = self.db_manager.fetch_policies_for_node(node_id)
-                if policies:
-                    doc_parts.append("Applicable Policies:")
-                    for policy in policies:
-                        doc_parts.append(f"  - Policy ID: {policy['policy_id']}, Name: {policy['policy_name']}, Type: {policy['policy_type']}, Description: {policy['description']}")
-
-                recovery_tactics = self.db_manager.fetch_recovery_tactics_for_node(node_id)
-                if recovery_tactics:
-                    doc_parts.append("Potential Recovery Tactics:")
-                    for tactic in recovery_tactics:
-                        doc_parts.append(f"  - Tactic ID: {tactic['tactic_id']}, Name: {tactic['tactic_name']}, Description: {tactic['description']}, Est. Time: {tactic['estimated_time_seconds']}s, Priority: {tactic['priority']}")
-
-                self.rag_documents.append(" ".join(doc_parts))
-
-            # Generate embeddings and build FAISS index
-            if self.rag_documents:
-                logger.info(f"Generating embeddings for {len(self.rag_documents)} RAG documents...")
-                document_embeddings = self.embedding_model.encode(self.rag_documents, show_progress_bar=True)
-                self.rag_index = faiss.IndexFlatL2(document_embeddings.shape[1])
-                self.rag_index.add(np.array(document_embeddings).astype('float32'))
-                logger.info("RAG index built successfully.")
-            else:
-                logger.warning("No documents to build RAG index after fetching from database.")
-
+            }
+            
+            with open(plan_file, 'w') as f:
+                json.dump(plan_data, f, indent=2, default=str)
+            
+            logger.info(f"💾 Healing plan saved: {plan_file}")
+            
         except Exception as e:
-            logger.error(f"Error rebuilding RAG index: {e}")
+            logger.error(f"❌ Error saving healing plan: {e}")
 
-    async def start(self):
-        """Starts the anomaly listening and processing loop."""
-        logger.info("Starting Healing Agent anomaly listener...")
-        await self._listen_for_anomalies()
+    async def send_healing_responses(self, anomaly_alert: AnomalyAlert, healing_plan: HealingPlan):
+        """Send healing responses to multiple destinations"""
+        try:
+            # 1. Send response back to Calculation Agent
+            await self.send_healing_response_to_calculation_agent(anomaly_alert, healing_plan)
+            
+            # 2. Send healing plan to Orchestrator
+            await self.send_healing_plan_to_orchestrator(healing_plan)
+            
+            self.comm_metrics['responses_sent'] += 1
+            
+        except Exception as e:
+            logger.error(f"❌ Error sending healing responses: {e}")
+            self.comm_metrics['failed_operations'] += 1
 
-    async def _listen_for_anomalies(self):
-        """Listens for anomaly messages from the A2A channel."""
-        while True:
+    async def send_healing_response_to_calculation_agent(self, anomaly_alert: AnomalyAlert, healing_plan: HealingPlan):
+        """Send healing response back to Calculation Agent"""
+        try:
+            response = {
+                'message_type': 'healing_response',
+                'timestamp': datetime.now().isoformat(),
+                'source_agent': 'healing_agent',
+                'target_agent': 'calculation_agent',
+                'original_message_id': anomaly_alert.message_id,
+                'anomaly_id': healing_plan.anomaly_id,
+                'healing_plan': {
+                    'plan_id': healing_plan.plan_id,
+                    'node_id': healing_plan.node_id,
+                    'severity': healing_plan.severity,
+                    'confidence': healing_plan.confidence,
+                    'total_estimated_duration': healing_plan.total_estimated_duration,
+                    'healing_actions': [
+                        {
+                            'action_type': action.action_type,
+                            'description': action.description,
+                            'priority': action.priority,
+                            'estimated_duration': action.estimated_duration
+                        }
+                        for action in healing_plan.healing_actions
+                    ]
+                },
+                'response_metadata': {
+                    'processing_time_seconds': time.time() - time.mktime(datetime.fromisoformat(anomaly_alert.detection_timestamp).timetuple()),
+                    'confidence': healing_plan.confidence,
+                    'requires_approval': healing_plan.requires_approval
+                }
+            }
+            
+            await self.mcp_publisher.send_json(response)
+            logger.info(f"📤 Healing response sent to Calculation Agent: {healing_plan.plan_id}")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to send healing response to Calculation Agent: {e}")
+
+    async def send_healing_plan_to_orchestrator(self, healing_plan: HealingPlan):
+        """Send healing plan to Orchestrator for execution"""
+        try:
+            orchestrator_message = {
+                'message_type': 'healing_plan',
+                'timestamp': datetime.now().isoformat(),
+                'source_agent': 'healing_agent',
+                'target_agent': 'orchestration_agent',
+                'healing_plan_data': {
+                    'plan_id': healing_plan.plan_id,
+                    'anomaly_id': healing_plan.anomaly_id,
+                    'node_id': healing_plan.node_id,
+                    'severity': healing_plan.severity,
+                    'generated_timestamp': healing_plan.generated_timestamp,
+                    'confidence': healing_plan.confidence,
+                    'requires_approval': healing_plan.requires_approval,
+                    'total_estimated_duration': healing_plan.total_estimated_duration,
+                    'healing_actions': [
+                        {
+                            'action_id': action.action_id,
+                            'action_type': action.action_type,
+                            'priority': action.priority,
+                            'description': action.description,
+                            'parameters': action.parameters,
+                            'estimated_duration': action.estimated_duration,
+                            'success_probability': action.success_probability
+                        }
+                        for action in healing_plan.healing_actions
+                    ]
+                },
+                'execution_metadata': {
+                    'auto_execute': not healing_plan.requires_approval,
+                    'priority_level': healing_plan.severity,
+                    'estimated_completion_time': (
+                        datetime.now().timestamp() + healing_plan.total_estimated_duration
+                    )
+                }
+            }
+            
+            await self.orchestrator_publisher.send_json(orchestrator_message)
+            logger.info(f"📡 Healing plan sent to Orchestrator: {healing_plan.plan_id}")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to send healing plan to Orchestrator: {e}")
+
+    async def monitor_healing_performance(self):
+        """Monitor healing agent performance metrics"""
+        logger.info("📊 Starting performance monitoring...")
+        
+        while self.is_running:
             try:
-                message = await self.a2a_subscriber_socket.recv_json()
-                logger.debug(f"Raw anomaly message received: {message}")
-                if 'anomaly_id' in message:
-                    await self._handle_anomaly(message)
-                else:
-                    logger.warning(f"Received message without 'anomaly_id': {message}")
-            except zmq.Again:
-                # No message received yet, continue listening
-                await asyncio.sleep(0.1) # Small delay to prevent busy-waiting
+                await asyncio.sleep(60)  # Check every minute
+                
+                # Calculate performance metrics
+                avg_processing_time = np.mean(self.processing_times) if self.processing_times else 0
+                success_rate = len([t for t in self.processing_times if t < 300]) / len(self.processing_times) if self.processing_times else 0
+                
+                # Log performance summary
+                logger.info(f"📊 Performance Summary:")
+                logger.info(f"   • Alerts Received: {self.comm_metrics['alerts_received']}")
+                logger.info(f"   • Healing Plans Generated: {self.comm_metrics['healing_plans_generated']}")
+                logger.info(f"   • Responses Sent: {self.comm_metrics['responses_sent']}")
+                logger.info(f"   • Failed Operations: {self.comm_metrics['failed_operations']}")
+                logger.info(f"   • Avg Processing Time: {avg_processing_time:.2f}s")
+                logger.info(f"   • Success Rate: {success_rate:.2%}")
+                logger.info(f"   • Active Healing Plans: {len(self.active_healing_plans)}")
+                
+                # Clean up old processing times (keep last 100)
+                if len(self.processing_times) > 100:
+                    self.processing_times = self.processing_times[-100:]
+                
             except Exception as e:
-                logger.exception(f"Error receiving anomaly message: {e}")
+                logger.error(f"❌ Error in performance monitoring: {e}")
 
+    async def generate_periodic_reports(self):
+        """Generate periodic healing reports"""
+        logger.info("📋 Starting periodic report generation...")
+        
+        while self.is_running:
+            try:
+                await asyncio.sleep(3600)  # Generate report every hour
+                
+                report = {
+                    'report_timestamp': datetime.now().isoformat(),
+                    'reporting_period': '1 hour',
+                    'communication_metrics': self.comm_metrics.copy(),
+                    'performance_metrics': {
+                        'avg_processing_time': np.mean(self.processing_times) if self.processing_times else 0,
+                        'total_processing_attempts': len(self.processing_times),
+                        'active_healing_plans': len(self.active_healing_plans),
+                        'success_rate': (
+                            (self.comm_metrics['healing_plans_generated'] / 
+                             max(self.comm_metrics['alerts_received'], 1)) * 100
+                        )
+                    },
+                    'active_healing_plans': [
+                        {
+                            'plan_id': plan.plan_id,
+                            'node_id': plan.node_id,
+                            'severity': plan.severity,
+                            'generated_timestamp': plan.generated_timestamp
+                        }
+                        for plan in self.active_healing_plans.values()
+                    ]
+                }
+                
+                # Save report
+                report_file = self.healing_reports_dir / f"healing_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                with open(report_file, 'w') as f:
+                    json.dump(report, f, indent=2, default=str)
+                
+                logger.info(f"📋 Periodic report generated: {report_file}")
+                
+            except Exception as e:
+                logger.error(f"❌ Error generating periodic report: {e}")
 
-# --- Main execution for standalone testing ---
+    async def cleanup(self):
+        """Cleanup resources and connections"""
+        try:
+            self.is_running = False
+            
+            # Close ZeroMQ sockets
+            if self.a2a_subscriber:
+                self.a2a_subscriber.close()
+            if self.mcp_publisher:
+                self.mcp_publisher.close()
+            if self.orchestrator_publisher:
+                self.orchestrator_publisher.close()
+            if self.context:
+                self.context.term()
+            
+            # Generate final report
+            final_report = {
+                'shutdown_timestamp': datetime.now().isoformat(),
+                'final_metrics': self.comm_metrics.copy(),
+                'total_active_plans': len(self.active_healing_plans),
+                'avg_processing_time': np.mean(self.processing_times) if self.processing_times else 0
+            }
+            
+            final_report_file = self.healing_reports_dir / f"final_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+            with open(final_report_file, 'w') as f:
+                json.dump(final_report, f, indent=2, default=str)
+            
+            logger.info("✅ Enhanced Healing Agent cleanup completed")
+            logger.info(f"📋 Final report saved: {final_report_file}")
+            
+        except Exception as e:
+            logger.error(f"❌ Cleanup error: {e}")
+
+# Main execution function
 async def main():
-    # Define socket addresses
-    test_sub_address_a2a = "tcp://127.0.0.1:5556"
-    test_push_address_mcp = "tcp://127.0.0.1:5558"
-
-    # Create a ZeroMQ context and Healing Agent instance
-    # For standalone testing, create a local context
-    local_context = zmq.asyncio.Context()
-    healing_agent = HealingAgent(
-        context=local_context, # Pass local context for standalone
-        sub_socket_address_a2a=test_sub_address_a2a,
-        push_socket_address_mcp=test_push_address_mcp
+    """Main execution function for Enhanced Healing Agent"""
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
-
+    
+    # Initialize agent
+    agent = EnhancedHealingAgent()
+    
     try:
-        await healing_agent.start() # Await the start method
+        print('🏥 Enhanced Healing Agent starting...')
+        print('👂 Listening for anomaly alerts from Calculation Agent')
+        print('📤 Ready to send healing plans to Orchestrator')
+        print('🤖 AI-powered healing with Nokia rural network knowledge')
+        print(f'📁 Healing plans: {agent.healing_plans_dir}')
+        print(f'📊 Reports: {agent.healing_reports_dir}')
+        
+        await agent.start_with_enhanced_communication()
+        
     except KeyboardInterrupt:
-        logger.info("\nHealing Agent standalone test stopped by user (KeyboardInterrupt).")
+        logger.info("🛑 Shutdown requested")
     except Exception as e:
-        logger.exception(f"An unhandled exception occurred during Healing Agent runtime: {e}")
+        logger.error(f"❌ Fatal error: {e}")
     finally:
-        # Ensure cleanup ZeroMQ context and sockets on shutdown
-        if healing_agent.a2a_subscriber_socket:
-            healing_agent.a2a_subscriber_socket.close()
-            logger.info("A2A subscriber socket closed.")
-        if healing_agent.mcp_push_socket:
-            healing_agent.mcp_push_socket.close()
-            logger.info("MCP push socket closed.")
-        if healing_agent.db_manager:
-            healing_agent.db_manager.close()
-        if local_context:
-            local_context.term()
-            logger.info("ZeroMQ context terminated.")
-        sys.exit(0)
-
+        await agent.cleanup()
 
 if __name__ == '__main__':
     asyncio.run(main())
