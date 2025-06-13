@@ -1,0 +1,294 @@
+{
+  "ns3_integration_metadata": {
+    "plan_id": "NS3_HEAL_node_01_1749768352_1749768352",
+    "healing_plan_id": "HEAL_node_01_1749768352",
+    "target_node": "node_01",
+    "generated_timestamp": "2025-06-13T04:15:52.753984",
+    "orchestrator_version": "Nokia-Rural-Network-v2.1.0",
+    "ns3_compatibility_version": "3.35+",
+    "export_format": "healing_commands_json"
+  },
+  "simulation_configuration": {
+    "simulation_time": 300.0,
+    "animation_enabled": true,
+    "pcap_enabled": true,
+    "tracing_enabled": true,
+    "mobility_model": "ns3::ConstantPositionMobilityModel",
+    "propagation_model": "ns3::FriisPropagationLossModel",
+    "error_model": "ns3::YansErrorRateModel",
+    "healing_scenario": {
+      "target_node": "node_01",
+      "fault_injection_time": 60.0,
+      "healing_start_time": 120.0,
+      "validation_duration": 180.0
+    }
+  },
+  "network_topology_changes": [
+    {
+      "command": "modify_routing_table",
+      "target_node": "node_01",
+      "action": "activate_backup_path",
+      "parameters": {
+        "backup_path_priority": 1,
+        "reroute_percentage": 50,
+        "convergence_time": 30.0
+      },
+      "validation": {
+        "expected_throughput_recovery": 0.8,
+        "max_convergence_time": 60.0
+      }
+    },
+    {
+      "command": "enable_load_balancing",
+      "target_node": "node_01",
+      "action": "distribute_traffic",
+      "parameters": {
+        "balancing_algorithm": "weighted_round_robin",
+        "load_threshold": 0.8,
+        "rebalancing_interval": 10.0
+      },
+      "validation": {
+        "load_distribution_variance": 0.2,
+        "throughput_improvement": 0.3
+      }
+    }
+  ],
+  "routing_updates": [
+    {
+      "protocol": "OLSR",
+      "target_node": "node_01",
+      "update_type": "emergency_reroute",
+      "parameters": {
+        "hello_interval": 0.5,
+        "tc_interval": 1.0,
+        "neighbor_hold_time": 10.0,
+        "mpr_coverage": 2,
+        "link_quality_threshold": 0.3
+      },
+      "affected_neighbors": [
+        "node_02",
+        "node_03",
+        "node_04",
+        "node_05",
+        "node_06",
+        "node_07"
+      ],
+      "convergence_timeout": 30.0
+    },
+    {
+      "protocol": "STATIC",
+      "target_node": "node_01",
+      "update_type": "backup_route_injection",
+      "parameters": {
+        "backup_routes": [
+          {
+            "destination": "0.0.0.0/0",
+            "next_hop": "backup_core_node",
+            "metric": 150,
+            "interface": "backup_interface"
+          }
+        ],
+        "route_priority": 10,
+        "metric_adjustment": 100
+      }
+    },
+    {
+      "protocol": "OLSR",
+      "target_node": "node_01",
+      "update_type": "emergency_reroute",
+      "parameters": {
+        "hello_interval": 0.5,
+        "tc_interval": 1.0,
+        "neighbor_hold_time": 10.0,
+        "mpr_coverage": 2,
+        "link_quality_threshold": 0.3
+      },
+      "affected_neighbors": [
+        "node_02",
+        "node_03",
+        "node_04",
+        "node_05",
+        "node_06",
+        "node_07"
+      ],
+      "convergence_timeout": 30.0
+    },
+    {
+      "protocol": "STATIC",
+      "target_node": "node_01",
+      "update_type": "backup_route_injection",
+      "parameters": {
+        "backup_routes": [
+          {
+            "destination": "0.0.0.0/0",
+            "next_hop": "backup_core_node",
+            "metric": 150,
+            "interface": "backup_interface"
+          }
+        ],
+        "route_priority": 10,
+        "metric_adjustment": 100
+      }
+    }
+  ],
+  "configuration_changes": [
+    {
+      "config_type": "service_management",
+      "target_node": "node_01",
+      "parameters": {
+        "restart_sequence": "graceful_with_state_preservation",
+        "service_migration_enabled": true,
+        "connection_preservation": true,
+        "restart_timeout": 60.0,
+        "health_check_frequency": 5.0
+      },
+      "validation": {
+        "service_downtime": "max_30_seconds",
+        "connection_recovery_rate": 0.95
+      }
+    }
+  ],
+  "simulation_parameters": {
+    "simulation_time": 600.0,
+    "healing_validation_interval": 10.0,
+    "fault_injection": {
+      "enabled": true,
+      "fault_type": "progressive_degradation",
+      "severity_level": "critical",
+      "injection_time": 60.0,
+      "duration": 120.0
+    },
+    "metrics_collection": {
+      "throughput": {
+        "enabled": true,
+        "interval": 1.0
+      },
+      "latency": {
+        "enabled": true,
+        "interval": 1.0
+      },
+      "packet_loss": {
+        "enabled": true,
+        "interval": 1.0
+      },
+      "energy_consumption": {
+        "enabled": true,
+        "interval": 5.0
+      },
+      "routing_convergence": {
+        "enabled": true,
+        "interval": 1.0
+      },
+      "link_quality": {
+        "enabled": true,
+        "interval": 2.0
+      }
+    },
+    "output_configuration": {
+      "animation_file": "healing_animation_node_01.xml",
+      "pcap_enabled": true,
+      "ascii_trace_enabled": true,
+      "flow_monitor_enabled": true,
+      "results_directory": "results/healing_HEAL_node_01_1749768352"
+    }
+  },
+  "validation_criteria": {
+    "healing_success_criteria": {
+      "throughput_recovery_threshold": 0.8,
+      "latency_improvement_threshold": 0.5,
+      "packet_loss_reduction_threshold": 0.7,
+      "energy_efficiency_maintenance": 0.9,
+      "convergence_time_limit": 60.0
+    },
+    "performance_benchmarks": {
+      "baseline_throughput": "measured_before_fault",
+      "acceptable_latency_increase": 0.2,
+      "maximum_packet_loss": 0.05,
+      "energy_consumption_limit": 1.1
+    },
+    "validation_timeline": {
+      "immediate_response": "0-30s",
+      "short_term_recovery": "30s-2min",
+      "long_term_stability": "2min-5min",
+      "performance_verification": "5min-10min"
+    },
+    "failure_conditions": {
+      "healing_timeout": 300.0,
+      "consecutive_failures": 3,
+      "performance_degradation_threshold": 0.5,
+      "network_partition_detection": true
+    }
+  },
+  "original_healing_plan": {
+    "plan_id": "HEAL_node_01_1749768352",
+    "anomaly_id": "ANOM_node_01_1749768352",
+    "node_id": "node_01",
+    "severity": "critical",
+    "generated_timestamp": "2025-06-13T04:15:52.747652",
+    "confidence": 0.9155555555555556,
+    "requires_approval": true,
+    "total_estimated_duration": 240,
+    "healing_actions": [
+      {
+        "action_id": "KB_REROUTE_1749768352",
+        "action_type": "traffic_rerouting",
+        "priority": 1,
+        "description": "Reroute traffic through backup paths",
+        "parameters": {
+          "backup_path_priority": "high",
+          "reroute_percentage": 50,
+          "monitoring_interval": 30
+        },
+        "estimated_duration": 30,
+        "success_probability": 0.9
+      },
+      {
+        "action_id": "EMERG_RESTART_1749768352",
+        "action_type": "emergency_restart",
+        "priority": 1,
+        "description": "Emergency service restart to restore functionality",
+        "parameters": {
+          "restart_type": "graceful",
+          "backup_configuration": true,
+          "health_check_interval": 10
+        },
+        "estimated_duration": 120,
+        "success_probability": 0.95
+      },
+      {
+        "action_id": "KB_BALANCE_1749768352",
+        "action_type": "load_balancing",
+        "priority": 2,
+        "description": "Implement dynamic load balancing",
+        "parameters": {
+          "load_threshold": 0.8,
+          "balancing_algorithm": "weighted_round_robin",
+          "monitoring_window": 60
+        },
+        "estimated_duration": 60,
+        "success_probability": 0.85
+      },
+      {
+        "action_id": "MONITOR_1749768352",
+        "action_type": "enhanced_monitoring",
+        "priority": 3,
+        "description": "Increase monitoring frequency and alerting sensitivity",
+        "parameters": {
+          "monitoring_interval": 5,
+          "alert_threshold_reduction": 0.1,
+          "detailed_logging": true
+        },
+        "estimated_duration": 30,
+        "success_probability": 0.99
+      }
+    ]
+  },
+  "ns3_execution_commands": [
+    "# Load healing plan in NS3 simulation:",
+    "# 1. Copy ns3_healing_plan_node_01_20250613_041552.json to ns3/src/rural-network/examples/",
+    "# 2. Run: ./waf --run 'rural-network-healing --healing-plan=ns3_healing_plan_node_01_20250613_041552.json'",
+    "# 3. Monitor results in ns3/results/healing_validation/",
+    "# 4. Generate reports: python3 scripts/analyze_healing_results.py",
+    "# 5. Visualization: python3 scripts/visualize_healing_performance.py"
+  ]
+}
