@@ -1,0 +1,523 @@
+{
+  "monitor_metadata": {
+    "generated_timestamp": "2025-06-29T14:08:27.110950",
+    "source_agent": "enhanced_monitor_agent",
+    "target_agent": "calculation_agent",
+    "data_type": "static_simulation",
+    "data_version": "2.0"
+  },
+  "lstm_training_data": {
+    "network_metrics": {
+      "node_0": {
+        "timestamp": 110.0,
+        "node_id": "0",
+        "throughput": 15.0,
+        "latency": 10.0,
+        "packet_loss": 0.01,
+        "cpu_usage": 0.3,
+        "memory_usage": 0.4,
+        "data_source": "static_metrics_file"
+      },
+      "node_1": {
+        "timestamp": 110.0,
+        "node_id": "1",
+        "throughput": 16.5,
+        "latency": 12.0,
+        "packet_loss": 0.015,
+        "cpu_usage": 0.35,
+        "memory_usage": 0.44,
+        "data_source": "static_metrics_file"
+      },
+      "node_2": {
+        "timestamp": 110.0,
+        "node_id": "2",
+        "throughput": 18.0,
+        "latency": 14.0,
+        "packet_loss": 0.02,
+        "cpu_usage": 0.4,
+        "memory_usage": 0.48,
+        "data_source": "static_metrics_file"
+      },
+      "node_3": {
+        "timestamp": 110.0,
+        "node_id": "3",
+        "throughput": 19.5,
+        "latency": 16.0,
+        "packet_loss": 0.01,
+        "cpu_usage": 0.45,
+        "memory_usage": 0.52,
+        "data_source": "static_metrics_file"
+      },
+      "node_4": {
+        "timestamp": 110.0,
+        "node_id": "4",
+        "throughput": 21.0,
+        "latency": 18.0,
+        "packet_loss": 0.015,
+        "cpu_usage": 0.5,
+        "memory_usage": 0.56,
+        "data_source": "static_metrics_file"
+      },
+      "node_5": {
+        "timestamp": 110.0,
+        "node_id": "5",
+        "throughput": 22.5,
+        "latency": 10.0,
+        "packet_loss": 0.02,
+        "cpu_usage": 0.55,
+        "memory_usage": 0.6,
+        "data_source": "static_metrics_file"
+      },
+      "node_6": {
+        "timestamp": 110.0,
+        "node_id": "6",
+        "throughput": 24.0,
+        "latency": 12.0,
+        "packet_loss": 0.01,
+        "cpu_usage": 0.6,
+        "memory_usage": 0.64,
+        "data_source": "static_metrics_file"
+      },
+      "node_7": {
+        "timestamp": 110.0,
+        "node_id": "7",
+        "throughput": 25.5,
+        "latency": 14.0,
+        "packet_loss": 0.015,
+        "cpu_usage": 0.3,
+        "memory_usage": 0.68,
+        "data_source": "static_metrics_file"
+      },
+      "node_8": {
+        "timestamp": 110.0,
+        "node_id": "8",
+        "throughput": 27.0,
+        "latency": 16.0,
+        "packet_loss": 0.02,
+        "cpu_usage": 0.35,
+        "memory_usage": 0.4,
+        "data_source": "static_metrics_file"
+      },
+      "node_9": {
+        "timestamp": 110.0,
+        "node_id": "9",
+        "throughput": 28.5,
+        "latency": 18.0,
+        "packet_loss": 0.01,
+        "cpu_usage": 0.4,
+        "memory_usage": 0.44,
+        "data_source": "static_metrics_file"
+      },
+      "node_10": {
+        "timestamp": 110.0,
+        "node_id": "10",
+        "throughput": 15.0,
+        "latency": 10.0,
+        "packet_loss": 0.015,
+        "cpu_usage": 0.45,
+        "memory_usage": 0.48,
+        "data_source": "static_metrics_file"
+      },
+      "node_11": {
+        "timestamp": 110.0,
+        "node_id": "11",
+        "throughput": 16.5,
+        "latency": 12.0,
+        "packet_loss": 0.02,
+        "cpu_usage": 0.5,
+        "memory_usage": 0.52,
+        "data_source": "static_metrics_file"
+      },
+      "node_12": {
+        "timestamp": 110.0,
+        "node_id": "12",
+        "throughput": 18.0,
+        "latency": 14.0,
+        "packet_loss": 0.01,
+        "cpu_usage": 0.55,
+        "memory_usage": 0.56,
+        "data_source": "static_metrics_file"
+      },
+      "node_13": {
+        "timestamp": 110.0,
+        "node_id": "13",
+        "throughput": 19.5,
+        "latency": 16.0,
+        "packet_loss": 0.015,
+        "cpu_usage": 0.6,
+        "memory_usage": 0.6,
+        "data_source": "static_metrics_file"
+      },
+      "node_14": {
+        "timestamp": 110.0,
+        "node_id": "14",
+        "throughput": 21.0,
+        "latency": 18.0,
+        "packet_loss": 0.02,
+        "cpu_usage": 0.3,
+        "memory_usage": 0.64,
+        "data_source": "static_metrics_file"
+      },
+      "node_15": {
+        "timestamp": 110.0,
+        "node_id": "15",
+        "throughput": 22.5,
+        "latency": 10.0,
+        "packet_loss": 0.01,
+        "cpu_usage": 0.35,
+        "memory_usage": 0.68,
+        "data_source": "static_metrics_file"
+      },
+      "node_16": {
+        "timestamp": 110.0,
+        "node_id": "16",
+        "throughput": 24.0,
+        "latency": 12.0,
+        "packet_loss": 0.015,
+        "cpu_usage": 0.4,
+        "memory_usage": 0.4,
+        "data_source": "static_metrics_file"
+      },
+      "node_17": {
+        "timestamp": 110.0,
+        "node_id": "17",
+        "throughput": 25.5,
+        "latency": 14.0,
+        "packet_loss": 0.02,
+        "cpu_usage": 0.45,
+        "memory_usage": 0.44,
+        "data_source": "static_metrics_file"
+      },
+      "node_18": {
+        "timestamp": 110.0,
+        "node_id": "18",
+        "throughput": 27.0,
+        "latency": 16.0,
+        "packet_loss": 0.01,
+        "cpu_usage": 0.5,
+        "memory_usage": 0.48,
+        "data_source": "static_metrics_file"
+      },
+      "node_19": {
+        "timestamp": 110.0,
+        "node_id": "19",
+        "throughput": 28.5,
+        "latency": 18.0,
+        "packet_loss": 0.015,
+        "cpu_usage": 0.55,
+        "memory_usage": 0.52,
+        "data_source": "static_metrics_file"
+      },
+      "node_20": {
+        "timestamp": 110.0,
+        "node_id": "20",
+        "throughput": 15.0,
+        "latency": 10.0,
+        "packet_loss": 0.02,
+        "cpu_usage": 0.6,
+        "memory_usage": 0.56,
+        "data_source": "static_metrics_file"
+      },
+      "node_21": {
+        "timestamp": 110.0,
+        "node_id": "21",
+        "throughput": 16.5,
+        "latency": 12.0,
+        "packet_loss": 0.01,
+        "cpu_usage": 0.3,
+        "memory_usage": 0.6,
+        "data_source": "static_metrics_file"
+      },
+      "node_22": {
+        "timestamp": 110.0,
+        "node_id": "22",
+        "throughput": 18.0,
+        "latency": 14.0,
+        "packet_loss": 0.015,
+        "cpu_usage": 0.35,
+        "memory_usage": 0.64,
+        "data_source": "static_metrics_file"
+      },
+      "node_23": {
+        "timestamp": 110.0,
+        "node_id": "23",
+        "throughput": 19.5,
+        "latency": 16.0,
+        "packet_loss": 0.02,
+        "cpu_usage": 0.4,
+        "memory_usage": 0.68,
+        "data_source": "static_metrics_file"
+      },
+      "node_24": {
+        "timestamp": 110.0,
+        "node_id": "24",
+        "throughput": 21.0,
+        "latency": 18.0,
+        "packet_loss": 0.01,
+        "cpu_usage": 0.45,
+        "memory_usage": 0.4,
+        "data_source": "static_metrics_file"
+      },
+      "node_25": {
+        "timestamp": 110.0,
+        "node_id": "25",
+        "throughput": 22.5,
+        "latency": 10.0,
+        "packet_loss": 0.015,
+        "cpu_usage": 0.5,
+        "memory_usage": 0.44,
+        "data_source": "static_metrics_file"
+      },
+      "node_26": {
+        "timestamp": 110.0,
+        "node_id": "26",
+        "throughput": 24.0,
+        "latency": 12.0,
+        "packet_loss": 0.02,
+        "cpu_usage": 0.55,
+        "memory_usage": 0.48,
+        "data_source": "static_metrics_file"
+      },
+      "node_27": {
+        "timestamp": 110.0,
+        "node_id": "27",
+        "throughput": 25.5,
+        "latency": 14.0,
+        "packet_loss": 0.01,
+        "cpu_usage": 0.6,
+        "memory_usage": 0.52,
+        "data_source": "static_metrics_file"
+      },
+      "node_28": {
+        "timestamp": 110.0,
+        "node_id": "28",
+        "throughput": 27.0,
+        "latency": 16.0,
+        "packet_loss": 0.015,
+        "cpu_usage": 0.3,
+        "memory_usage": 0.56,
+        "data_source": "static_metrics_file"
+      },
+      "node_29": {
+        "timestamp": 110.0,
+        "node_id": "29",
+        "throughput": 28.5,
+        "latency": 18.0,
+        "packet_loss": 0.02,
+        "cpu_usage": 0.35,
+        "memory_usage": 0.6,
+        "data_source": "static_metrics_file"
+      },
+      "node_30": {
+        "timestamp": 110.0,
+        "node_id": "30",
+        "throughput": 15.0,
+        "latency": 10.0,
+        "packet_loss": 0.01,
+        "cpu_usage": 0.4,
+        "memory_usage": 0.64,
+        "data_source": "static_metrics_file"
+      },
+      "node_31": {
+        "timestamp": 110.0,
+        "node_id": "31",
+        "throughput": 16.5,
+        "latency": 12.0,
+        "packet_loss": 0.015,
+        "cpu_usage": 0.45,
+        "memory_usage": 0.68,
+        "data_source": "static_metrics_file"
+      },
+      "node_32": {
+        "timestamp": 110.0,
+        "node_id": "32",
+        "throughput": 18.0,
+        "latency": 14.0,
+        "packet_loss": 0.02,
+        "cpu_usage": 0.5,
+        "memory_usage": 0.4,
+        "data_source": "static_metrics_file"
+      },
+      "node_33": {
+        "timestamp": 110.0,
+        "node_id": "33",
+        "throughput": 19.5,
+        "latency": 16.0,
+        "packet_loss": 0.01,
+        "cpu_usage": 0.55,
+        "memory_usage": 0.44,
+        "data_source": "static_metrics_file"
+      },
+      "node_34": {
+        "timestamp": 110.0,
+        "node_id": "34",
+        "throughput": 21.0,
+        "latency": 18.0,
+        "packet_loss": 0.015,
+        "cpu_usage": 0.6,
+        "memory_usage": 0.48,
+        "data_source": "static_metrics_file"
+      },
+      "node_35": {
+        "timestamp": 110.0,
+        "node_id": "35",
+        "throughput": 22.5,
+        "latency": 10.0,
+        "packet_loss": 0.02,
+        "cpu_usage": 0.3,
+        "memory_usage": 0.52,
+        "data_source": "static_metrics_file"
+      },
+      "node_36": {
+        "timestamp": 110.0,
+        "node_id": "36",
+        "throughput": 24.0,
+        "latency": 12.0,
+        "packet_loss": 0.01,
+        "cpu_usage": 0.35,
+        "memory_usage": 0.56,
+        "data_source": "static_metrics_file"
+      },
+      "node_37": {
+        "timestamp": 110.0,
+        "node_id": "37",
+        "throughput": 25.5,
+        "latency": 14.0,
+        "packet_loss": 0.015,
+        "cpu_usage": 0.4,
+        "memory_usage": 0.6,
+        "data_source": "static_metrics_file"
+      },
+      "node_38": {
+        "timestamp": 110.0,
+        "node_id": "38",
+        "throughput": 27.0,
+        "latency": 16.0,
+        "packet_loss": 0.02,
+        "cpu_usage": 0.45,
+        "memory_usage": 0.64,
+        "data_source": "static_metrics_file"
+      },
+      "node_39": {
+        "timestamp": 110.0,
+        "node_id": "39",
+        "throughput": 28.5,
+        "latency": 18.0,
+        "packet_loss": 0.01,
+        "cpu_usage": 0.5,
+        "memory_usage": 0.68,
+        "data_source": "static_metrics_file"
+      },
+      "node_40": {
+        "timestamp": 110.0,
+        "node_id": "40",
+        "throughput": 15.0,
+        "latency": 10.0,
+        "packet_loss": 0.015,
+        "cpu_usage": 0.55,
+        "memory_usage": 0.4,
+        "data_source": "static_metrics_file"
+      },
+      "node_41": {
+        "timestamp": 110.0,
+        "node_id": "41",
+        "throughput": 16.5,
+        "latency": 12.0,
+        "packet_loss": 0.02,
+        "cpu_usage": 0.6,
+        "memory_usage": 0.44,
+        "data_source": "static_metrics_file"
+      },
+      "node_42": {
+        "timestamp": 110.0,
+        "node_id": "42",
+        "throughput": 18.0,
+        "latency": 14.0,
+        "packet_loss": 0.01,
+        "cpu_usage": 0.3,
+        "memory_usage": 0.48,
+        "data_source": "static_metrics_file"
+      },
+      "node_43": {
+        "timestamp": 110.0,
+        "node_id": "43",
+        "throughput": 19.5,
+        "latency": 16.0,
+        "packet_loss": 0.015,
+        "cpu_usage": 0.35,
+        "memory_usage": 0.52,
+        "data_source": "static_metrics_file"
+      },
+      "node_44": {
+        "timestamp": 110.0,
+        "node_id": "44",
+        "throughput": 21.0,
+        "latency": 18.0,
+        "packet_loss": 0.02,
+        "cpu_usage": 0.4,
+        "memory_usage": 0.56,
+        "data_source": "static_metrics_file"
+      },
+      "node_45": {
+        "timestamp": 110.0,
+        "node_id": "45",
+        "throughput": 22.5,
+        "latency": 10.0,
+        "packet_loss": 0.01,
+        "cpu_usage": 0.45,
+        "memory_usage": 0.6,
+        "data_source": "static_metrics_file"
+      },
+      "node_46": {
+        "timestamp": 110.0,
+        "node_id": "46",
+        "throughput": 24.0,
+        "latency": 12.0,
+        "packet_loss": 0.015,
+        "cpu_usage": 0.5,
+        "memory_usage": 0.64,
+        "data_source": "static_metrics_file"
+      },
+      "node_47": {
+        "timestamp": 110.0,
+        "node_id": "47",
+        "throughput": 25.5,
+        "latency": 14.0,
+        "packet_loss": 0.02,
+        "cpu_usage": 0.55,
+        "memory_usage": 0.68,
+        "data_source": "static_metrics_file"
+      },
+      "node_48": {
+        "timestamp": 110.0,
+        "node_id": "48",
+        "throughput": 27.0,
+        "latency": 16.0,
+        "packet_loss": 0.01,
+        "cpu_usage": 0.6,
+        "memory_usage": 0.4,
+        "data_source": "static_metrics_file"
+      },
+      "node_49": {
+        "timestamp": 110.0,
+        "node_id": "49",
+        "throughput": 28.5,
+        "latency": 18.0,
+        "packet_loss": 0.015,
+        "cpu_usage": 0.3,
+        "memory_usage": 0.44,
+        "data_source": "static_metrics_file"
+      }
+    },
+    "fault_events": [],
+    "ready_for_training": true,
+    "data_source": "static_files"
+  },
+  "file_processing_info": {
+    "files_processed": [
+      "network_metrics",
+      "fault_events"
+    ],
+    "processing_timestamp": "2025-06-29T14:08:27.110960"
+  }
+}

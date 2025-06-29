@@ -1,0 +1,128 @@
+# inputs.yaml - xOpera input parameters for Nokia Rural Network Healing
+
+# Deployment Metadata
+deployment_metadata:
+  deployment_name: "nokia_rural_network_healing"
+  deployment_version: "2.1.0"
+  orchestrator: "xopera"
+  target_environment: "rural_network_testbed"
+  deployment_timestamp: ""  # Will be set at runtime
+
+# Network Configuration
+network_config:
+  network_type: "rural_mesh"
+  topology: "hierarchical"
+  total_nodes: 50
+  core_nodes: 5
+  distribution_nodes: 15
+  access_nodes: 30
+  simulation_duration: 600  # seconds
+
+# Node Configuration (will be overridden by TOSCA)
+node_id: ""  # Set at runtime by orchestration agent
+plan_id: ""  # Set at runtime by orchestration agent
+action_type: "generic"  # Set at runtime based on healing plan
+severity: "medium"  # Set at runtime based on fault severity
+
+# Healing Action Parameters
+healing_parameters:
+  power_optimization:
+    backup_power_activation: true
+    power_saving_mode: "emergency"
+    voltage_regulation: "strict"
+    power_boost_dbm: 3
+    monitoring_interval: 30
+    
+  traffic_rerouting:
+    backup_path_priority: "high"
+    reroute_percentage: 50
+    convergence_timeout: 60
+    load_balancing: true
+    quality_threshold: 0.7
+    
+  emergency_restart:
+    restart_type: "graceful"
+    backup_configuration: true
+    health_check_interval: 10
+    max_restart_time: 120
+    preserve_connections: true
+    
+  load_balancing:
+    load_threshold: 0.8
+    balancing_algorithm: "weighted_round_robin"
+    monitoring_window: 60
+    rebalancing_interval: 10
+    fairness_factor: 0.9
+
+# Infrastructure Parameters  
+infrastructure:
+  rural_network_constraints:
+    limited_bandwidth: true
+    power_limitations: true
+    environmental_challenges: true
+    maintenance_accessibility: "limited"
+    
+  energy_management:
+    solar_power_available: true
+    battery_backup_duration: 240  # minutes
+    energy_harvesting: true
+    power_optimization_enabled: true
+    
+  connectivity:
+    mesh_redundancy: true
+    backup_links_available: true
+    satellite_fallback: false
+    microwave_links: true
+
+# Monitoring and Validation
+monitoring:
+  metrics_collection_enabled: true
+  collection_interval: 10  # seconds
+  validation_enabled: true
+  rollback_on_failure: true
+  success_criteria:
+    throughput_recovery_threshold: 0.8
+    latency_improvement_threshold: 0.5
+    packet_loss_reduction_threshold: 0.3
+    healing_timeout: 300  # seconds
+
+# Logging and Reporting
+logging:
+  deployment_logging: true
+  performance_logging: true
+  error_logging: true
+  log_level: "INFO"
+  log_rotation: true
+  log_retention_days: 7
+
+# Security Configuration
+security:
+  encrypted_communication: true
+  certificate_validation: true
+  access_control: "rbac"
+  audit_logging: true
+  secure_deployment: true
+
+# Integration Configuration
+integration:
+  ns3_integration: true
+  agent_communication: true
+  real_time_updates: true
+  feedback_loop: true
+  
+# Output Configuration  
+output:
+  status_reporting: true
+  metrics_export: true
+  deployment_artifacts: true
+  cleanup_on_completion: false
+  archive_deployments: true
+
+# Advanced Parameters
+advanced:
+  parallel_deployments: false
+  deployment_timeout: 600  # seconds
+  retry_attempts: 3
+  retry_delay: 30  # seconds
+  dry_run: false
+  validation_only: false

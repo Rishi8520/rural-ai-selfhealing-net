@@ -1,0 +1,32 @@
+{
+  "monitoring_report": {
+    "generated_timestamp": "2025-06-29T14:09:04.725175",
+    "monitoring_duration": "continuous",
+    "agent_version": "2.0_calculation_agent_only",
+    "data_flow": "NS-3 \u2192 Monitor Agent \u2192 Calculation Agent ONLY",
+    "monitoring_status": {
+      "static_monitoring": true,
+      "realtime_monitoring": true,
+      "overall_status": "stopped"
+    }
+  },
+  "statistics": {
+    "files_processed": 4,
+    "data_points_collected": 200,
+    "faults_detected": 0,
+    "realtime_events_processed": 0,
+    "calculation_agent_notifications": 4,
+    "last_update": "2025-06-29T14:06:57.015145"
+  },
+  "file_tracking": {
+    "last_processed_files": 4,
+    "processed_files_set": 0,
+    "file_hashes_tracked": 0
+  },
+  "calculation_agent_communication": {
+    "total_notifications": 4,
+    "realtime_faults_sent": 0,
+    "static_data_sent": 4,
+    "communication_directory": "calculation_agent_input"
+  }
+}

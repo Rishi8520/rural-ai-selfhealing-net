@@ -32,13 +32,13 @@ class EnhancedMonitorAgent:
     
     def __init__(self):
         # **PRESERVED: Your existing directory structure**
-        self.ns3_simulation_dir = Path("ns3_simulation")
+        self.ns3_simulation_dir = Path("/home/rishi/ns-allinone-3.44/ns-3.44")
         self.faults_dir = self.ns3_simulation_dir / "Faults"
         self.metrics_dir = self.ns3_simulation_dir / "NetworkMetrics"
         self.config_dir = self.ns3_simulation_dir / "Config"
         
         # **Real-time integration directories**
-        self.agent_interface_dir = Path("agent_interface")  # NS-3 real-time output
+        self.agent_interface_dir = Path("/media/rishi/Windows-SSD/PROJECT_&_RESEARCH/NOKIA/Buil-a-thon/rural_ai_selfhealing_net/ns3_integration/agent_interface")  # NS-3 real-time output
         self.calculation_input_dir = Path("calculation_agent_input")  # ONLY output to calculation agent
         self.monitoring_reports_dir = Path("monitoring_reports")
         

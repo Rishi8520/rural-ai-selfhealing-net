@@ -1,8 +1,8 @@
 /* -*- Mode:C++; c-file-style:"gnu"; indent-tabs-mode:nil; -*- */
 /*
  * COMPLETE ITU COMPETITION READY RURAL NETWORK SIMULATION
- * Implements ALL 5 Test Cases: TST-01, TST-02, TST-03, TST-04, TST-05
- * Features: Equipment Degradation, False Positive Injection, Intent Translation
+ * Implements TST-01, TST-02 with Randomized Fault Injection
+ * Features: Randomized Fiber Cut & Power Fluctuation with Severity-Based Visualization
  * Enhanced Agent Integration with Closed-Loop Healing
  */
 #define _USE_MATH_DEFINES
@@ -44,7 +44,7 @@ public:
 };
 uint64_t SimpleIdGenerator::counter = 0;
 
-// **ENHANCED: Configuration for all 5 test cases**
+// **ENHANCED: Configuration for randomized fault injection**
 struct SimulationConfig {
     std::string mode;
     double totalSimulationTime;
@@ -58,15 +58,19 @@ struct SimulationConfig {
     int targetDataPoints;
     std::string outputPrefix;
     
-    // **NEW: Test case enablers**
-    bool enableEquipmentDegradation;     // TST-03
-    bool enableFalsePositiveInjection;  // TST-04
-    bool enableIntentTranslation;       // TST-05
-    
     // **NEW: Agent integration**
     bool enableAgentIntegration;
     bool enableHealingDeployment;
     std::string agentInterfaceDir;
+    
+    // **NEW: Randomized fault parameters**
+    bool enableRandomizedFaults;
+    double minFaultInterval;        // Minimum time between faults
+    double maxFaultInterval;        // Maximum time between faults
+    double minFaultDuration;        // Minimum fault duration
+    double maxFaultDuration;        // Maximum fault duration
+    double fiberCutProbability;     // Probability of fiber cut vs power fluctuation
+    int maxSimultaneousFaults;      // Maximum simultaneous faults
     
     // RAG database options
     bool enableDatabaseGeneration;
@@ -77,7 +81,7 @@ struct SimulationConfig {
     std::string databaseFormat;
 };
 
-// **ENHANCED: Original fault patterns + new fault types**
+// **ENHANCED: Fault patterns with severity-based visualization**
 struct GradualFaultPattern {
     uint32_t targetNode;
     uint32_t connectedNode;
@@ -93,44 +97,11 @@ struct GradualFaultPattern {
     bool visualIndicatorActive;
     std::string visualMessage;
     std::string anomalyId;
-};
-
-// **NEW: Equipment Degradation Pattern for TST-03**
-struct EquipmentDegradationPattern {
-    uint32_t targetNode;
-    std::string equipmentType; // "cpu", "memory", "interface", "power_supply"
-    double baselineDegradationRate; // 0.01-0.05 per hour
-    double acceleratedDegradationRate; // 0.1-0.3 per hour  
-    Time degradationStartTime;
-    double currentHealthLevel; // 1.0 = perfect, 0.0 = failed
-    double predictiveFailureThreshold; // 0.3 = 24hr warning
-    std::string rootCause; // "overheating", "power_surges", "age"
-    bool predictionTriggered;
-    std::string anomalyId;
-};
-
-// **NEW: False Positive Pattern for TST-04**
-struct FalsePositivePattern {
-    uint32_t targetNode;
-    std::string triggerType; // "traffic_spike", "maintenance_window", "backup_job"
-    double anomalyMagnitude; // 2-5x normal baseline
-    Time eventStartTime;
-    Time eventDuration;
-    bool isLegitimateEvent; // true = not actually a fault
-    std::string contextualInfo; // "scheduled_backup", "software_update"
-    std::string anomalyId;
-};
-
-// **NEW: Intent Translation Scenario for TST-05**
-struct IntentTranslationScenario {
-    std::string intentId;
-    std::string intentDescription; // "Improve network performance in rural area"
-    std::vector<std::string> requiredPolicyChanges;
-    std::vector<uint32_t> affectedNodes;
-    std::map<std::string, double> performanceTargets; // "latency": 50ms, "throughput": 100Mbps
-    Time implementationTime;
-    bool requiresMultiAgentCoordination;
-    std::string status; // "pending", "executing", "completed"
+    
+    // **NEW: Severity-based visualization properties**
+    double originalNodeSize;
+    double currentNodeSize;
+    bool sizingApplied;
 };
 
 // **NEW: Healing Action Structure for Agent Integration**
@@ -163,6 +134,7 @@ struct FaultEvent {
     std::vector<uint32_t> affectedNodes;
     std::string description;
     std::string visualEffect;
+    double severity;
 };
 
 // **NEW: Agent Integration API Class**
@@ -180,9 +152,7 @@ public:
     }
     
     // Write fault events for agents to consume
-    void ExportRealTimeFaultEvents(const std::vector<FaultEvent>& events, 
-                                   const std::vector<EquipmentDegradationPattern>& equipmentFaults,
-                                   const std::vector<FalsePositivePattern>& falsePositives);
+    void ExportRealTimeFaultEvents(const std::vector<FaultEvent>& events);
     void WriteFaultEventJSON(const FaultEvent& event);
     
     // Read healing plans from agents
@@ -211,7 +181,7 @@ public:
     void ExecuteLoadBalancing(const HealingAction& action);
     void ExecuteEmergencyShutdown(const HealingAction& action);
     
-    // Visual feedback for NetAnim
+    // Visual feedback for NetAnim with severity-based sizing
     void ShowHealingInProgress(uint32_t nodeId, AnimationInterface* animInterface, NodeContainer& allNodes);
     void ShowHealingCompleted(uint32_t nodeId, AnimationInterface* animInterface, NodeContainer& allNodes);
     void ShowTrafficRerouting(uint32_t fromNode, uint32_t toNode, uint32_t viaNode, 
@@ -225,7 +195,33 @@ private:
     void SetLinkStatus(uint32_t nodeA, uint32_t nodeB, bool status);
 };
 
-// **MAIN SIMULATION CLASS - ENHANCED FOR ALL TEST CASES**
+// **NEW: Randomized Fault Generator**
+class RandomizedFaultGenerator {
+public:
+    RandomizedFaultGenerator(const SimulationConfig& config) 
+        : m_config(config), rng(std::random_device{}()), 
+          intervalDist(config.minFaultInterval, config.maxFaultInterval),
+          durationDist(config.minFaultDuration, config.maxFaultDuration),
+          severityDist(0.3, 1.0), // Severity between 30% and 100%
+          probabilityDist(0.0, 1.0) {}
+    
+    std::vector<GradualFaultPattern> GenerateRandomizedFaults(uint32_t totalNodes);
+    
+private:
+    const SimulationConfig& m_config;
+    std::mt19937 rng;
+    std::uniform_real_distribution<double> intervalDist;
+    std::uniform_real_distribution<double> durationDist;
+    std::uniform_real_distribution<double> severityDist;
+    std::uniform_real_distribution<double> probabilityDist;
+    std::uniform_int_distribution<uint32_t> nodeDist;
+    
+    GradualFaultPattern CreateRandomFiberCut(uint32_t nodeA, uint32_t nodeB, Time startTime, double severity);
+    GradualFaultPattern CreateRandomPowerFluctuation(uint32_t nodeId, Time startTime, double severity);
+    std::pair<uint32_t, uint32_t> GetRandomConnectedNodes(uint32_t totalNodes);
+};
+
+// **MAIN SIMULATION CLASS - ENHANCED FOR RANDOMIZED FAULTS**
 class ITU_Competition_Rural_Network
 {
 public:
@@ -234,7 +230,7 @@ public:
     
     static SimulationConfig CreateITU_CompetitionConfig(int targetDataPoints = 500);
     static SimulationConfig CreateFaultDemoConfig();
-    static SimulationConfig CreateAllTestCasesConfig();
+    static SimulationConfig CreateRandomizedFaultConfig();
 
 private:
     SimulationConfig m_config;
@@ -251,17 +247,19 @@ private:
     Ptr<FlowMonitor> flowMonitor;
     AnimationInterface* animInterface;
     
-    // **ENHANCED: All fault pattern types**
+    // **ENHANCED: Randomized fault patterns**
     std::vector<GradualFaultPattern> gradualFaults;
-    std::vector<EquipmentDegradationPattern> equipmentDegradationFaults;  // NEW: TST-03
-    std::vector<FalsePositivePattern> falsePositiveEvents;               // NEW: TST-04
-    std::vector<IntentTranslationScenario> intentScenarios;              // NEW: TST-05
     std::vector<FaultEvent> faultEvents;
+    RandomizedFaultGenerator* faultGenerator;
     
     // **NEW: Agent integration**
     AgentIntegrationAPI* agentAPI;
     HealingDeploymentEngine* healingEngine;
     std::vector<HealingPlan> activeHealingPlans;
+    
+    // **NEW: Severity-based node sizing**
+    std::map<uint32_t, double> originalNodeSizes;
+    double baseSeverityMultiplier = 2.0; // Size multiplier for maximum severity
     
     // **ENHANCED: Core methods from working original**
     void SetupRobustTopology();
@@ -275,48 +273,25 @@ private:
     void CreateBaselineTraffic();
     void SetupRobustNetAnimVisualization();
     
-    // **ENHANCED: Fault methods for all test cases**
-    void ScheduleAllFaultPatterns();
-    
-    // Original fault patterns (TST-01, TST-02)
-    void CreateRealisticFiberCutPattern(uint32_t nodeA, uint32_t nodeB, Time startTime);
-    void CreateRealisticPowerFluctuationPattern(uint32_t nodeId, Time startTime);
-    
-    // **NEW: Equipment degradation methods (TST-03)**
-    void ScheduleEquipmentDegradationPatterns();
-    void CreateEquipmentDegradationPattern(uint32_t nodeId, std::string equipmentType, Time startTime);
-    void UpdateEquipmentDegradation();
-    bool CheckPredictiveFailureThreshold(const EquipmentDegradationPattern& pattern);
-    
-    // **NEW: False positive injection methods (TST-04)**
-    void ScheduleFalsePositiveEvents();
-    void CreateFalsePositiveEvent(uint32_t nodeId, std::string triggerType, Time startTime);
-    void UpdateFalsePositiveEvents();
-    
-    // **NEW: Intent translation methods (TST-05)**
-    void ScheduleIntentTranslationScenarios();
-    void CreateIntentTranslationScenario(std::string intent, Time startTime);
-    void ProcessIntentScenarios();
-    
-    // **ENHANCED: Fault progression and visual methods**
+    // **ENHANCED: Randomized fault methods**
+    void ScheduleRandomizedFaultPatterns();
     void UpdateFaultProgression();
     void ProcessFaultVisualization();
     void UpdateVisualFaultIndicators();
     void UpdateNodeVisualStatus(uint32_t nodeId, const std::string& status);
     void AnnounceFaultEvent(const GradualFaultPattern& fault, const std::string& eventType);
-    void AnnounceEquipmentDegradationEvent(const EquipmentDegradationPattern& fault, const std::string& eventType);
-    void AnnounceFalsePositiveEvent(const FalsePositivePattern& event, const std::string& eventType);
-    void AnnounceIntentEvent(const IntentTranslationScenario& scenario, const std::string& eventType);
     void LogFaultEvent(const FaultEvent& event);
+    
+    // **NEW: Severity-based visualization methods**
+    void ApplySeverityBasedNodeSizing(uint32_t nodeId, double severity);
+    void RestoreOriginalNodeSize(uint32_t nodeId);
+    void UpdateNodeSizeBasedOnSeverity(const GradualFaultPattern& fault);
     
     std::string GetNodeVisualName(uint32_t nodeId);
     void HideFiberLink(uint32_t nodeA, uint32_t nodeB);
     void RestoreFiberLink(uint32_t nodeA, uint32_t nodeB);
     void ShowPowerIssue(uint32_t nodeId);
     void HidePowerIssue(uint32_t nodeId);
-    void ShowEquipmentDegradation(uint32_t nodeId, const std::string& equipmentType);
-    void ShowFalsePositiveIndicator(uint32_t nodeId, const std::string& triggerType);
-    void ShowIntentExecution(const std::vector<uint32_t>& affectedNodes);
     
     // **NEW: Agent integration methods**
     void InitializeAgentIntegration();
@@ -325,7 +300,7 @@ private:
     void DeployHealingPlan(const HealingPlan& plan);
     void UpdateAgentInterface();
     
-    // **ENHANCED: Data collection for all test cases**
+    // **ENHANCED: Data collection**
     void CollectComprehensiveMetrics();
     void WriteTopologyInfo();
     void WriteConfigurationInfo();
@@ -358,22 +333,15 @@ private:
         double powerStability;
         double degradationLevel;
         double faultSeverity;
-        
-        // **NEW: Enhanced metrics for additional test cases**
-        double equipmentHealthLevel;    // TST-03: Equipment health (0-1)
-        double predictiveFailureScore;  // TST-03: 24-hour failure prediction
-        bool legitimateTrafficSpike;    // TST-04: False positive indicator
-        std::string intentExecutionStatus; // TST-05: Intent status
     };
     
     NodeMetrics GetEnhancedNodeMetrics(uint32_t nodeId);
     
-    // **NEW: Output files for all test cases**
+    // **NEW: Output files**
     std::ofstream metricsFile, topologyFile, configFile, faultLogFile;
-    std::ofstream equipmentDegradationLogFile, falsePositiveLogFile, intentTranslationLogFile;
 };
 
-// **ENHANCED: Configuration factory methods for ITU competition**
+// **ENHANCED: Configuration factory methods for randomized faults**
 SimulationConfig ITU_Competition_Rural_Network::CreateITU_CompetitionConfig(int targetDataPoints)
 {
     SimulationConfig config;
@@ -389,15 +357,19 @@ SimulationConfig ITU_Competition_Rural_Network::CreateITU_CompetitionConfig(int 
     config.targetDataPoints = targetDataPoints;
     config.outputPrefix = "itu_competition";
     
-    // **NEW: Enable all test cases**
-    config.enableEquipmentDegradation = true;     // TST-03
-    config.enableFalsePositiveInjection = true;  // TST-04
-    config.enableIntentTranslation = true;       // TST-05
-    
     // **NEW: Agent integration**
     config.enableAgentIntegration = true;
     config.enableHealingDeployment = true;
     config.agentInterfaceDir = "agent_interface";
+    
+    // **NEW: Randomized fault parameters**
+    config.enableRandomizedFaults = true;
+    config.minFaultInterval = 60.0;     // 1 minute minimum between faults
+    config.maxFaultInterval = 300.0;    // 5 minutes maximum between faults
+    config.minFaultDuration = 120.0;    // 2 minutes minimum fault duration
+    config.maxFaultDuration = 600.0;    // 10 minutes maximum fault duration
+    config.fiberCutProbability = 0.6;   // 60% chance of fiber cut, 40% power fluctuation
+    config.maxSimultaneousFaults = 3;   // Maximum 3 simultaneous faults
     
     config.enableDatabaseGeneration = true;
     config.enableLinkTracking = true;
@@ -408,17 +380,18 @@ SimulationConfig ITU_Competition_Rural_Network::CreateITU_CompetitionConfig(int 
     
     std::cout << "=== ITU COMPETITION CONFIGURATION ===" << std::endl;
     std::cout << "Target data points: " << targetDataPoints << std::endl;
-    std::cout << "All 5 test cases: ENABLED" << std::endl;
+    std::cout << "Randomized faults: ENABLED" << std::endl;
     std::cout << "Agent integration: ENABLED" << std::endl;
+    std::cout << "Severity-based visualization: ENABLED" << std::endl;
     std::cout << "=====================================" << std::endl;
     
     return config;
 }
 
-SimulationConfig ITU_Competition_Rural_Network::CreateAllTestCasesConfig()
+SimulationConfig ITU_Competition_Rural_Network::CreateRandomizedFaultConfig()
 {
     SimulationConfig config;
-    config.mode = "all_test_cases_demo";
+    config.mode = "randomized_fault_demo";
     config.dataCollectionInterval = 2.0;    
     config.totalSimulationTime = 600.0;  // 10 minutes for comprehensive demo
     config.baselineDuration = 60.0;
@@ -428,17 +401,21 @@ SimulationConfig ITU_Competition_Rural_Network::CreateAllTestCasesConfig()
     config.enableFaultVisualization = true;
     config.useHighSpeedNetwork = true; 
     config.targetDataPoints = 300;
-    config.outputPrefix = "all_test_cases_demo";
-    
-    // **NEW: Enable all test cases for visual demo**
-    config.enableEquipmentDegradation = true;     // TST-03
-    config.enableFalsePositiveInjection = true;  // TST-04
-    config.enableIntentTranslation = true;       // TST-05
+    config.outputPrefix = "randomized_fault_demo";
     
     // **NEW: Agent integration with visual feedback**
     config.enableAgentIntegration = true;
     config.enableHealingDeployment = true;
     config.agentInterfaceDir = "agent_interface";
+    
+    // **NEW: Aggressive randomized fault parameters for demo**
+    config.enableRandomizedFaults = true;
+    config.minFaultInterval = 30.0;     // 30 seconds minimum between faults
+    config.maxFaultInterval = 120.0;    // 2 minutes maximum between faults
+    config.minFaultDuration = 60.0;     // 1 minute minimum fault duration
+    config.maxFaultDuration = 180.0;    // 3 minutes maximum fault duration
+    config.fiberCutProbability = 0.5;   // 50-50 split between fault types
+    config.maxSimultaneousFaults = 5;   // Maximum 5 simultaneous faults for demo
     
     config.enableDatabaseGeneration = true;
     config.enableLinkTracking = true;
@@ -447,25 +424,23 @@ SimulationConfig ITU_Competition_Rural_Network::CreateAllTestCasesConfig()
     config.enablePolicyLoading = true;
     config.databaseFormat = "sql";
     
-    std::cout << "=== ALL TEST CASES DEMO: VISUAL MODE ===" << std::endl;
-    std::cout << "Duration: 10 minutes with all 5 test cases" << std::endl;
+    std::cout << "=== RANDOMIZED FAULT DEMO: VISUAL MODE ===" << std::endl;
+    std::cout << "Duration: 10 minutes with randomized faults" << std::endl;
     std::cout << "Visual healing demonstration enabled" << std::endl;
+    std::cout << "Severity-based node sizing enabled" << std::endl;
     std::cout << "========================================" << std::endl;
     return config;
 }
 
-// **ENHANCED: Constructor with agent integration**
+// **ENHANCED: Constructor with randomized fault generation**
 ITU_Competition_Rural_Network::ITU_Competition_Rural_Network(const SimulationConfig& config) 
-    : m_config(config), animInterface(nullptr), agentAPI(nullptr), healingEngine(nullptr)
+    : m_config(config), animInterface(nullptr), agentAPI(nullptr), healingEngine(nullptr), faultGenerator(nullptr)
 {
     // **NEW: Initialize enhanced output files**
     std::string metricsFileName = m_config.outputPrefix + "_network_metrics.csv";
     std::string topologyFileName = m_config.outputPrefix + "_topology.json";
     std::string configFileName = m_config.outputPrefix + "_config.json";
     std::string faultLogFileName = m_config.outputPrefix + "_fault_events.log";
-    std::string equipmentLogFileName = m_config.outputPrefix + "_equipment_degradation.log";
-    std::string falsePositiveLogFileName = m_config.outputPrefix + "_false_positives.log";
-    std::string intentLogFileName = m_config.outputPrefix + "_intent_translation.log";
     
     metricsFile.open(metricsFileName);
     metricsFile << "Time,NodeId,NodeType,Throughput_Mbps,Latency_ms,PacketLoss_Rate,Jitter_ms,"
@@ -473,15 +448,16 @@ ITU_Competition_Rural_Network::ITU_Competition_Rural_Network(const SimulationCon
                 << "Neighbor_Count,Link_Utilization,Critical_Load,Normal_Load,Energy_Level,"
                 << "X_Position,Y_Position,Z_Position,Operational_Status,"
                 << "Voltage_Level,Power_Stability,Degradation_Level,Fault_Severity,"
-                << "Equipment_Health_Level,Predictive_Failure_Score,Legitimate_Traffic_Spike,"
-                << "Intent_Execution_Status,Time_Of_Day_Factor,Traffic_Pattern_Factor,Seasonal_Factor\n";
+                << "Time_Of_Day_Factor,Traffic_Pattern_Factor,Seasonal_Factor\n";
     
     topologyFile.open(topologyFileName);
     configFile.open(configFileName);
     faultLogFile.open(faultLogFileName);
-    equipmentDegradationLogFile.open(equipmentLogFileName);
-    falsePositiveLogFile.open(falsePositiveLogFileName);
-    intentTranslationLogFile.open(intentLogFileName);
+    
+    // **NEW: Initialize randomized fault generator**
+    if (m_config.enableRandomizedFaults) {
+        faultGenerator = new RandomizedFaultGenerator(m_config);
+    }
     
     // **NEW: Initialize agent integration**
     if (m_config.enableAgentIntegration) {
@@ -489,8 +465,133 @@ ITU_Competition_Rural_Network::ITU_Competition_Rural_Network(const SimulationCon
     }
     
     std::cout << "✅ ITU Competition simulation files initialized" << std::endl;
-    std::cout << "✅ Enhanced metrics collection for all 5 test cases" << std::endl;
+    std::cout << "✅ Enhanced metrics collection with randomized faults" << std::endl;
 }
+
+// **NEW: Randomized Fault Generator Implementation**
+std::vector<GradualFaultPattern> RandomizedFaultGenerator::GenerateRandomizedFaults(uint32_t totalNodes)
+{
+    std::vector<GradualFaultPattern> faults;
+    nodeDist = std::uniform_int_distribution<uint32_t>(0, totalNodes - 1);
+    
+    double currentTime = m_config.faultStartTime;
+    int activeFaults = 0;
+    
+    std::cout << "🎲 Generating randomized fault patterns..." << std::endl;
+    
+    while (currentTime < m_config.totalSimulationTime - m_config.maxFaultDuration) {
+        // Check if we can add more faults
+        if (activeFaults < m_config.maxSimultaneousFaults) {
+            // Generate next fault interval
+            double nextInterval = intervalDist(rng);
+            currentTime += nextInterval;
+            
+            if (currentTime >= m_config.totalSimulationTime - m_config.maxFaultDuration) break;
+            
+            // Generate fault severity
+            double severity = severityDist(rng);
+            
+            // Determine fault type based on probability
+            bool isFiberCut = probabilityDist(rng) < m_config.fiberCutProbability;
+            
+            GradualFaultPattern fault;
+            
+            if (isFiberCut) {
+                // Generate fiber cut between two connected nodes
+                auto nodePair = GetRandomConnectedNodes(totalNodes);
+                fault = CreateRandomFiberCut(nodePair.first, nodePair.second, Seconds(currentTime), severity);
+            } else {
+                // Generate power fluctuation on single node
+                uint32_t nodeId = nodeDist(rng);
+                fault = CreateRandomPowerFluctuation(nodeId, Seconds(currentTime), severity);
+            }
+            
+            faults.push_back(fault);
+            activeFaults++;
+            
+            std::cout << "🎲 Generated " << fault.faultType << " at " << currentTime 
+                      << "s, severity: " << (severity * 100) << "%" << std::endl;
+        } else {
+            // Wait for some faults to finish before adding new ones
+            currentTime += m_config.minFaultInterval;
+            activeFaults = std::max(0, activeFaults - 1); // Approximate fault completion
+        }
+    }
+    
+    std::cout << "✅ Generated " << faults.size() << " randomized fault patterns" << std::endl;
+    return faults;
+}
+
+GradualFaultPattern RandomizedFaultGenerator::CreateRandomFiberCut(uint32_t nodeA, uint32_t nodeB, Time startTime, double severity)
+{
+    GradualFaultPattern fault;
+    fault.targetNode = nodeA;
+    fault.connectedNode = nodeB;
+    fault.faultType = "fiber_cut";
+    fault.faultDescription = "Randomized fiber cut between node " + std::to_string(nodeA) + " and " + std::to_string(nodeB);
+    fault.startDegradation = startTime - Seconds(30); // Start degradation 30s before complete cut
+    fault.faultOccurrence = startTime;
+    fault.faultDuration = Seconds(durationDist(rng));
+    fault.degradationRate = 0.02 + (severity * 0.03); // Variable degradation rate based on severity
+    fault.severity = severity;
+    fault.isActive = false;
+    fault.currentSeverity = 0.0;
+    fault.visualIndicatorActive = false;
+    fault.visualMessage = "🔴 FIBER CUT";
+    fault.anomalyId = SimpleIdGenerator::GenerateId("RANDOM_FIBER");
+    
+    // **NEW: Initialize severity-based sizing properties**
+    fault.originalNodeSize = 30.0; // Default node size
+    fault.currentNodeSize = fault.originalNodeSize;
+    fault.sizingApplied = false;
+    
+    return fault;
+}
+
+GradualFaultPattern RandomizedFaultGenerator::CreateRandomPowerFluctuation(uint32_t nodeId, Time startTime, double severity)
+{
+    GradualFaultPattern fault;
+    fault.targetNode = nodeId;
+    fault.connectedNode = nodeId; // Self-affecting
+    fault.faultType = "power_fluctuation";
+    fault.faultDescription = "Randomized power fluctuation at node " + std::to_string(nodeId);
+    fault.startDegradation = startTime;
+    fault.faultOccurrence = startTime + Seconds(30 + (severity * 60)); // Variable peak time based on severity
+    fault.faultDuration = Seconds(durationDist(rng));
+    fault.degradationRate = 0.01 + (severity * 0.02); // Variable degradation rate
+    fault.severity = severity;
+    fault.isActive = false;
+    fault.currentSeverity = 0.0;
+    fault.visualIndicatorActive = false;
+    fault.visualMessage = "⚡ POWER ISSUE";
+    fault.anomalyId = SimpleIdGenerator::GenerateId("RANDOM_POWER");
+    
+    // **NEW: Initialize severity-based sizing properties**
+    fault.originalNodeSize = 30.0; // Default node size
+    fault.currentNodeSize = fault.originalNodeSize;
+    fault.sizingApplied = false;
+    
+    return fault;
+}
+
+std::pair<uint32_t, uint32_t> RandomizedFaultGenerator::GetRandomConnectedNodes(uint32_t totalNodes)
+{
+    uint32_t nodeA = nodeDist(rng);
+    uint32_t nodeB;
+    
+    // Ensure we get two different nodes that could be connected
+    do {
+        nodeB = nodeDist(rng);
+    } while (nodeB == nodeA);
+    
+    // Ensure nodeA < nodeB for consistency
+    if (nodeA > nodeB) {
+        std::swap(nodeA, nodeB);
+    }
+    
+    return {nodeA, nodeB};
+}
+
 // **STEP 2A: Agent Integration Implementation**
 void ITU_Competition_Rural_Network::InitializeAgentIntegration()
 {
@@ -502,7 +603,7 @@ void ITU_Competition_Rural_Network::InitializeAgentIntegration()
         std::cout << "📁 Interface directory: " << m_config.agentInterfaceDir << std::endl;
         
         // Create initial interface files
-        agentAPI->ExportRealTimeFaultEvents(faultEvents, equipmentDegradationFaults, falsePositiveEvents);
+        agentAPI->ExportRealTimeFaultEvents(faultEvents);
         
     } catch (const std::exception& e) {
         std::cout << "❌ Agent integration failed: " << e.what() << std::endl;
@@ -511,9 +612,7 @@ void ITU_Competition_Rural_Network::InitializeAgentIntegration()
     }
 }
 
-void AgentIntegrationAPI::ExportRealTimeFaultEvents(const std::vector<FaultEvent>& events, 
-                                                    const std::vector<EquipmentDegradationPattern>& equipmentFaults,
-                                                    const std::vector<FalsePositivePattern>& falsePositives)
+void AgentIntegrationAPI::ExportRealTimeFaultEvents(const std::vector<FaultEvent>& events)
 {
     std::ofstream jsonFile(faultEventsFile);
     if (!jsonFile.is_open()) {
@@ -527,7 +626,7 @@ void AgentIntegrationAPI::ExportRealTimeFaultEvents(const std::vector<FaultEvent
     
     bool firstEvent = true;
     
-    // Export regular fault events
+    // Export fault events
     for (const auto& event : events) {
         if (!firstEvent) jsonFile << ",\n";
         jsonFile << "    {\n";
@@ -536,49 +635,14 @@ void AgentIntegrationAPI::ExportRealTimeFaultEvents(const std::vector<FaultEvent
         jsonFile << "      \"event_type\": \"" << event.eventType << "\",\n";
         jsonFile << "      \"fault_type\": \"" << event.faultType << "\",\n";
         jsonFile << "      \"description\": \"" << event.description << "\",\n";
+        jsonFile << "      \"severity\": " << event.severity << ",\n";
         jsonFile << "      \"affected_nodes\": [";
         for (size_t i = 0; i < event.affectedNodes.size(); ++i) {
             jsonFile << event.affectedNodes[i];
             if (i < event.affectedNodes.size() - 1) jsonFile << ", ";
         }
         jsonFile << "],\n";
-        jsonFile << "      \"severity\": 0.8,\n";
-        jsonFile << "      \"requires_immediate_action\": true\n";
-        jsonFile << "    }";
-        firstEvent = false;
-    }
-    
-    // Export equipment degradation events
-    for (const auto& equipFault : equipmentFaults) {
-        if (!firstEvent) jsonFile << ",\n";
-        jsonFile << "    {\n";
-        jsonFile << "      \"event_id\": \"" << equipFault.anomalyId << "\",\n";
-        jsonFile << "      \"timestamp\": " << Simulator::Now().GetSeconds() << ",\n";
-        jsonFile << "      \"event_type\": \"equipment_degradation\",\n";
-        jsonFile << "      \"fault_type\": \"" << equipFault.equipmentType << "_degradation\",\n";
-        jsonFile << "      \"node_id\": " << equipFault.targetNode << ",\n";
-        jsonFile << "      \"equipment_health\": " << equipFault.currentHealthLevel << ",\n";
-        jsonFile << "      \"predictive_failure_score\": " << (1.0 - equipFault.currentHealthLevel) << ",\n";
-        jsonFile << "      \"root_cause\": \"" << equipFault.rootCause << "\",\n";
-        jsonFile << "      \"time_to_failure_hours\": " << (equipFault.currentHealthLevel / equipFault.acceleratedDegradationRate) << ",\n";
-        jsonFile << "      \"requires_immediate_action\": " << (equipFault.currentHealthLevel < equipFault.predictiveFailureThreshold ? "true" : "false") << "\n";
-        jsonFile << "    }";
-        firstEvent = false;
-    }
-    
-    // Export false positive events
-    for (const auto& fpEvent : falsePositives) {
-        if (!firstEvent) jsonFile << ",\n";
-        jsonFile << "    {\n";
-        jsonFile << "      \"event_id\": \"" << fpEvent.anomalyId << "\",\n";
-        jsonFile << "      \"timestamp\": " << Simulator::Now().GetSeconds() << ",\n";
-        jsonFile << "      \"event_type\": \"false_positive_candidate\",\n";
-        jsonFile << "      \"fault_type\": \"" << fpEvent.triggerType << "\",\n";
-        jsonFile << "      \"node_id\": " << fpEvent.targetNode << ",\n";
-        jsonFile << "      \"anomaly_magnitude\": " << fpEvent.anomalyMagnitude << ",\n";
-        jsonFile << "      \"is_legitimate_event\": " << (fpEvent.isLegitimateEvent ? "true" : "false") << ",\n";
-        jsonFile << "      \"contextual_info\": \"" << fpEvent.contextualInfo << "\",\n";
-        jsonFile << "      \"requires_immediate_action\": false\n";
+        jsonFile << "      \"requires_immediate_action\": " << (event.severity > 0.7 ? "true" : "false") << "\n";
         jsonFile << "    }";
         firstEvent = false;
     }
@@ -587,9 +651,8 @@ void AgentIntegrationAPI::ExportRealTimeFaultEvents(const std::vector<FaultEvent
     jsonFile << "}\n";
     jsonFile.close();
     
-    if (!events.empty() || !equipmentFaults.empty() || !falsePositives.empty()) {
-        std::cout << "📤 Exported " << (events.size() + equipmentFaults.size() + falsePositives.size()) 
-                  << " fault events to agents" << std::endl;
+    if (!events.empty()) {
+        std::cout << "📤 Exported " << events.size() << " fault events to agents" << std::endl;
     }
 }
 
@@ -706,9 +769,6 @@ void HealingDeploymentEngine::ExecuteRerouteTraffic(const HealingAction& action)
         
         // Simulate routing table updates
         std::cout << "  🛣️ Updating routing tables for alternative paths" << std::endl;
-        
-        // Visual indication of rerouting (if visualization enabled)
-        // ShowTrafficRerouting implementation would go here
     }
     
     std::cout << "✅ Traffic rerouting completed" << std::endl;
@@ -766,385 +826,28 @@ std::string HealingDeploymentEngine::GetNodeVisualName(uint32_t nodeId)
     else return "ACC-" + std::to_string(nodeId - 20);
 }
 
-// **STEP 2C: Equipment Degradation Implementation (TST-03)**
-void ITU_Competition_Rural_Network::ScheduleEquipmentDegradationPatterns()
+// **STEP 3A: Randomized Fault Pattern Scheduling**
+void ITU_Competition_Rural_Network::ScheduleRandomizedFaultPatterns()
 {
-    if (!m_config.enableEquipmentDegradation) return;
+    std::cout << "\n=== SCHEDULING RANDOMIZED FAULT PATTERNS ===" << std::endl;
     
-    std::cout << "🔧 Scheduling equipment degradation patterns for TST-03..." << std::endl;
-    
-    // Schedule gradual degradation for critical equipment
-    std::vector<std::pair<uint32_t, std::string>> equipmentToDegrade = {
-        {0, "cpu"},           // CORE-0 CPU degradation
-        {1, "power_supply"},  // CORE-1 Power supply issues
-        {5, "memory"},        // DIST-0 Memory degradation  
-        {7, "interface"},     // DIST-2 Interface degradation
-        {20, "cpu"},          // ACC-0 CPU overheating
-        {25, "power_supply"}  // ACC-5 Power stability issues
-    };
-    
-    for (const auto& equipment : equipmentToDegrade) {
-        Time startTime = Seconds(m_config.faultStartTime + (equipment.first * 30)); // Stagger starts
-        CreateEquipmentDegradationPattern(equipment.first, equipment.second, startTime);
-    }
-    
-    // Schedule periodic degradation updates
-    for (double t = m_config.faultStartTime; t < m_config.totalSimulationTime; t += 60.0) {
-        Simulator::Schedule(Seconds(t), &ITU_Competition_Rural_Network::UpdateEquipmentDegradation, this);
-    }
-    
-    std::cout << "✅ Equipment degradation patterns scheduled for " << equipmentToDegrade.size() << " components" << std::endl;
-}
-
-void ITU_Competition_Rural_Network::CreateEquipmentDegradationPattern(uint32_t nodeId, std::string equipmentType, Time startTime)
-{
-    EquipmentDegradationPattern pattern;
-    pattern.targetNode = nodeId;
-    pattern.equipmentType = equipmentType;
-    pattern.degradationStartTime = startTime;
-    pattern.currentHealthLevel = 1.0; // Start at perfect health
-    pattern.predictiveFailureThreshold = 0.3; // 24-hour warning threshold
-    pattern.predictionTriggered = false;
-    pattern.anomalyId = SimpleIdGenerator::GenerateId("EQUIP_DEG");
-    
-    // Equipment-specific degradation rates
-    if (equipmentType == "cpu") {
-        pattern.baselineDegradationRate = 0.02; // 2% per hour normally
-        pattern.acceleratedDegradationRate = 0.15; // 15% per hour when failing
-        pattern.rootCause = "overheating";
-    } else if (equipmentType == "memory") {
-        pattern.baselineDegradationRate = 0.01; // 1% per hour normally  
-        pattern.acceleratedDegradationRate = 0.12; // 12% per hour when failing
-        pattern.rootCause = "memory_leaks";
-    } else if (equipmentType == "interface") {
-        pattern.baselineDegradationRate = 0.03; // 3% per hour normally
-        pattern.acceleratedDegradationRate = 0.20; // 20% per hour when failing
-        pattern.rootCause = "physical_wear";
-    } else if (equipmentType == "power_supply") {
-        pattern.baselineDegradationRate = 0.015; // 1.5% per hour normally
-        pattern.acceleratedDegradationRate = 0.25; // 25% per hour when failing
-        pattern.rootCause = "power_surges";
-    }
-    
-    equipmentDegradationFaults.push_back(pattern);
-    
-    std::cout << "🔧 Equipment degradation scheduled: " << GetNodeVisualName(nodeId) 
-              << " " << equipmentType << " starting at " << startTime.GetSeconds() << "s" << std::endl;
-}
-
-void ITU_Competition_Rural_Network::UpdateEquipmentDegradation()
-{
-    double currentTime = Simulator::Now().GetSeconds();
-    
-    for (auto& pattern : equipmentDegradationFaults) {
-        if (currentTime >= pattern.degradationStartTime.GetSeconds()) {
+    if (m_config.enableFaultInjection && m_config.enableRandomizedFaults && faultGenerator) {
+        // Generate randomized faults
+        gradualFaults = faultGenerator->GenerateRandomizedFaults(allNodes.GetN());
+        
+        // Schedule fault progression updates
+        for (double t = m_config.faultStartTime; t < m_config.totalSimulationTime; t += m_config.dataCollectionInterval) {
+            Simulator::Schedule(Seconds(t), &ITU_Competition_Rural_Network::UpdateFaultProgression, this);
             
-            // Calculate time elapsed since degradation started
-            double timeElapsed = currentTime - pattern.degradationStartTime.GetSeconds();
-            double hoursElapsed = timeElapsed / 3600.0; // Convert to hours
-            
-            // Determine degradation rate based on current health
-            double degradationRate = pattern.currentHealthLevel > 0.5 ? 
-                pattern.baselineDegradationRate : pattern.acceleratedDegradationRate;
-            
-            // Apply degradation
-            double degradationAmount = degradationRate * (m_config.dataCollectionInterval / 3600.0); // Per collection interval
-            pattern.currentHealthLevel = std::max(0.0, pattern.currentHealthLevel - degradationAmount);
-            
-            // Check for 24-hour predictive failure threshold
-            if (!pattern.predictionTriggered && pattern.currentHealthLevel <= pattern.predictiveFailureThreshold) {
-                pattern.predictionTriggered = true;
-                
-                AnnounceEquipmentDegradationEvent(pattern, "predictive_failure_warning");
-                
-                // Log to equipment degradation file
-                equipmentDegradationLogFile << currentTime << "," << pattern.targetNode << "," 
-                                           << pattern.equipmentType << "," << pattern.currentHealthLevel << ","
-                                           << pattern.rootCause << ",24hr_warning" << std::endl;
-                
-                std::cout << "⚠️ 24-HOUR FAILURE WARNING: " << GetNodeVisualName(pattern.targetNode) 
-                          << " " << pattern.equipmentType << " health: " << (pattern.currentHealthLevel * 100) << "%" << std::endl;
-            }
-            
-            // Check for complete failure
-            if (pattern.currentHealthLevel <= 0.05) { // 5% threshold for failure
-                AnnounceEquipmentDegradationEvent(pattern, "equipment_failure");
-                
-                std::cout << "🚨 EQUIPMENT FAILURE: " << GetNodeVisualName(pattern.targetNode) 
-                          << " " << pattern.equipmentType << " has failed!" << std::endl;
+            if (m_config.enableAgentIntegration) {
+                Simulator::Schedule(Seconds(t + 1), &ITU_Competition_Rural_Network::ProcessAgentCommunication, this);
             }
         }
-    }
-}
-
-bool ITU_Competition_Rural_Network::CheckPredictiveFailureThreshold(const EquipmentDegradationPattern& pattern)
-{
-    return pattern.currentHealthLevel <= pattern.predictiveFailureThreshold && !pattern.predictionTriggered;
-}
-
-// **STEP 2D: False Positive Injection Implementation (TST-04)**
-void ITU_Competition_Rural_Network::ScheduleFalsePositiveEvents()
-{
-    if (!m_config.enableFalsePositiveInjection) return;
-    
-    std::cout << "🎭 Scheduling false positive events for TST-04..." << std::endl;
-    
-    // Schedule various false positive scenarios
-    std::vector<std::tuple<uint32_t, std::string, Time, std::string>> falsePositiveScenarios = {
-        {2, "traffic_spike", Seconds(m_config.faultStartTime + 60), "daily_backup_job"},
-        {8, "maintenance_window", Seconds(m_config.faultStartTime + 120), "scheduled_software_update"},
-        {15, "traffic_spike", Seconds(m_config.faultStartTime + 180), "peak_hour_surge"},
-        {22, "backup_job", Seconds(m_config.faultStartTime + 240), "database_backup"},
-        {10, "traffic_spike", Seconds(m_config.faultStartTime + 300), "content_distribution_update"},
-        {18, "maintenance_window", Seconds(m_config.faultStartTime + 360), "security_patch_installation"}
-    };
-    
-    for (const auto& scenario : falsePositiveScenarios) {
-        CreateFalsePositiveEvent(std::get<0>(scenario), std::get<1>(scenario), std::get<2>(scenario));
-    }
-    
-    // Schedule periodic false positive updates
-    for (double t = m_config.faultStartTime; t < m_config.totalSimulationTime; t += 30.0) {
-        Simulator::Schedule(Seconds(t), &ITU_Competition_Rural_Network::UpdateFalsePositiveEvents, this);
-    }
-    
-    std::cout << "✅ False positive events scheduled for " << falsePositiveScenarios.size() << " scenarios" << std::endl;
-}
-
-void ITU_Competition_Rural_Network::CreateFalsePositiveEvent(uint32_t nodeId, std::string triggerType, Time startTime)
-{
-    FalsePositivePattern pattern;
-    pattern.targetNode = nodeId;
-    pattern.triggerType = triggerType;
-    pattern.eventStartTime = startTime;
-    pattern.isLegitimateEvent = true; // These are legitimate events that may trigger false alarms
-    pattern.anomalyId = SimpleIdGenerator::GenerateId("FALSE_POS");
-    
-    // Configure based on trigger type
-    if (triggerType == "traffic_spike") {
-        pattern.anomalyMagnitude = 3.0; // 3x normal traffic
-        pattern.eventDuration = Seconds(300); // 5 minutes
-        pattern.contextualInfo = "legitimate_traffic_increase";
-    } else if (triggerType == "maintenance_window") {
-        pattern.anomalyMagnitude = 2.5; // 2.5x normal load due to maintenance
-        pattern.eventDuration = Seconds(600); // 10 minutes
-        pattern.contextualInfo = "scheduled_maintenance_activity";
-    } else if (triggerType == "backup_job") {
-        pattern.anomalyMagnitude = 4.0; // 4x normal CPU/memory during backup
-        pattern.eventDuration = Seconds(180); // 3 minutes
-        pattern.contextualInfo = "automated_backup_process";
-    }
-    
-    falsePositiveEvents.push_back(pattern);
-    
-    std::cout << "🎭 False positive event scheduled: " << GetNodeVisualName(nodeId) 
-              << " " << triggerType << " at " << startTime.GetSeconds() << "s" << std::endl;
-}
-
-void ITU_Competition_Rural_Network::UpdateFalsePositiveEvents()
-{
-    double currentTime = Simulator::Now().GetSeconds();
-    
-    for (auto& pattern : falsePositiveEvents) {
-        double eventStart = pattern.eventStartTime.GetSeconds();
-        double eventEnd = eventStart + pattern.eventDuration.GetSeconds();
         
-        if (currentTime >= eventStart && currentTime <= eventEnd) {
-            // Event is currently active
-            AnnounceFalsePositiveEvent(pattern, "false_positive_active");
-            
-            // Log to false positive file
-            falsePositiveLogFile << currentTime << "," << pattern.targetNode << "," 
-                                << pattern.triggerType << "," << pattern.anomalyMagnitude << ","
-                                << pattern.contextualInfo << ",active" << std::endl;
-            
-        } else if (currentTime > eventEnd && pattern.isLegitimateEvent) {
-            // Event has ended
-            pattern.isLegitimateEvent = false; // Mark as processed
-            AnnounceFalsePositiveEvent(pattern, "false_positive_ended");
-            
-            std::cout << "✅ False positive event ended: " << GetNodeVisualName(pattern.targetNode) 
-                      << " " << pattern.triggerType << std::endl;
-        }
+        std::cout << "✅ Randomized fault patterns scheduled successfully" << std::endl;
+    } else {
+        std::cout << "⚠️ Randomized fault injection disabled" << std::endl;
     }
-}
-
-// **STEP 2E: Intent Translation Implementation (TST-05)**
-void ITU_Competition_Rural_Network::ScheduleIntentTranslationScenarios()
-{
-    if (!m_config.enableIntentTranslation) return;
-    
-    std::cout << "🎯 Scheduling intent translation scenarios for TST-05..." << std::endl;
-    
-    // Schedule various intent scenarios
-    std::vector<std::pair<std::string, Time>> intentScenarios = {
-        {"Improve network performance in rural coverage area", Seconds(m_config.faultStartTime + 90)},
-        {"Reduce latency for critical applications", Seconds(m_config.faultStartTime + 210)},
-        {"Optimize power consumption during peak hours", Seconds(m_config.faultStartTime + 330)},
-        {"Ensure redundancy for core network functions", Seconds(m_config.faultStartTime + 450)},
-        {"Enhance security for distribution layer", Seconds(m_config.faultStartTime + 570)}
-    };
-    
-    for (const auto& scenario : intentScenarios) {
-        CreateIntentTranslationScenario(scenario.first, scenario.second);
-    }
-    
-    // Schedule periodic intent processing
-    for (double t = m_config.faultStartTime; t < m_config.totalSimulationTime; t += 45.0) {
-        Simulator::Schedule(Seconds(t), &ITU_Competition_Rural_Network::ProcessIntentScenarios, this);
-    }
-    
-    std::cout << "✅ Intent translation scenarios scheduled for " << intentScenarios.size() << " intents" << std::endl;
-}
-
-void ITU_Competition_Rural_Network::CreateIntentTranslationScenario(std::string intent, Time startTime)
-{
-    IntentTranslationScenario scenario;
-    scenario.intentId = SimpleIdGenerator::GenerateId("INTENT");
-    scenario.intentDescription = intent;
-    scenario.implementationTime = startTime;
-    scenario.status = "pending";
-    scenario.requiresMultiAgentCoordination = true;
-    
-    // Map intents to specific policy changes and affected nodes
-    if (intent.find("network performance") != std::string::npos) {
-        scenario.requiredPolicyChanges = {"traffic_optimization", "qos_enhancement", "bandwidth_allocation"};
-        scenario.affectedNodes = {0, 1, 2, 5, 6, 7}; // Core and distribution nodes
-        scenario.performanceTargets["latency"] = 50.0; // Target 50ms latency
-        scenario.performanceTargets["throughput"] = 150.0; // Target 150 Mbps
-    } else if (intent.find("reduce latency") != std::string::npos) {
-        scenario.requiredPolicyChanges = {"priority_routing", "queue_management", "packet_prioritization"};
-        scenario.affectedNodes = {0, 1, 2, 3, 4}; // Core layer focus
-        scenario.performanceTargets["latency"] = 25.0; // Target 25ms latency
-    } else if (intent.find("power consumption") != std::string::npos) {
-        scenario.requiredPolicyChanges = {"power_scaling", "sleep_mode_optimization", "dynamic_frequency_scaling"};
-        scenario.affectedNodes = {20, 21, 22, 23, 24, 25}; // Access layer focus
-        scenario.performanceTargets["power_efficiency"] = 0.8; // 80% efficiency target
-    } else if (intent.find("redundancy") != std::string::npos) {
-        scenario.requiredPolicyChanges = {"backup_path_activation", "failover_configuration", "load_balancing"};
-        scenario.affectedNodes = {0, 1, 2, 3, 4}; // Core redundancy
-        scenario.performanceTargets["availability"] = 0.99; // 99% availability
-    } else if (intent.find("security") != std::string::npos) {
-        scenario.requiredPolicyChanges = {"firewall_rules", "intrusion_detection", "access_control"};
-        scenario.affectedNodes = {5, 6, 7, 8, 9, 10}; // Distribution layer
-        scenario.performanceTargets["security_score"] = 0.95; // 95% security compliance
-    }
-    
-    intentScenarios.push_back(scenario);
-    
-    std::cout << "🎯 Intent scenario created: \"" << intent << "\" at " << startTime.GetSeconds() << "s" << std::endl;
-}
-
-void ITU_Competition_Rural_Network::ProcessIntentScenarios()
-{
-    double currentTime = Simulator::Now().GetSeconds();
-    
-    for (auto& scenario : intentScenarios) {
-        if (currentTime >= scenario.implementationTime.GetSeconds() && scenario.status == "pending") {
-            scenario.status = "executing";
-            
-            AnnounceIntentEvent(scenario, "intent_executing");
-            
-            // Log to intent translation file
-            intentTranslationLogFile << currentTime << "," << scenario.intentId << "," 
-                                    << scenario.intentDescription << ",executing" << std::endl;
-            
-            std::cout << "🎯 INTENT EXECUTING: " << scenario.intentDescription << std::endl;
-            
-            // Simulate policy deployment
-            for (const auto& policy : scenario.requiredPolicyChanges) {
-                std::cout << "  📋 Deploying policy: " << policy << std::endl;
-            }
-            
-            // Mark as completed after processing
-            scenario.status = "completed";
-            AnnounceIntentEvent(scenario, "intent_completed");
-        }
-    }
-}
-// **STEP 3A: Original Fault Pattern Implementation (TST-01, TST-02)**
-void ITU_Competition_Rural_Network::ScheduleAllFaultPatterns()
-{
-    std::cout << "\n=== SCHEDULING ALL FAULT PATTERNS ===" << std::endl;
-    
-    // **TST-01 & TST-02: Original fault patterns**
-    if (m_config.enableFaultInjection) {
-        // Fiber cut patterns targeting critical links
-        CreateRealisticFiberCutPattern(0, 1, Seconds(m_config.faultStartTime + 30));   // CORE-0 to CORE-1
-        CreateRealisticFiberCutPattern(5, 7, Seconds(m_config.faultStartTime + 90));   // DIST-0 to DIST-2
-        CreateRealisticFiberCutPattern(20, 21, Seconds(m_config.faultStartTime + 150)); // ACC-0 to ACC-1
-        
-        // Power fluctuation patterns
-        CreateRealisticPowerFluctuationPattern(0, Seconds(m_config.faultStartTime + 60));  // CORE-0
-        CreateRealisticPowerFluctuationPattern(5, Seconds(m_config.faultStartTime + 120)); // DIST-0
-        CreateRealisticPowerFluctuationPattern(25, Seconds(m_config.faultStartTime + 180)); // ACC-5
-    }
-    
-    // **TST-03: Equipment degradation patterns**
-    ScheduleEquipmentDegradationPatterns();
-    
-    // **TST-04: False positive injection**
-    ScheduleFalsePositiveEvents();
-    
-    // **TST-05: Intent translation scenarios**
-    ScheduleIntentTranslationScenarios();
-    
-    // Schedule fault progression updates
-    for (double t = m_config.faultStartTime; t < m_config.totalSimulationTime; t += m_config.dataCollectionInterval) {
-        Simulator::Schedule(Seconds(t), &ITU_Competition_Rural_Network::UpdateFaultProgression, this);
-        
-        if (m_config.enableAgentIntegration) {
-            Simulator::Schedule(Seconds(t + 1), &ITU_Competition_Rural_Network::ProcessAgentCommunication, this);
-        }
-    }
-    
-    std::cout << "✅ All fault patterns scheduled successfully" << std::endl;
-}
-
-void ITU_Competition_Rural_Network::CreateRealisticFiberCutPattern(uint32_t nodeA, uint32_t nodeB, Time startTime)
-{
-    GradualFaultPattern fault;
-    fault.targetNode = nodeA;
-    fault.connectedNode = nodeB;
-    fault.faultType = "fiber_cut";
-    fault.faultDescription = "Fiber optic cable cut between " + GetNodeVisualName(nodeA) + " and " + GetNodeVisualName(nodeB);
-    fault.startDegradation = startTime - Seconds(30); // Start degradation 30s before complete cut
-    fault.faultOccurrence = startTime;
-    fault.faultDuration = Seconds(300); // 5 minutes of outage
-    fault.degradationRate = 0.02; // 2% per second degradation
-    fault.severity = 0.9; // High severity
-    fault.isActive = false;
-    fault.currentSeverity = 0.0;
-    fault.visualIndicatorActive = false;
-    fault.visualMessage = "🔴 FIBER CUT";
-    fault.anomalyId = SimpleIdGenerator::GenerateId("FIBER_CUT");
-    
-    gradualFaults.push_back(fault);
-    
-    std::cout << "🔌 Fiber cut scheduled: " << fault.faultDescription << " at " << startTime.GetSeconds() << "s" << std::endl;
-}
-
-void ITU_Competition_Rural_Network::CreateRealisticPowerFluctuationPattern(uint32_t nodeId, Time startTime)
-{
-    GradualFaultPattern fault;
-    fault.targetNode = nodeId;
-    fault.connectedNode = nodeId; // Self-affecting
-    fault.faultType = "power_fluctuation";
-    fault.faultDescription = "Power fluctuation at " + GetNodeVisualName(nodeId);
-    fault.startDegradation = startTime;
-    fault.faultOccurrence = startTime + Seconds(60); // Peak fluctuation after 1 minute
-    fault.faultDuration = Seconds(180); // 3 minutes of power issues
-    fault.degradationRate = 0.015; // 1.5% per second degradation
-    fault.severity = 0.7; // Medium-high severity
-    fault.isActive = false;
-    fault.currentSeverity = 0.0;
-    fault.visualIndicatorActive = false;
-    fault.visualMessage = "⚡ POWER ISSUE";
-    fault.anomalyId = SimpleIdGenerator::GenerateId("POWER_FLUC");
-    
-    gradualFaults.push_back(fault);
-    
-    std::cout << "⚡ Power fluctuation scheduled: " << fault.faultDescription << " at " << startTime.GetSeconds() << "s" << std::endl;
 }
 
 void ITU_Competition_Rural_Network::UpdateFaultProgression()
@@ -1172,6 +875,9 @@ void ITU_Competition_Rural_Network::UpdateFaultProgression()
                 fault.currentSeverity = fault.severity;
             }
             
+            // **NEW: Update node size based on current severity**
+            UpdateNodeSizeBasedOnSeverity(fault);
+            
             // Update visual indicators
             if (m_config.enableFaultVisualization) {
                 ProcessFaultVisualization();
@@ -1181,6 +887,12 @@ void ITU_Competition_Rural_Network::UpdateFaultProgression()
             fault.isActive = false;
             fault.currentSeverity = 0.0;
             AnnounceFaultEvent(fault, "fault_ended");
+            
+            // **NEW: Restore original node size**
+            RestoreOriginalNodeSize(fault.targetNode);
+            if (fault.faultType == "fiber_cut") {
+                RestoreOriginalNodeSize(fault.connectedNode);
+            }
             
             // Restore visual state
             if (m_config.enableFaultVisualization) {
@@ -1194,7 +906,60 @@ void ITU_Competition_Rural_Network::UpdateFaultProgression()
     }
 }
 
-// **STEP 3B: Topology Setup Methods**
+// **NEW: Severity-based node sizing methods**
+void ITU_Competition_Rural_Network::UpdateNodeSizeBasedOnSeverity(const GradualFaultPattern& fault)
+{
+    if (!animInterface) return;
+    
+    // Apply severity-based sizing to target node
+    ApplySeverityBasedNodeSizing(fault.targetNode, fault.currentSeverity);
+    
+    // For fiber cuts, also apply to connected node
+    if (fault.faultType == "fiber_cut") {
+        ApplySeverityBasedNodeSizing(fault.connectedNode, fault.currentSeverity);
+    }
+}
+
+void ITU_Competition_Rural_Network::ApplySeverityBasedNodeSizing(uint32_t nodeId, double severity)
+{
+    if (!animInterface) return;
+    
+    // Store original size if not already stored
+    if (originalNodeSizes.find(nodeId) == originalNodeSizes.end()) {
+        if (nodeId < 5) {
+            originalNodeSizes[nodeId] = 50.0; // Core nodes
+        } else if (nodeId < 20) {
+            originalNodeSizes[nodeId] = 40.0; // Distribution nodes
+        } else {
+            originalNodeSizes[nodeId] = 30.0; // Access nodes
+        }
+    }
+    
+    // Calculate new size based on severity
+    double originalSize = originalNodeSizes[nodeId];
+    double newSize = originalSize * (1.0 + severity * baseSeverityMultiplier);
+    
+    // Apply new size
+    animInterface->UpdateNodeSize(nodeId, nodeId, newSize, newSize);
+    
+    std::cout << "📏 Node " << GetNodeVisualName(nodeId) << " size updated: " 
+              << originalSize << " → " << newSize << " (severity: " << (severity * 100) << "%)" << std::endl;
+}
+
+void ITU_Competition_Rural_Network::RestoreOriginalNodeSize(uint32_t nodeId)
+{
+    if (!animInterface) return;
+    
+    auto it = originalNodeSizes.find(nodeId);
+    if (it != originalNodeSizes.end()) {
+        double originalSize = it->second;
+        animInterface->UpdateNodeSize(nodeId, nodeId, originalSize, originalSize);
+        
+        std::cout << "📏 Node " << GetNodeVisualName(nodeId) << " size restored to: " << originalSize << std::endl;
+    }
+}
+
+// **STEP 3B: Topology Setup Methods (Unchanged)**
 void ITU_Competition_Rural_Network::SetupRobustTopology()
 {
     std::cout << "\n=== SETTING UP ITU COMPETITION TOPOLOGY ===" << std::endl;
@@ -1395,7 +1160,7 @@ void ITU_Competition_Rural_Network::SetupEnergyModel()
     std::cout << "✅ Energy model with harvesting configured" << std::endl;
 }
 
-// **STEP 3C: Application Setup**
+// **STEP 3C: Application Setup (Unchanged)**
 void ITU_Competition_Rural_Network::SetupRobustApplications()
 {
     std::cout << "\n=== SETTING UP APPLICATIONS ===" << std::endl;
@@ -1481,7 +1246,8 @@ void ITU_Competition_Rural_Network::CreateComprehensiveTraffic()
     
     std::cout << "✅ Comprehensive traffic patterns created for " << accessNodes.GetN() << " access nodes" << std::endl;
 }
-// **STEP 4A: Data Collection and Enhanced Metrics**
+
+// **STEP 4A: Data Collection and Enhanced Metrics (Simplified)**
 void ITU_Competition_Rural_Network::CollectComprehensiveMetrics()
 {
     if (!metricsFile.is_open()) return;
@@ -1524,10 +1290,6 @@ void ITU_Competition_Rural_Network::CollectComprehensiveMetrics()
                    << metrics.powerStability << ","
                    << metrics.degradationLevel << ","
                    << metrics.faultSeverity << ","
-                   << metrics.equipmentHealthLevel << ","
-                   << metrics.predictiveFailureScore << ","
-                   << (metrics.legitimateTrafficSpike ? 1 : 0) << ","
-                   << metrics.intentExecutionStatus << ","
                    << timeOfDayFactor << ","
                    << trafficPatternFactor << ","
                    << seasonalFactor << std::endl;
@@ -1580,13 +1342,7 @@ ITU_Competition_Rural_Network::NodeMetrics ITU_Competition_Rural_Network::GetEnh
     metrics.powerStability = 0.9 + (nodeId % 6) * 0.01;
     metrics.isOperational = true;
     
-    // **Enhanced metrics for new test cases**
-    metrics.equipmentHealthLevel = 1.0;
-    metrics.predictiveFailureScore = 0.0;
-    metrics.legitimateTrafficSpike = false;
-    metrics.intentExecutionStatus = "none";
-    
-    // Apply fault effects
+    // Initialize fault-related metrics
     metrics.degradationLevel = 0.0;
     metrics.faultSeverity = 0.0;
     
@@ -1611,73 +1367,6 @@ ITU_Competition_Rural_Network::NodeMetrics ITU_Competition_Rural_Network::GetEnh
         }
     }
     
-    // **TST-03: Equipment degradation effects**
-    for (const auto& equipFault : equipmentDegradationFaults) {
-        if (equipFault.targetNode == nodeId) {
-            metrics.equipmentHealthLevel = equipFault.currentHealthLevel;
-            metrics.predictiveFailureScore = 1.0 - equipFault.currentHealthLevel;
-            
-            // Apply equipment-specific degradation
-            if (equipFault.equipmentType == "cpu") {
-                metrics.cpuUsage += (1.0 - equipFault.currentHealthLevel) * 0.5;
-                metrics.throughputMbps *= equipFault.currentHealthLevel;
-            } else if (equipFault.equipmentType == "memory") {
-                metrics.memoryUsage += (1.0 - equipFault.currentHealthLevel) * 0.4;
-                metrics.bufferOccupancy += (1.0 - equipFault.currentHealthLevel) * 0.3;
-            } else if (equipFault.equipmentType == "interface") {
-                metrics.latencyMs *= (2.0 - equipFault.currentHealthLevel);
-                metrics.packetLossRate += (1.0 - equipFault.currentHealthLevel) * 0.1;
-            } else if (equipFault.equipmentType == "power_supply") {
-                metrics.powerStability *= equipFault.currentHealthLevel;
-                metrics.energyLevel *= equipFault.currentHealthLevel;
-            }
-        }
-    }
-    
-    // **TST-04: False positive effects**
-    for (const auto& fpEvent : falsePositiveEvents) {
-        if (fpEvent.targetNode == nodeId) {
-            double currentTime = Simulator::Now().GetSeconds();
-            double eventStart = fpEvent.eventStartTime.GetSeconds();
-            double eventEnd = eventStart + fpEvent.eventDuration.GetSeconds();
-            
-            if (currentTime >= eventStart && currentTime <= eventEnd) {
-                metrics.legitimateTrafficSpike = fpEvent.isLegitimateEvent;
-                
-                // Apply temporary spike effects
-                if (fpEvent.triggerType == "traffic_spike") {
-                    metrics.throughputMbps *= fpEvent.anomalyMagnitude;
-                    metrics.linkUtilization *= fpEvent.anomalyMagnitude;
-                } else if (fpEvent.triggerType == "maintenance_window") {
-                    metrics.cpuUsage *= fpEvent.anomalyMagnitude;
-                    metrics.memoryUsage *= std::min(1.0, fpEvent.anomalyMagnitude);
-                } else if (fpEvent.triggerType == "backup_job") {
-                    metrics.criticalServiceLoad *= fpEvent.anomalyMagnitude;
-                    metrics.bufferOccupancy *= std::min(1.0, fpEvent.anomalyMagnitude);
-                }
-            }
-        }
-    }
-    
-    // **TST-05: Intent execution effects**
-    for (const auto& intent : intentScenarios) {
-        if (std::find(intent.affectedNodes.begin(), intent.affectedNodes.end(), nodeId) != intent.affectedNodes.end()) {
-            metrics.intentExecutionStatus = intent.status;
-            
-            if (intent.status == "executing" || intent.status == "completed") {
-                // Apply intent-based improvements
-                if (intent.intentDescription.find("network performance") != std::string::npos) {
-                    metrics.throughputMbps *= 1.2; // 20% improvement
-                    metrics.latencyMs *= 0.8; // 20% reduction
-                } else if (intent.intentDescription.find("reduce latency") != std::string::npos) {
-                    metrics.latencyMs *= 0.6; // 40% reduction
-                } else if (intent.intentDescription.find("power consumption") != std::string::npos) {
-                    metrics.energyLevel *= 1.1; // 10% efficiency gain
-                }
-            }
-        }
-    }
-    
     // Apply environmental factors
     double timeOfDayFactor = GetTimeOfDayMultiplier();
     double trafficPatternFactor = GetTrafficPatternMultiplier();
@@ -1696,7 +1385,7 @@ ITU_Competition_Rural_Network::NodeMetrics ITU_Competition_Rural_Network::GetEnh
     return metrics;
 }
 
-// **STEP 4B: Environmental and Temporal Factors**
+// **STEP 4B: Environmental and Temporal Factors (Unchanged)**
 double ITU_Competition_Rural_Network::GetTimeOfDayMultiplier()
 {
     double currentTime = Simulator::Now().GetSeconds();
@@ -1750,17 +1439,10 @@ double ITU_Competition_Rural_Network::CalculateNodeDegradation(uint32_t nodeId, 
         }
     }
     
-    // Check equipment degradation
-    for (const auto& equipFault : equipmentDegradationFaults) {
-        if (equipFault.targetNode == nodeId) {
-            degradation = std::max(degradation, 1.0 - equipFault.currentHealthLevel);
-        }
-    }
-    
     return degradation;
 }
 
-// **STEP 4C: Agent Communication Methods**
+// **STEP 4C: Agent Communication Methods (Unchanged)**
 void ITU_Competition_Rural_Network::ProcessAgentCommunication()
 {
     if (!m_config.enableAgentIntegration || !agentAPI) return;
@@ -1823,11 +1505,11 @@ void ITU_Competition_Rural_Network::UpdateAgentInterface()
 {
     if (!agentAPI) return;
     
-    // Export current fault events, equipment status, and false positives
-    agentAPI->ExportRealTimeFaultEvents(faultEvents, equipmentDegradationFaults, falsePositiveEvents);
+    // Export current fault events
+    agentAPI->ExportRealTimeFaultEvents(faultEvents);
 }
 
-// **STEP 4D: Announcement Methods for All Test Cases**
+// **STEP 4D: Announcement Methods**
 void ITU_Competition_Rural_Network::AnnounceFaultEvent(const GradualFaultPattern& fault, const std::string& eventType)
 {
     FaultEvent event;
@@ -1837,63 +1519,16 @@ void ITU_Competition_Rural_Network::AnnounceFaultEvent(const GradualFaultPattern
     event.affectedNodes = {fault.targetNode, fault.connectedNode};
     event.description = fault.faultDescription;
     event.visualEffect = fault.visualMessage;
+    event.severity = fault.currentSeverity;
     
     faultEvents.push_back(event);
     LogFaultEvent(event);
     
     if (eventType == "fault_started") {
-        std::cout << "🚨 FAULT STARTED: " << fault.faultDescription 
-                  << " (Severity: " << fault.currentSeverity << ")" << std::endl;
+        std::cout << "🚨 RANDOMIZED FAULT STARTED: " << fault.faultDescription 
+                  << " (Severity: " << (fault.currentSeverity * 100) << "%)" << std::endl;
     } else if (eventType == "fault_ended") {
-        std::cout << "✅ FAULT RESOLVED: " << fault.faultDescription << std::endl;
-    }
-}
-
-void ITU_Competition_Rural_Network::AnnounceEquipmentDegradationEvent(const EquipmentDegradationPattern& fault, const std::string& eventType)
-{
-    equipmentDegradationLogFile << Simulator::Now().GetSeconds() << "," 
-                               << fault.targetNode << "," 
-                               << fault.equipmentType << "," 
-                               << fault.currentHealthLevel << ","
-                               << fault.rootCause << "," 
-                               << eventType << std::endl;
-    
-    if (eventType == "predictive_failure_warning") {
-        std::cout << "⚠️ TST-03 PREDICTION: " << GetNodeVisualName(fault.targetNode) 
-                  << " " << fault.equipmentType << " will fail in 24 hours (Health: " 
-                  << (fault.currentHealthLevel * 100) << "%)" << std::endl;
-    } else if (eventType == "equipment_failure") {
-        std::cout << "🚨 TST-03 FAILURE: " << GetNodeVisualName(fault.targetNode) 
-                  << " " << fault.equipmentType << " has failed!" << std::endl;
-    }
-}
-
-void ITU_Competition_Rural_Network::AnnounceFalsePositiveEvent(const FalsePositivePattern& event, const std::string& eventType)
-{
-    falsePositiveLogFile << Simulator::Now().GetSeconds() << "," 
-                        << event.targetNode << "," 
-                        << event.triggerType << "," 
-                        << event.anomalyMagnitude << ","
-                        << event.contextualInfo << "," 
-                        << eventType << std::endl;
-    
-    if (eventType == "false_positive_active") {
-        std::cout << "🎭 TST-04 FALSE POSITIVE: " << GetNodeVisualName(event.targetNode) 
-                  << " " << event.triggerType << " (Legitimate: " << event.contextualInfo << ")" << std::endl;
-    }
-}
-
-void ITU_Competition_Rural_Network::AnnounceIntentEvent(const IntentTranslationScenario& scenario, const std::string& eventType)
-{
-    intentTranslationLogFile << Simulator::Now().GetSeconds() << "," 
-                            << scenario.intentId << "," 
-                            << scenario.intentDescription << "," 
-                            << eventType << std::endl;
-    
-    if (eventType == "intent_executing") {
-        std::cout << "🎯 TST-05 INTENT: Executing \"" << scenario.intentDescription << "\"" << std::endl;
-    } else if (eventType == "intent_completed") {
-        std::cout << "✅ TST-05 INTENT: Completed \"" << scenario.intentDescription << "\"" << std::endl;
+        std::cout << "✅ RANDOMIZED FAULT RESOLVED: " << fault.faultDescription << std::endl;
     }
 }
 
@@ -1904,15 +1539,15 @@ void ITU_Competition_Rural_Network::LogFaultEvent(const FaultEvent& event)
         faultLogFile << event.affectedNodes[i];
         if (i < event.affectedNodes.size() - 1) faultLogFile << ";";
     }
-    faultLogFile << "," << event.description << "," << event.visualEffect << std::endl;
+    faultLogFile << "," << event.description << "," << event.visualEffect << "," << event.severity << std::endl;
 }
 
-// **STEP 4E: Visualization Methods**
+// **STEP 4E: Visualization Methods with Severity-based Sizing**
 void ITU_Competition_Rural_Network::SetupRobustNetAnimVisualization()
 {
     if (!m_config.enableVisualization) return;
     
-    std::cout << "🎬 Setting up NetAnim visualization..." << std::endl;
+    std::cout << "🎬 Setting up NetAnim visualization with severity-based sizing..." << std::endl;
     
     std::string animFileName = m_config.outputPrefix + "_animation.xml";
     animInterface = new AnimationInterface(animFileName);
@@ -1923,6 +1558,7 @@ void ITU_Competition_Rural_Network::SetupRobustNetAnimVisualization()
         animInterface->UpdateNodeDescription(coreNodes.Get(i), GetNodeVisualName(i));
         animInterface->UpdateNodeColor(coreNodes.Get(i), 0, 0, 255); // Blue for core
         animInterface->UpdateNodeSize(i, i, 50, 50);
+        originalNodeSizes[i] = 50.0; // Store original size
     }
     
     for (uint32_t i = 0; i < distributionNodes.GetN(); ++i) {
@@ -1934,6 +1570,7 @@ void ITU_Competition_Rural_Network::SetupRobustNetAnimVisualization()
         animInterface->UpdateNodeDescription(distributionNodes.Get(i), GetNodeVisualName(nodeId));
         animInterface->UpdateNodeColor(distributionNodes.Get(i), 0, 255, 0); // Green for distribution
         animInterface->UpdateNodeSize(nodeId, nodeId, 40, 40);
+        originalNodeSizes[nodeId] = 40.0; // Store original size
     }
     
     for (uint32_t i = 0; i < accessNodes.GetN(); ++i) {
@@ -1945,9 +1582,10 @@ void ITU_Competition_Rural_Network::SetupRobustNetAnimVisualization()
         animInterface->UpdateNodeDescription(accessNodes.Get(i), GetNodeVisualName(nodeId));
         animInterface->UpdateNodeColor(accessNodes.Get(i), 255, 165, 0); // Orange for access
         animInterface->UpdateNodeSize(nodeId, nodeId, 30, 30);
+        originalNodeSizes[nodeId] = 30.0; // Store original size
     }
     
-    std::cout << "✅ NetAnim visualization configured" << std::endl;
+    std::cout << "✅ NetAnim visualization configured with severity-based node sizing" << std::endl;
 }
 
 void ITU_Competition_Rural_Network::ProcessFaultVisualization()
@@ -1967,31 +1605,6 @@ void ITU_Competition_Rural_Network::UpdateVisualFaultIndicators()
             } else if (fault.faultType == "power_fluctuation") {
                 ShowPowerIssue(fault.targetNode);
             }
-        }
-    }
-    
-    // Update equipment degradation indicators
-    for (const auto& equipFault : equipmentDegradationFaults) {
-        if (equipFault.currentHealthLevel < 0.5) {
-            ShowEquipmentDegradation(equipFault.targetNode, equipFault.equipmentType);
-        }
-    }
-    
-    // Update false positive indicators
-    double currentTime = Simulator::Now().GetSeconds();
-    for (const auto& fpEvent : falsePositiveEvents) {
-        double eventStart = fpEvent.eventStartTime.GetSeconds();
-        double eventEnd = eventStart + fpEvent.eventDuration.GetSeconds();
-        
-        if (currentTime >= eventStart && currentTime <= eventEnd) {
-            ShowFalsePositiveIndicator(fpEvent.targetNode, fpEvent.triggerType);
-        }
-    }
-    
-    // Update intent execution indicators
-    for (const auto& intent : intentScenarios) {
-        if (intent.status == "executing") {
-            ShowIntentExecution(intent.affectedNodes);
         }
     }
 }
@@ -2074,41 +1687,7 @@ void ITU_Competition_Rural_Network::HidePowerIssue(uint32_t nodeId)
     std::cout << "🎬 VISUAL: Power issue resolved for " << GetNodeVisualName(nodeId) << std::endl;
 }
 
-void ITU_Competition_Rural_Network::ShowEquipmentDegradation(uint32_t nodeId, const std::string& equipmentType)
-{
-    if (!animInterface) return;
-    
-    animInterface->UpdateNodeColor(allNodes.Get(nodeId), 255, 100, 0); // Orange-red for degradation
-    UpdateNodeVisualStatus(nodeId, "🔧 " + equipmentType + " DEG");
-    
-    std::cout << "🎬 VISUAL: Equipment degradation shown for " << GetNodeVisualName(nodeId) 
-              << " (" << equipmentType << ")" << std::endl;
-}
-
-void ITU_Competition_Rural_Network::ShowFalsePositiveIndicator(uint32_t nodeId, const std::string& triggerType)
-{
-    if (!animInterface) return;
-    
-    animInterface->UpdateNodeColor(allNodes.Get(nodeId), 255, 0, 255); // Magenta for false positive
-    UpdateNodeVisualStatus(nodeId, "🎭 " + triggerType);
-    
-    std::cout << "🎬 VISUAL: False positive indicator shown for " << GetNodeVisualName(nodeId) 
-              << " (" << triggerType << ")" << std::endl;
-}
-
-void ITU_Competition_Rural_Network::ShowIntentExecution(const std::vector<uint32_t>& affectedNodes)
-{
-    if (!animInterface) return;
-    
-    for (uint32_t nodeId : affectedNodes) {
-        animInterface->UpdateNodeColor(allNodes.Get(nodeId), 0, 255, 255); // Cyan for intent execution
-        UpdateNodeVisualStatus(nodeId, "🎯 INTENT EXEC");
-    }
-    
-    std::cout << "🎬 VISUAL: Intent execution shown for " << affectedNodes.size() << " nodes" << std::endl;
-}
-
-// **STEP 4F: Output File Methods**
+// **STEP 4F: Output File Methods (Simplified)**
 void ITU_Competition_Rural_Network::WriteTopologyInfo()
 {
     if (!topologyFile.is_open()) return;
@@ -2122,11 +1701,13 @@ void ITU_Competition_Rural_Network::WriteTopologyInfo()
     topologyFile << "    \"simulation_time\": " << m_config.totalSimulationTime << ",\n";
     topologyFile << "    \"data_collection_interval\": " << m_config.dataCollectionInterval << "\n";
     topologyFile << "  },\n";
-    topologyFile << "  \"test_cases_enabled\": {\n";
-    topologyFile << "    \"fiber_cut_power_fluctuation\": true,\n";
-    topologyFile << "    \"equipment_degradation\": " << (m_config.enableEquipmentDegradation ? "true" : "false") << ",\n";
-    topologyFile << "    \"false_positive_injection\": " << (m_config.enableFalsePositiveInjection ? "true" : "false") << ",\n";
-    topologyFile << "    \"intent_translation\": " << (m_config.enableIntentTranslation ? "true" : "false") << "\n";
+    topologyFile << "  \"randomized_faults\": {\n";
+    topologyFile << "    \"enabled\": " << (m_config.enableRandomizedFaults ? "true" : "false") << ",\n";
+    topologyFile << "    \"min_fault_interval\": " << m_config.minFaultInterval << ",\n";
+    topologyFile << "    \"max_fault_interval\": " << m_config.maxFaultInterval << ",\n";
+    topologyFile << "    \"fiber_cut_probability\": " << m_config.fiberCutProbability << ",\n";
+    topologyFile << "    \"max_simultaneous_faults\": " << m_config.maxSimultaneousFaults << ",\n";
+    topologyFile << "    \"severity_based_visualization\": true\n";
     topologyFile << "  },\n";
     topologyFile << "  \"agent_integration\": {\n";
     topologyFile << "    \"enabled\": " << (m_config.enableAgentIntegration ? "true" : "false") << ",\n";
@@ -2146,7 +1727,8 @@ void ITU_Competition_Rural_Network::WriteConfigurationInfo()
     configFile << "    \"high_speed_network\": " << (m_config.useHighSpeedNetwork ? "true" : "false") << ",\n";
     configFile << "    \"visualization_enabled\": " << (m_config.enableVisualization ? "true" : "false") << ",\n";
     configFile << "    \"fault_visualization_enabled\": " << (m_config.enableFaultVisualization ? "true" : "false") << ",\n";
-    configFile << "    \"database_generation\": " << (m_config.enableDatabaseGeneration ? "true" : "false") << "\n";
+    configFile << "    \"randomized_faults_enabled\": " << (m_config.enableRandomizedFaults ? "true" : "false") << ",\n";
+    configFile << "    \"severity_based_sizing_enabled\": true\n";
     configFile << "  },\n";
     configFile << "  \"timing\": {\n";
     configFile << "    \"total_simulation_time\": " << m_config.totalSimulationTime << ",\n";
@@ -2160,15 +1742,15 @@ void ITU_Competition_Rural_Network::WriteConfigurationInfo()
 void ITU_Competition_Rural_Network::WriteFaultEventLog()
 {
     // Fault events are written in real-time during the simulation
-    // This method can be used for final summary if needed
 }
-// **STEP 5: Main Run() Method and Complete Simulation Execution**
 
+// **STEP 5: Main Run() Method and Complete Simulation Execution**
 void ITU_Competition_Rural_Network::Run()
 {
     std::cout << "\n=== ITU COMPETITION RURAL NETWORK SIMULATION START ===" << std::endl;
     std::cout << "🏆 Competition Mode: AI-Native Self-Healing Rural Network" << std::endl;
-    std::cout << "🎯 Test Cases: ALL 5 (TST-01 through TST-05)" << std::endl;
+    std::cout << "🎲 Randomized Fault Injection: ENABLED" << std::endl;
+    std::cout << "📏 Severity-based Node Sizing: ENABLED" << std::endl;
     std::cout << "🤖 Agent Integration: " << (m_config.enableAgentIntegration ? "ENABLED" : "DISABLED") << std::endl;
     
     // **PHASE 1: Infrastructure Setup**
@@ -2180,12 +1762,12 @@ void ITU_Competition_Rural_Network::Run()
     if (m_config.enableVisualization) {
         std::cout << "\n--- PHASE 2: VISUALIZATION SETUP ---" << std::endl;
         SetupRobustNetAnimVisualization();
-        std::cout << "✅ NetAnim visualization ready for fault demonstration" << std::endl;
+        std::cout << "✅ NetAnim visualization ready with severity-based sizing" << std::endl;
     }
     
-    // **PHASE 3: Fault Pattern Scheduling**
-    std::cout << "\n--- PHASE 3: FAULT PATTERN SCHEDULING ---" << std::endl;
-    ScheduleAllFaultPatterns();
+    // **PHASE 3: Randomized Fault Pattern Scheduling**
+    std::cout << "\n--- PHASE 3: RANDOMIZED FAULT PATTERN SCHEDULING ---" << std::endl;
+    ScheduleRandomizedFaultPatterns();
     
     // **PHASE 4: Monitoring Setup**
     std::cout << "\n--- PHASE 4: MONITORING SETUP ---" << std::endl;
@@ -2234,9 +1816,6 @@ void ITU_Competition_Rural_Network::Run()
     if (topologyFile.is_open()) topologyFile.close();
     if (configFile.is_open()) configFile.close();
     if (faultLogFile.is_open()) faultLogFile.close();
-    if (equipmentDegradationLogFile.is_open()) equipmentDegradationLogFile.close();
-    if (falsePositiveLogFile.is_open()) falsePositiveLogFile.close();
-    if (intentTranslationLogFile.is_open()) intentTranslationLogFile.close();
     
     // Save flow monitor data
     std::string flowMonFileName = m_config.outputPrefix + "_flowmon.xml";
@@ -2262,6 +1841,11 @@ void ITU_Competition_Rural_Network::Run()
         healingEngine = nullptr;
     }
     
+    if (faultGenerator) {
+        delete faultGenerator;
+        faultGenerator = nullptr;
+    }
+    
     Simulator::Destroy();
     
     std::cout << "\n=== ITU COMPETITION RURAL NETWORK SIMULATION COMPLETE ===" << std::endl;
@@ -2278,35 +1862,28 @@ void ITU_Competition_Rural_Network::GenerateFinalStatistics()
         faultTypeCounts[event.faultType]++;
     }
     
-    std::cout << "🚨 Fault Events Summary:" << std::endl;
+    std::cout << "🚨 Randomized Fault Events Summary:" << std::endl;
     for (const auto& pair : faultTypeCounts) {
         std::cout << "  - " << pair.first << ": " << pair.second << " events" << std::endl;
     }
     
-    // Equipment degradation statistics
-    int equipmentFailures = 0;
-    int predictiveWarnings = 0;
-    for (const auto& equip : equipmentDegradationFaults) {
-        if (equip.currentHealthLevel <= 0.05) equipmentFailures++;
-        if (equip.predictionTriggered) predictiveWarnings++;
+    // Calculate severity statistics
+    double totalSeverity = 0.0;
+    double maxSeverity = 0.0;
+    int severeFaults = 0;
+    
+    for (const auto& fault : gradualFaults) {
+        totalSeverity += fault.severity;
+        maxSeverity = std::max(maxSeverity, fault.severity);
+        if (fault.severity > 0.7) severeFaults++;
     }
     
-    std::cout << "🔧 Equipment Degradation (TST-03):" << std::endl;
-    std::cout << "  - Predictive warnings: " << predictiveWarnings << std::endl;
-    std::cout << "  - Equipment failures: " << equipmentFailures << std::endl;
+    double avgSeverity = gradualFaults.empty() ? 0.0 : totalSeverity / gradualFaults.size();
     
-    // False positive statistics
-    std::cout << "🎭 False Positive Events (TST-04): " << falsePositiveEvents.size() << std::endl;
-    
-    // Intent translation statistics
-    int completedIntents = 0;
-    for (const auto& intent : intentScenarios) {
-        if (intent.status == "completed") completedIntents++;
-    }
-    
-    std::cout << "🎯 Intent Translation (TST-05):" << std::endl;
-    std::cout << "  - Total intents: " << intentScenarios.size() << std::endl;
-    std::cout << "  - Completed: " << completedIntents << std::endl;
+    std::cout << "📊 Severity Statistics:" << std::endl;
+    std::cout << "  - Average severity: " << (avgSeverity * 100) << "%" << std::endl;
+    std::cout << "  - Maximum severity: " << (maxSeverity * 100) << "%" << std::endl;
+    std::cout << "  - Severe faults (>70%): " << severeFaults << std::endl;
     
     // Healing plan statistics
     std::cout << "💊 Healing Plans: " << activeHealingPlans.size() << " deployed" << std::endl;
@@ -2320,28 +1897,28 @@ void ITU_Competition_Rural_Network::PrintSimulationSummary()
     std::cout << "🌐 Network Type: Rural self-healing mesh with OLSR routing" << std::endl;
     std::cout << "⚡ Energy Model: Solar harvesting for access nodes" << std::endl;
     std::cout << "📊 Data Collection: " << (int)(m_config.totalSimulationTime / m_config.dataCollectionInterval) << " data points" << std::endl;
+    std::cout << "🎲 Fault Injection: Randomized with severity-based visualization" << std::endl;
     std::cout << "🔧 Test Cases Implemented:" << std::endl;
-    std::cout << "  ✅ TST-01/02: Fiber cut & power fluctuation" << std::endl;
-    std::cout << "  ✅ TST-03: Equipment degradation with 24h prediction" << std::endl;
-    std::cout << "  ✅ TST-04: False positive injection with context" << std::endl;
-    std::cout << "  ✅ TST-05: Intent translation with LLM integration" << std::endl;
+    std::cout << "  ✅ TST-01/02: Randomized fiber cut & power fluctuation" << std::endl;
+    std::cout << "  📏 Severity-based node sizing: ENABLED" << std::endl;
     std::cout << "🤖 Agent Integration: " << (m_config.enableAgentIntegration ? "READY" : "DISABLED") << std::endl;
     std::cout << "📁 Output Files Generated:" << std::endl;
     std::cout << "  - " << m_config.outputPrefix << "_network_metrics.csv" << std::endl;
     std::cout << "  - " << m_config.outputPrefix << "_topology.json" << std::endl;
     std::cout << "  - " << m_config.outputPrefix << "_fault_events.log" << std::endl;
-    std::cout << "  - " << m_config.outputPrefix << "_equipment_degradation.log" << std::endl;
-    std::cout << "  - " << m_config.outputPrefix << "_false_positives.log" << std::endl;
-    std::cout << "  - " << m_config.outputPrefix << "_intent_translation.log" << std::endl;
     std::cout << "  - " << m_config.outputPrefix << "_flowmon.xml" << std::endl;
     if (m_config.enableVisualization) {
         std::cout << "  - " << m_config.outputPrefix << "_animation.xml" << std::endl;
     }
+    std::cout << "🎲 Randomized Fault Parameters:" << std::endl;
+    std::cout << "  - Fault interval: " << m_config.minFaultInterval << "-" << m_config.maxFaultInterval << " seconds" << std::endl;
+    std::cout << "  - Fault duration: " << m_config.minFaultDuration << "-" << m_config.maxFaultDuration << " seconds" << std::endl;
+    std::cout << "  - Fiber cut probability: " << (m_config.fiberCutProbability * 100) << "%" << std::endl;
+    std::cout << "  - Max simultaneous faults: " << m_config.maxSimultaneousFaults << std::endl;
     std::cout << "================================================" << std::endl;
 }
 
-// **STEP 5B: Enhanced main() Function with Competition Options**
-
+// **MAIN FUNCTION**
 int main(int argc, char *argv[])
 {
     std::cout << "\n🏆 ITU FG-AINN COMPETITION: AI-NATIVE SELF-HEALING RURAL NETWORK" << std::endl;
@@ -2356,7 +1933,6 @@ int main(int argc, char *argv[])
     bool enableVisual = false;
     bool enableFaultVis = false;
     bool enableAgents = true;
-    bool enableAllTestCases = true;
     double simulationTime = 0.0; // Auto-calculate if 0
     double dataInterval = 5.0;
     std::string outputPrefix = "itu_competition";
@@ -2369,7 +1945,6 @@ int main(int argc, char *argv[])
     cmd.AddValue("enableVisual", "Enable NetAnim visualization", enableVisual);
     cmd.AddValue("enableFaultVis", "Enable fault visualization", enableFaultVis);
     cmd.AddValue("enableAgents", "Enable agent integration", enableAgents);
-    cmd.AddValue("enableAllTestCases", "Enable all 5 test cases", enableAllTestCases);
     cmd.AddValue("outputPrefix", "Output file prefix", outputPrefix);
     
     cmd.Parse(argc, argv);
@@ -2381,7 +1956,7 @@ int main(int argc, char *argv[])
         config = ITU_Competition_Rural_Network::CreateITU_CompetitionConfig(targetDataPoints);
         std::cout << "🎯 Mode: ITU Competition (Production)" << std::endl;
     } else if (mode == "demo") {
-        config = ITU_Competition_Rural_Network::CreateAllTestCasesConfig();
+        config = ITU_Competition_Rural_Network::CreateRandomizedFaultConfig();
         std::cout << "🎬 Mode: Visual Demonstration" << std::endl;
     } else if (mode == "test") {
         config = ITU_Competition_Rural_Network::CreateITU_CompetitionConfig(100); // Quick test
@@ -2405,12 +1980,6 @@ int main(int argc, char *argv[])
     config.enableAgentIntegration = enableAgents;
     config.outputPrefix = outputPrefix;
     
-    if (!enableAllTestCases) {
-        config.enableEquipmentDegradation = false;
-        config.enableFalsePositiveInjection = false;
-        config.enableIntentTranslation = false;
-    }
-    
     // Display configuration
     std::cout << "\n📋 SIMULATION CONFIGURATION:" << std::endl;
     std::cout << "  Duration: " << config.totalSimulationTime << " seconds" << std::endl;
@@ -2418,7 +1987,8 @@ int main(int argc, char *argv[])
     std::cout << "  Collection interval: " << config.dataCollectionInterval << " seconds" << std::endl;
     std::cout << "  Visualization: " << (config.enableVisualization ? "ENABLED" : "DISABLED") << std::endl;
     std::cout << "  Agent integration: " << (config.enableAgentIntegration ? "ENABLED" : "DISABLED") << std::endl;
-    std::cout << "  All test cases: " << (enableAllTestCases ? "ENABLED" : "DISABLED") << std::endl;
+    std::cout << "  Randomized faults: ENABLED" << std::endl;
+    std::cout << "  Severity-based sizing: ENABLED" << std::endl;
     std::cout << "  Output prefix: " << config.outputPrefix << std::endl;
     
     // Estimate execution time
@@ -2439,9 +2009,9 @@ int main(int argc, char *argv[])
             std::cout << "\n🤖 NEXT STEPS FOR ITU COMPETITION:" << std::endl;
             std::cout << "1. Run Monitor Agent: python3 monitor_agent.py" << std::endl;
             std::cout << "2. Run Calculation Agent: python3 calculation_agent.py" << std::endl;
-            std::cout << "3. Run Healing Agent: python3 healing_agent.py" << std::endl;
-            std::cout << "4. Run Orchestration Agent: python3 orchestration_agent.py" << std::endl;
-            std::cout << "5. Observe closed-loop self-healing in action!" << std::endl;
+            std::cout << "3. Run Combined Healing & Orchestration Agent: python3 healORCH.py" << std::endl;
+            std::cout << "4. Observe closed-loop self-healing in action!" << std::endl;
+            std::cout << "5. Watch severity-based node sizing in NetAnim!" << std::endl;
         }
         
         return 0;

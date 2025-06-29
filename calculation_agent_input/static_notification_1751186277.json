@@ -1,0 +1,18 @@
+{
+  "notification_type": "new_static_data_available",
+  "timestamp": "2025-06-29T14:07:57.086209",
+  "source_agent": "enhanced_monitor_agent",
+  "target_agent": "calculation_agent",
+  "data_file": "calculation_agent_input/calculation_input_1751186277.json",
+  "data_summary": {
+    "metrics_count": 50,
+    "fault_events_count": 0,
+    "ready_for_training": true,
+    "data_source": "static_files"
+  },
+  "processing_suggestions": {
+    "priority": "normal",
+    "lstm_batch_processing": true,
+    "anomaly_detection_mode": "batch_training"
+  }
+}
