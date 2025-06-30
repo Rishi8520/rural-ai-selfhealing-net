@@ -4,6 +4,7 @@
  * Implements TST-01, TST-02 with Randomized Fault Injection
  * Features: Randomized Fiber Cut & Power Fluctuation with Severity-Based Visualization
  * Enhanced Agent Integration with Closed-Loop Healing
+ * ./ns3 run "rural_network_50nodes --mode=itu_competition --enableAgents=true --targetDataPoints=500"
  */
 #define _USE_MATH_DEFINES
 #include "ns3/core-module.h"
@@ -28,7 +29,10 @@
 #include <cmath>
 #include <sstream>
 #include <random>
-
+#include <cstring>      
+#include <cstdlib>      
+#include <filesystem>
+using json = std::map<std::string, std::string>;
 using namespace ns3;
 
 NS_LOG_COMPONENT_DEFINE ("ITU_Competition_Rural_Network");
@@ -61,7 +65,7 @@ struct SimulationConfig {
     // **NEW: Agent integration**
     bool enableAgentIntegration;
     bool enableHealingDeployment;
-    std::string agentInterfaceDir;
+    std::string agentInterfaceDir = "/media/rishi/Windows-SSD/PROJECT_&_RESEARCH/NOKIA/Buil-a-thon/rural_ai_selfhealing_net/ns3_integration/agent_interface";
     
     // **NEW: Randomized fault parameters**
     bool enableRandomizedFaults;
@@ -250,11 +254,10 @@ private:
     // **ENHANCED: Randomized fault patterns**
     std::vector<GradualFaultPattern> gradualFaults;
     std::vector<FaultEvent> faultEvents;
-    RandomizedFaultGenerator* faultGenerator;
-    
+    HealingDeploymentEngine* healingEngine;
     // **NEW: Agent integration**
     AgentIntegrationAPI* agentAPI;
-    HealingDeploymentEngine* healingEngine;
+    RandomizedFaultGenerator* faultGenerator;
     std::vector<HealingPlan> activeHealingPlans;
     
     // **NEW: Severity-based node sizing**
@@ -286,12 +289,18 @@ private:
     void ApplySeverityBasedNodeSizing(uint32_t nodeId, double severity);
     void RestoreOriginalNodeSize(uint32_t nodeId);
     void UpdateNodeSizeBasedOnSeverity(const GradualFaultPattern& fault);
+    void CheckForOrchestrationDeployments();
+    void ExecuteHealingDeployment(const std::map<std::string, std::string>& deploymentData);
     
     std::string GetNodeVisualName(uint32_t nodeId);
     void HideFiberLink(uint32_t nodeA, uint32_t nodeB);
     void RestoreFiberLink(uint32_t nodeA, uint32_t nodeB);
     void ShowPowerIssue(uint32_t nodeId);
     void HidePowerIssue(uint32_t nodeId);
+    void ProcessDeploymentFile(const std::string& filePath);
+    void ExecuteHealingCommand(uint32_t nodeId, const std::string& command);
+    void GenerateFinalStatistics();
+    void PrintSimulationSummary();
     
     // **NEW: Agent integration methods**
     void InitializeAgentIntegration();
@@ -305,6 +314,8 @@ private:
     void WriteTopologyInfo();
     void WriteConfigurationInfo();
     void WriteFaultEventLog();
+    void WriteNodeConnectivity();
+    void WriteDetailedTopology();
     double GetTimeOfDayMultiplier();
     double GetTrafficPatternMultiplier();
     double GetSeasonalVariation();
@@ -360,7 +371,7 @@ SimulationConfig ITU_Competition_Rural_Network::CreateITU_CompetitionConfig(int 
     // **NEW: Agent integration**
     config.enableAgentIntegration = true;
     config.enableHealingDeployment = true;
-    config.agentInterfaceDir = "agent_interface";
+    config.agentInterfaceDir = "ns3_integration/agent_interface";
     
     // **NEW: Randomized fault parameters**
     config.enableRandomizedFaults = true;
@@ -406,7 +417,7 @@ SimulationConfig ITU_Competition_Rural_Network::CreateRandomizedFaultConfig()
     // **NEW: Agent integration with visual feedback**
     config.enableAgentIntegration = true;
     config.enableHealingDeployment = true;
-    config.agentInterfaceDir = "agent_interface";
+    config.agentInterfaceDir = "ns3_integration/agent_interface";
     
     // **NEW: Aggressive randomized fault parameters for demo**
     config.enableRandomizedFaults = true;
@@ -434,7 +445,7 @@ SimulationConfig ITU_Competition_Rural_Network::CreateRandomizedFaultConfig()
 
 // **ENHANCED: Constructor with randomized fault generation**
 ITU_Competition_Rural_Network::ITU_Competition_Rural_Network(const SimulationConfig& config) 
-    : m_config(config), animInterface(nullptr), agentAPI(nullptr), healingEngine(nullptr), faultGenerator(nullptr)
+    : m_config(config), animInterface(nullptr), healingEngine(nullptr), agentAPI(nullptr), faultGenerator(nullptr)
 {
     // **NEW: Initialize enhanced output files**
     std::string metricsFileName = m_config.outputPrefix + "_network_metrics.csv";
@@ -656,57 +667,6 @@ void AgentIntegrationAPI::ExportRealTimeFaultEvents(const std::vector<FaultEvent
     }
 }
 
-bool AgentIntegrationAPI::CheckForHealingPlans()
-{
-    std::ifstream file(healingPlansFile);
-    return file.good();
-}
-
-std::vector<HealingPlan> AgentIntegrationAPI::LoadHealingPlans()
-{
-    std::vector<HealingPlan> plans;
-    std::ifstream jsonFile(healingPlansFile);
-    
-    if (!jsonFile.is_open()) {
-        return plans;
-    }
-    
-    // Simple JSON parsing for healing plans
-    std::string line;
-    std::string content;
-    while (std::getline(jsonFile, line)) {
-        content += line;
-    }
-    jsonFile.close();
-    
-    // Parse healing plans (simplified JSON parsing)
-    if (content.find("healing_plans") != std::string::npos) {
-        HealingPlan plan;
-        plan.planId = SimpleIdGenerator::GenerateId("HEAL");
-        plan.anomalyId = SimpleIdGenerator::GenerateId("ANOM");
-        plan.confidenceScore = 0.9;
-        plan.llmReasoning = "AI-generated healing plan from agents";
-        plan.deployed = false;
-        plan.successful = false;
-        
-        // Add basic healing actions
-        HealingAction action;
-        action.actionType = "reroute_traffic";
-        action.priority = 1;
-        action.estimatedDuration = 30.0;
-        plan.actions.push_back(action);
-        
-        plans.push_back(plan);
-        
-        std::cout << "📥 Loaded healing plan: " << plan.planId << std::endl;
-    }
-    
-    // Remove file after processing
-    remove(healingPlansFile.c_str());
-    
-    return plans;
-}
-
 void AgentIntegrationAPI::WriteDeploymentStatus(const std::string& planId, bool success, const std::string& details)
 {
     std::ofstream jsonFile(deploymentStatusFile);
@@ -773,6 +733,33 @@ void HealingDeploymentEngine::ExecuteRerouteTraffic(const HealingAction& action)
     
     std::cout << "✅ Traffic rerouting completed" << std::endl;
 }
+
+void HealingDeploymentEngine::ShowHealingInProgress(uint32_t nodeId, AnimationInterface* animInterface, NodeContainer& allNodes)
+{
+    if (!animInterface) return;
+    
+    std::cout << "🔄 HEALING: Showing healing in progress for node " << nodeId << std::endl;
+    
+    // Turn node CYAN to indicate healing in progress
+    animInterface->UpdateNodeColor(allNodes.Get(nodeId), 153, 255, 255); // Light Cyan #99FFFF
+    animInterface->UpdateNodeDescription(allNodes.Get(nodeId), "💊 HEALING IN PROGRESS");
+    
+    std::cout << "🎬 VISUAL: Node " << nodeId << " turned CYAN (healing started)" << std::endl;
+}
+
+void HealingDeploymentEngine::ShowHealingCompleted(uint32_t nodeId, AnimationInterface* animInterface, NodeContainer& allNodes)
+{
+    if (!animInterface) return;
+    
+    std::cout << "✅ HEALING: Showing healing completed for node " << nodeId << std::endl;
+    
+    // Turn node GREEN to indicate healing completed
+    animInterface->UpdateNodeColor(allNodes.Get(nodeId), 0, 255, 0); // Green
+    animInterface->UpdateNodeDescription(allNodes.Get(nodeId), "✅ HEALED");
+    
+    std::cout << "🎬 VISUAL: Node " << nodeId << " turned GREEN (healing completed)" << std::endl;
+}
+
 
 void HealingDeploymentEngine::ExecuteActivateBackupPath(const HealingAction& action)
 {
@@ -940,7 +927,7 @@ void ITU_Competition_Rural_Network::ApplySeverityBasedNodeSizing(uint32_t nodeId
     double newSize = originalSize * (1.0 + severity * baseSeverityMultiplier);
     
     // Apply new size
-    animInterface->UpdateNodeSize(nodeId, nodeId, newSize, newSize);
+    animInterface->UpdateNodeSize(nodeId, newSize, newSize);
     
     std::cout << "📏 Node " << GetNodeVisualName(nodeId) << " size updated: " 
               << originalSize << " → " << newSize << " (severity: " << (severity * 100) << "%)" << std::endl;
@@ -953,7 +940,7 @@ void ITU_Competition_Rural_Network::RestoreOriginalNodeSize(uint32_t nodeId)
     auto it = originalNodeSizes.find(nodeId);
     if (it != originalNodeSizes.end()) {
         double originalSize = it->second;
-        animInterface->UpdateNodeSize(nodeId, nodeId, originalSize, originalSize);
+        animInterface->UpdateNodeSize(nodeId, originalSize, originalSize);
         
         std::cout << "📏 Node " << GetNodeVisualName(nodeId) << " size restored to: " << originalSize << std::endl;
     }
@@ -976,13 +963,12 @@ void ITU_Competition_Rural_Network::SetupRobustTopology()
     std::cout << "✅ Created " << allNodes.GetN() << " nodes (5 Core + 15 Dist + 30 Access)" << std::endl;
     
     // Setup each layer
-    SetupCoreLayer();
-    SetupDistributionLayer();
-    SetupAccessLayer();
-    
     // Install internet stack
     stack.Install(allNodes);
     std::cout << "✅ Internet stack installed on all nodes" << std::endl;
+    SetupCoreLayer();
+    SetupDistributionLayer();
+    SetupAccessLayer();
     
     // Setup routing
     SetupRobustRouting();
@@ -1145,12 +1131,14 @@ void ITU_Competition_Rural_Network::SetupEnergyModel()
     // Install energy source on all nodes
     BasicEnergySourceHelper basicSourceHelper;
     basicSourceHelper.Set("BasicEnergySourceInitialEnergyJ", DoubleValue(10000.0)); // 10kJ initial
-    EnergySourceContainer sources = basicSourceHelper.Install(allNodes);
+    energy::EnergySourceContainer sources = basicSourceHelper.Install(allNodes);
     
     // Install energy harvesting for access nodes (solar panels)
     BasicEnergyHarvesterHelper harvesterHelper;
     harvesterHelper.Set("PeriodicHarvestedPowerUpdateInterval", TimeValue(Seconds(60.0)));
-    harvesterHelper.Set("HarvestingPower", StringValue("ns3::UniformRandomVariable[Min=10.0|Max=50.0]"));
+    
+    // **FIXED: Change HarvestingPower to HarvestablePower**
+    harvesterHelper.Set("HarvestablePower", StringValue("ns3::UniformRandomVariable[Min=10.0|Max=50.0]"));
     
     // Only access nodes have energy harvesting (rural solar panels)
     for (uint32_t i = 0; i < accessNodes.GetN(); ++i) {
@@ -1442,29 +1430,261 @@ double ITU_Competition_Rural_Network::CalculateNodeDegradation(uint32_t nodeId, 
     return degradation;
 }
 
-// **STEP 4C: Agent Communication Methods (Unchanged)**
+// **STEP 4C: Agent Communication Methods (Unchanged)*
 void ITU_Competition_Rural_Network::ProcessAgentCommunication()
 {
     if (!m_config.enableAgentIntegration || !agentAPI) return;
     
-    // Check for incoming healing plans
+    // NEW: Check for deployment files from orchestration agent
+    CheckForOrchestrationDeployments();
+    
+    // Existing: Check for healing plans
     if (agentAPI->CheckForHealingPlans()) {
         ProcessIncomingHealingPlans();
     }
 }
 
+bool AgentIntegrationAPI::CheckForHealingPlans()
+{
+    // Simple check if healing plans file exists and has been recently modified
+    std::ifstream file(healingPlansFile);
+    return file.good();
+}
+
+std::vector<HealingPlan> AgentIntegrationAPI::LoadHealingPlans()
+{
+    std::vector<HealingPlan> plans;
+    
+    try {
+        std::ifstream file(healingPlansFile);
+        if (file.is_open()) {
+            std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+            file.close();
+            
+            // Simple healing plan loading (this is a simplified implementation)
+            if (content.find("healing_plans") != std::string::npos) {
+                HealingPlan plan;
+                plan.planId = "PLAN_" + std::to_string(time(nullptr));
+                plan.anomalyId = "ANOMALY_DETECTED";
+                plan.confidenceScore = 0.85;
+                plan.deployed = false;
+                plan.successful = false;
+                
+                // Create a simple healing action
+                HealingAction action;
+                action.actionType = "traffic_rerouting";
+                action.priority = 1;
+                action.estimatedDuration = 30.0;
+                
+                plan.actions.push_back(action);
+                plans.push_back(plan);
+                
+                std::cout << "📋 Loaded healing plan: " << plan.planId << std::endl;
+            }
+            
+            // Remove processed file
+            std::remove(healingPlansFile.c_str());
+        }
+    } catch (const std::exception& e) {
+        std::cout << "❌ Error loading healing plans: " << e.what() << std::endl;
+    }
+    
+    return plans;
+}
+
 void ITU_Competition_Rural_Network::ProcessIncomingHealingPlans()
 {
-    std::vector<HealingPlan> newPlans = agentAPI->LoadHealingPlans();
+    if (!agentAPI) return;
     
-    for (const auto& plan : newPlans) {
-        std::cout << "📥 Received healing plan: " << plan.planId << std::endl;
+    try {
+        // Load healing plans from agents
+        std::vector<HealingPlan> newPlans = agentAPI->LoadHealingPlans();
         
-        // Deploy the healing plan
-        DeployHealingPlan(plan);
+        for (const auto& plan : newPlans) {
+            std::cout << "📥 Processing healing plan: " << plan.planId << std::endl;
+            std::cout << "🎯 Target actions: " << plan.actions.size() << std::endl;
+            
+            // Add to active healing plans
+            activeHealingPlans.push_back(plan);
+            
+            // Deploy the healing plan
+            DeployHealingPlan(plan);
+        }
         
-        // Track active healing plans
-        activeHealingPlans.push_back(plan);
+    } catch (const std::exception& e) {
+        std::cout << "❌ Error processing healing plans: " << e.what() << std::endl;
+    }
+}
+
+
+void ITU_Competition_Rural_Network::CheckForOrchestrationDeployments()
+{
+    std::string deploymentsDir = "orchestration_deployments";
+    try {
+        // Check for deployment JSON files
+        std::filesystem::path deployPath(deploymentsDir);
+        if (!std::filesystem::exists(deployPath)) {
+            return; // Directory doesn't exist yet
+        }
+        
+        // Look for deployment_*.json files
+        for (const auto& entry : std::filesystem::directory_iterator(deployPath)) {
+            if (entry.is_regular_file()) {
+                std::string filename = entry.path().filename().string();
+                
+                // Check if it's a deployment file
+                if (filename.find("deployment_") == 0 && filename.find(".json") != std::string::npos) {
+                    std::cout << "📥 Found deployment file: " << filename << std::endl;
+                    
+                    // Process the deployment file
+                    ProcessDeploymentFile(entry.path().string());
+                    
+                    // Remove processed file
+                    std::filesystem::remove(entry.path());
+                    std::cout << "🗑️ Processed and removed: " << filename << std::endl;
+                }
+            }
+        }
+        
+    } catch (const std::exception& e) {
+        std::cout << "📁 No deployments found or error: " << e.what() << std::endl;
+    }
+}
+
+void ITU_Competition_Rural_Network::ProcessDeploymentFile(const std::string& filePath)
+{
+    try {
+        std::ifstream file(filePath);
+        if (!file.is_open()) {
+            std::cout << "❌ Failed to open deployment file: " << filePath << std::endl;
+            return;
+        }
+        
+        std::string content((std::istreambuf_iterator<char>(file)), std::istreambuf_iterator<char>());
+        file.close();
+        
+        std::cout << "📄 Processing deployment content..." << std::endl;
+        
+        // Simple JSON parsing for NS-3 commands
+        std::vector<std::string> ns3Commands;
+        std::vector<uint32_t> targetNodes;
+        
+        // Extract NS-3 commands (simple string search)
+        size_t pos = 0;
+        while ((pos = content.find("ExecutePowerFluctuationHealing", pos)) != std::string::npos) {
+            // Extract node ID from command
+            size_t nodeStart = content.find("(", pos) + 1;
+            size_t nodeEnd = content.find(")", nodeStart);
+            if (nodeStart != std::string::npos && nodeEnd != std::string::npos) {
+                std::string nodeStr = content.substr(nodeStart, nodeEnd - nodeStart);
+                
+                // Parse node ID (extract number from "node_XX")
+                size_t underscorePos = nodeStr.find("_");
+                if (underscorePos != std::string::npos) {
+                    std::string nodeIdStr = nodeStr.substr(underscorePos + 1);
+                    uint32_t nodeId = std::stoi(nodeIdStr);
+                    targetNodes.push_back(nodeId);
+                    ns3Commands.push_back("power_healing");
+                    std::cout << "🔧 Power healing command for node " << nodeId << std::endl;
+                }
+            }
+            pos++;
+        }
+        
+        // Extract fiber cut rerouting commands
+        pos = 0;
+        while ((pos = content.find("ExecuteFiberCutRerouting", pos)) != std::string::npos) {
+            size_t nodeStart = content.find("(", pos) + 1;
+            size_t nodeEnd = content.find(",", nodeStart);
+            if (nodeStart != std::string::npos && nodeEnd != std::string::npos) {
+                std::string nodeStr = content.substr(nodeStart, nodeEnd - nodeStart);
+                
+                // Parse node ID
+                size_t underscorePos = nodeStr.find("_");
+                if (underscorePos != std::string::npos) {
+                    std::string nodeIdStr = nodeStr.substr(underscorePos + 1);
+                    uint32_t nodeId = std::stoi(nodeIdStr);
+                    targetNodes.push_back(nodeId);
+                    ns3Commands.push_back("fiber_rerouting");
+                    std::cout << "🔧 Fiber rerouting command for node " << nodeId << std::endl;
+                }
+            }
+            pos++;
+        }
+        
+        // Execute healing commands
+        for (size_t i = 0; i < targetNodes.size() && i < ns3Commands.size(); ++i) {
+            ExecuteHealingCommand(targetNodes[i], ns3Commands[i]);
+        }
+        
+        std::cout << "✅ Deployment file processed successfully" << std::endl;
+        
+    } catch (const std::exception& e) {
+        std::cout << "❌ Error processing deployment file: " << e.what() << std::endl;
+    }
+}
+
+// NEW: Add this method to execute healing commands
+void ITU_Competition_Rural_Network::ExecuteHealingCommand(uint32_t nodeId, const std::string& command)
+{
+    std::cout << "🚀 Executing healing command: " << command << " for node " << nodeId << std::endl;
+    
+    if (command == "power_healing") {
+        // Execute power fluctuation healing
+        if (healingEngine && animInterface) {
+            healingEngine->ShowHealingInProgress(nodeId, animInterface, allNodes);
+            
+            // Schedule healing completion
+            Simulator::Schedule(Seconds(30), [this, nodeId]() {
+                healingEngine->ShowHealingCompleted(nodeId, animInterface, allNodes);
+                RestoreOriginalNodeSize(nodeId);
+                std::cout << "✅ Power healing completed for node " << nodeId << std::endl;
+            });
+        }
+        
+    } else if (command == "fiber_rerouting") {
+        // Execute fiber cut rerouting
+        if (healingEngine && animInterface) {
+            healingEngine->ShowHealingInProgress(nodeId, animInterface, allNodes);
+            
+            // Schedule healing completion
+            Simulator::Schedule(Seconds(45), [this, nodeId]() {
+                healingEngine->ShowHealingCompleted(nodeId, animInterface, allNodes);
+                RestoreOriginalNodeSize(nodeId);
+                std::cout << "✅ Fiber rerouting completed for node " << nodeId << std::endl;
+            });
+        }
+    }
+    
+    std::cout << "🎬 VISUAL: Healing initiated for node " << GetNodeVisualName(nodeId) << std::endl;
+}
+
+void ITU_Competition_Rural_Network::ExecuteHealingDeployment(const std::map<std::string, std::string>& deploymentData)
+{
+    try {
+        // Simple deployment execution
+        auto nodeIdIt = deploymentData.find("node_id");
+        if (nodeIdIt != deploymentData.end()) {
+            uint32_t nodeId = std::stoi(nodeIdIt->second);
+            
+            std::cout << "✅ Healing deployment executed for node " << nodeId << std::endl;
+            
+            // Show healing in progress immediately
+            if (healingEngine && animInterface) {
+                healingEngine->ShowHealingInProgress(nodeId, animInterface, allNodes);
+            }
+            
+            // Schedule healing completion after 30 seconds
+            Simulator::Schedule(Seconds(30), [this, nodeId]() {
+                if (healingEngine && animInterface) {
+                    healingEngine->ShowHealingCompleted(nodeId, animInterface, allNodes);
+                }
+                RestoreOriginalNodeSize(nodeId);
+            });
+        }
+        
+    } catch (const std::exception& e) {
+        std::cout << "❌ Error executing simple healing deployment: " << e.what() << std::endl;
     }
 }
 
@@ -1484,13 +1704,13 @@ void ITU_Competition_Rural_Network::DeployHealingPlan(const HealingPlan& plan)
         if (m_config.enableVisualization && animInterface) {
             for (const auto& action : plan.actions) {
                 for (uint32_t nodeId : action.targetNodes) {
-                    healingEngine->ShowHealingInProgress(nodeId, animInterface, allNodes);
+                    std::cout << "🔄 Healing in progress for node " << nodeId << std::endl;
                     
                     // Schedule showing completion after estimated duration
                     Simulator::Schedule(Seconds(action.estimatedDuration), 
                         [this, nodeId]() {
                             if (healingEngine && animInterface) {
-                                healingEngine->ShowHealingCompleted(nodeId, animInterface, allNodes);
+                                std::cout << "✅ Healing completed for node " << nodeId << std::endl;
                             }
                         });
                 }
@@ -1557,7 +1777,7 @@ void ITU_Competition_Rural_Network::SetupRobustNetAnimVisualization()
         animInterface->SetConstantPosition(coreNodes.Get(i), 200 + i * 100, 200, 0);
         animInterface->UpdateNodeDescription(coreNodes.Get(i), GetNodeVisualName(i));
         animInterface->UpdateNodeColor(coreNodes.Get(i), 0, 0, 255); // Blue for core
-        animInterface->UpdateNodeSize(i, i, 50, 50);
+        animInterface->UpdateNodeSize(i, 50, 50);
         originalNodeSizes[i] = 50.0; // Store original size
     }
     
@@ -1568,8 +1788,8 @@ void ITU_Competition_Rural_Network::SetupRobustNetAnimVisualization()
         double y = 200 + 150 * sin(angle);
         animInterface->SetConstantPosition(distributionNodes.Get(i), x, y, 0);
         animInterface->UpdateNodeDescription(distributionNodes.Get(i), GetNodeVisualName(nodeId));
-        animInterface->UpdateNodeColor(distributionNodes.Get(i), 0, 255, 0); // Green for distribution
-        animInterface->UpdateNodeSize(nodeId, nodeId, 40, 40);
+        animInterface->UpdateNodeColor(distributionNodes.Get(i), 255, 192, 203);  // Pink for distribution
+        animInterface->UpdateNodeSize(nodeId, 40, 40);
         originalNodeSizes[nodeId] = 40.0; // Store original size
     }
     
@@ -1580,8 +1800,8 @@ void ITU_Competition_Rural_Network::SetupRobustNetAnimVisualization()
         double y = 200 + 300 * sin(angle);
         animInterface->SetConstantPosition(accessNodes.Get(i), x, y, 0);
         animInterface->UpdateNodeDescription(accessNodes.Get(i), GetNodeVisualName(nodeId));
-        animInterface->UpdateNodeColor(accessNodes.Get(i), 255, 165, 0); // Orange for access
-        animInterface->UpdateNodeSize(nodeId, nodeId, 30, 30);
+        animInterface->UpdateNodeColor(accessNodes.Get(i), 211, 182, 131); // Light Brown #D3B683
+        animInterface->UpdateNodeSize(nodeId, 30, 30);
         originalNodeSizes[nodeId] = 30.0; // Store original size
     }
     
@@ -1649,12 +1869,12 @@ void ITU_Competition_Rural_Network::RestoreFiberLink(uint32_t nodeA, uint32_t no
     
     // Restore normal colors
     if (nodeA < 5) animInterface->UpdateNodeColor(allNodes.Get(nodeA), 0, 0, 255); // Blue for core
-    else if (nodeA < 20) animInterface->UpdateNodeColor(allNodes.Get(nodeA), 0, 255, 0); // Green for dist
-    else animInterface->UpdateNodeColor(allNodes.Get(nodeA), 255, 165, 0); // Orange for access
+    else if (nodeA < 20) animInterface->UpdateNodeColor(allNodes.Get(nodeA), 255, 192, 203); // Pink for dist   
+    else animInterface->UpdateNodeColor(allNodes.Get(nodeA), 211, 182, 131); // Light Brown for access
     
     if (nodeB < 5) animInterface->UpdateNodeColor(allNodes.Get(nodeB), 0, 0, 255);
-    else if (nodeB < 20) animInterface->UpdateNodeColor(allNodes.Get(nodeB), 0, 255, 0);
-    else animInterface->UpdateNodeColor(allNodes.Get(nodeB), 255, 165, 0);
+    else if (nodeB < 20) animInterface->UpdateNodeColor(allNodes.Get(nodeB), 255, 192, 203);
+    else animInterface->UpdateNodeColor(allNodes.Get(nodeB), 211, 182, 131);
     
     UpdateNodeVisualStatus(nodeA, "✅ RESTORED");
     UpdateNodeVisualStatus(nodeB, "✅ RESTORED");
@@ -1679,8 +1899,8 @@ void ITU_Competition_Rural_Network::HidePowerIssue(uint32_t nodeId)
     
     // Restore normal color based on node type
     if (nodeId < 5) animInterface->UpdateNodeColor(allNodes.Get(nodeId), 0, 0, 255);
-    else if (nodeId < 20) animInterface->UpdateNodeColor(allNodes.Get(nodeId), 0, 255, 0);
-    else animInterface->UpdateNodeColor(allNodes.Get(nodeId), 255, 165, 0);
+    else if (nodeId < 20) animInterface->UpdateNodeColor(allNodes.Get(nodeId), 255, 192, 203);
+    else animInterface->UpdateNodeColor(allNodes.Get(nodeId), 211, 182, 131);
     
     UpdateNodeVisualStatus(nodeId, "✅ POWER RESTORED");
     
@@ -1743,6 +1963,217 @@ void ITU_Competition_Rural_Network::WriteFaultEventLog()
 {
     // Fault events are written in real-time during the simulation
 }
+
+void ITU_Competition_Rural_Network::WriteNodeConnectivity()
+{
+    std::cout << "📊 Generating complete node connectivity information..." << std::endl;
+    
+    // Build connectivity map from linkStatus
+    std::map<uint32_t, std::vector<uint32_t>> connectivityMap;
+    std::map<uint32_t, std::vector<std::string>> linkTypesMap;
+    
+    for (const auto& link : linkStatus) {
+        uint32_t nodeA = link.first.first;
+        uint32_t nodeB = link.first.second;
+        bool isActive = link.second;
+        
+        if (isActive) {
+            connectivityMap[nodeA].push_back(nodeB);
+            connectivityMap[nodeB].push_back(nodeA);
+            
+            // Determine link type
+            std::string linkType = "unknown";
+            if (nodeA < 5 && nodeB < 5) {
+                linkType = "core_to_core";
+            } else if ((nodeA < 5 && nodeB < 20) || (nodeA < 20 && nodeB < 5)) {
+                linkType = "core_to_dist";
+            } else if ((nodeA < 20 && nodeB >= 20) || (nodeA >= 20 && nodeB < 20)) {
+                linkType = "dist_to_access";
+            } else if (nodeA >= 5 && nodeA < 20 && nodeB >= 5 && nodeB < 20) {
+                linkType = "dist_to_dist";
+            }
+            
+            linkTypesMap[nodeA].push_back(linkType);
+            linkTypesMap[nodeB].push_back(linkType);
+        }
+    }
+    
+    // Write detailed connectivity file
+    std::string filename = m_config.outputPrefix + "_node_connectivity.json";
+    std::ofstream jsonFile(filename);
+    
+    if (!jsonFile.is_open()) {
+        std::cout << "❌ Failed to open connectivity file: " << filename << std::endl;
+        return;
+    }
+    
+    jsonFile << "{\n";
+    jsonFile << "  \"network_connectivity\": {\n";
+    jsonFile << "    \"total_nodes\": " << allNodes.GetN() << ",\n";
+    jsonFile << "    \"total_links\": " << linkStatus.size() << ",\n";
+    jsonFile << "    \"node_details\": {\n";
+    
+    bool firstNode = true;
+    for (uint32_t nodeId = 0; nodeId < allNodes.GetN(); ++nodeId) {
+        if (!firstNode) jsonFile << ",\n";
+        firstNode = false;
+        
+        // Get node type
+        std::string nodeType = (nodeId < 5) ? "CORE" : (nodeId < 20) ? "DIST" : "ACCESS";
+        
+        jsonFile << "      \"node_" << nodeId << "\": {\n";
+        jsonFile << "        \"node_id\": " << nodeId << ",\n";
+        jsonFile << "        \"node_type\": \"" << nodeType << "\",\n";
+        jsonFile << "        \"node_name\": \"" << GetNodeVisualName(nodeId) << "\",\n";
+        jsonFile << "        \"degree\": " << connectivityMap[nodeId].size() << ",\n";
+        jsonFile << "        \"connected_to\": [";
+        
+        const auto& connections = connectivityMap[nodeId];
+        for (size_t i = 0; i < connections.size(); ++i) {
+            jsonFile << connections[i];
+            if (i < connections.size() - 1) jsonFile << ", ";
+        }
+        
+        jsonFile << "],\n";
+        jsonFile << "        \"link_types\": [";
+        
+        const auto& linkTypes = linkTypesMap[nodeId];
+        for (size_t i = 0; i < linkTypes.size(); ++i) {
+            jsonFile << "\"" << linkTypes[i] << "\"";
+            if (i < linkTypes.size() - 1) jsonFile << ", ";
+        }
+        
+        jsonFile << "]\n";
+        jsonFile << "      }";
+    }
+    
+    jsonFile << "\n    },\n";
+    
+    // Add adjacency matrix
+    jsonFile << "    \"adjacency_matrix\": [\n";
+    for (uint32_t i = 0; i < allNodes.GetN(); ++i) {
+        jsonFile << "      [";
+        
+        for (uint32_t j = 0; j < allNodes.GetN(); ++j) {
+            bool connected = false;
+            if (i != j) {
+                connected = (linkStatus.find({i, j}) != linkStatus.end()) || 
+                           (linkStatus.find({j, i}) != linkStatus.end());
+            }
+            jsonFile << (connected ? "1" : "0");
+            if (j < allNodes.GetN() - 1) jsonFile << ", ";
+        }
+        
+        jsonFile << "]";
+        if (i < allNodes.GetN() - 1) jsonFile << ",";
+        jsonFile << "\n";
+    }
+    jsonFile << "    ]\n";
+    
+    jsonFile << "  }\n";
+    jsonFile << "}\n";
+    jsonFile.close();
+    
+    std::cout << "✅ Node connectivity written to " << filename << std::endl;
+}
+
+void ITU_Competition_Rural_Network::WriteDetailedTopology()
+{
+    std::cout << "📊 Generating detailed network topology..." << std::endl;
+    
+    std::string filename = m_config.outputPrefix + "_detailed_topology.txt";
+    std::ofstream topoFile(filename);
+    
+    if (!topoFile.is_open()) {
+        std::cout << "❌ Failed to open topology file: " << filename << std::endl;
+        return;
+    }
+    
+    topoFile << "========================================\n";
+    topoFile << "COMPLETE NETWORK TOPOLOGY ANALYSIS\n";
+    topoFile << "========================================\n\n";
+    
+    topoFile << "NETWORK SUMMARY:\n";
+    topoFile << "Total Nodes: " << allNodes.GetN() << "\n";
+    topoFile << "Core Nodes: 5 (ID 0-4)\n";
+    topoFile << "Distribution Nodes: 15 (ID 5-19)\n";
+    topoFile << "Access Nodes: 30 (ID 20-49)\n";
+    topoFile << "Total Links: " << linkStatus.size() << "\n\n";
+    
+    // Count links by type
+    int coreToCore = 0, coreToDist = 0, distToAccess = 0, distToDist = 0;
+    
+    for (const auto& link : linkStatus) {
+        uint32_t nodeA = link.first.first;
+        uint32_t nodeB = link.first.second;
+        
+        if (nodeA < 5 && nodeB < 5) coreToCore++;
+        else if ((nodeA < 5 && nodeB < 20) || (nodeA < 20 && nodeB < 5)) coreToDist++;
+        else if ((nodeA < 20 && nodeB >= 20) || (nodeA >= 20 && nodeB < 20)) distToAccess++;
+        else if (nodeA >= 5 && nodeA < 20 && nodeB >= 5 && nodeB < 20) distToDist++;
+    }
+    
+    topoFile << "LINK DISTRIBUTION:\n";
+    topoFile << "Core-to-Core: " << coreToCore << " links\n";
+    topoFile << "Core-to-Distribution: " << coreToDist << " links\n";
+    topoFile << "Distribution-to-Access: " << distToAccess << " links\n";
+    topoFile << "Distribution-to-Distribution: " << distToDist << " links\n\n";
+    
+    topoFile << "DETAILED NODE CONNECTIONS:\n";
+    topoFile << "========================================\n";
+    
+    // Build connectivity map
+    std::map<uint32_t, std::vector<uint32_t>> connectivityMap;
+    for (const auto& link : linkStatus) {
+        uint32_t nodeA = link.first.first;
+        uint32_t nodeB = link.first.second;
+        
+        connectivityMap[nodeA].push_back(nodeB);
+        connectivityMap[nodeB].push_back(nodeA);
+    }
+    
+    // Write detailed connections for each node
+    for (uint32_t nodeId = 0; nodeId < allNodes.GetN(); ++nodeId) {
+        std::string nodeType = (nodeId < 5) ? "CORE" : (nodeId < 20) ? "DIST" : "ACCESS";
+        
+        topoFile << "Node " << nodeId << " (" << GetNodeVisualName(nodeId) << ") - " << nodeType << ":\n";
+        topoFile << "  Degree: " << connectivityMap[nodeId].size() << "\n";
+        topoFile << "  Connected to: ";
+        
+        const auto& connections = connectivityMap[nodeId];
+        for (size_t i = 0; i < connections.size(); ++i) {
+            topoFile << GetNodeVisualName(connections[i]);
+            if (i < connections.size() - 1) topoFile << ", ";
+        }
+        topoFile << "\n\n";
+    }
+    
+    topoFile << "ADJACENCY MATRIX:\n";
+    topoFile << "========================================\n";
+    topoFile << "   ";
+    for (uint32_t j = 0; j < allNodes.GetN(); ++j) {
+        topoFile << std::setw(3) << j;
+    }
+    topoFile << "\n";
+    
+    for (uint32_t i = 0; i < allNodes.GetN(); ++i) {
+        topoFile << std::setw(2) << i << " ";
+        
+        for (uint32_t j = 0; j < allNodes.GetN(); ++j) {
+            bool connected = false;
+            if (i != j) {
+                connected = (linkStatus.find({i, j}) != linkStatus.end()) || 
+                           (linkStatus.find({j, i}) != linkStatus.end());
+            }
+            topoFile << std::setw(3) << (connected ? "1" : "0");
+        }
+        topoFile << "\n";
+    }
+    
+    topoFile.close();
+    std::cout << "✅ Detailed topology written to " << filename << std::endl;
+}
+
 
 // **STEP 5: Main Run() Method and Complete Simulation Execution**
 void ITU_Competition_Rural_Network::Run()
@@ -1810,6 +2241,9 @@ void ITU_Competition_Rural_Network::Run()
     
     // Write final output files
     WriteFaultEventLog();
+    
+    WriteNodeConnectivity();     
+    WriteDetailedTopology();
     
     // Close all output files
     if (metricsFile.is_open()) metricsFile.close();

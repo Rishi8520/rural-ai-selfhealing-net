@@ -38,14 +38,14 @@ class EnhancedMonitorAgent:
         self.config_dir = self.ns3_simulation_dir / "Config"
         
         # **Real-time integration directories**
-        self.agent_interface_dir = Path("/media/rishi/Windows-SSD/PROJECT_&_RESEARCH/NOKIA/Buil-a-thon/rural_ai_selfhealing_net/ns3_integration/agent_interface")  # NS-3 real-time output
+        self.agent_interface_dir = Path("ns3_integration/agent_interface")  # NS-3 real-time output
         self.calculation_input_dir = Path("calculation_agent_input")  # ONLY output to calculation agent
-        self.monitoring_reports_dir = Path("monitoring_reports")
+        self.monitoring_reports_dir = Path("calculation_input/monitoring_reports")
         
         # Create directories
-        for directory in [self.calculation_input_dir, self.monitoring_reports_dir, self.agent_interface_dir]:
-            directory.mkdir(exist_ok=True)
-        
+        for directory in [self.calculation_input_dir, self.monitoring_reports_dir]:
+            directory.mkdir(parents=True, exist_ok=True)
+        self.agent_interface_dir.mkdir(parents=True, exist_ok=True)
         # **PRESERVED: Your file tracking system**
         self.last_processed = {}
         self.file_hashes = {}
