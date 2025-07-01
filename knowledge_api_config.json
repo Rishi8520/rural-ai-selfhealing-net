@@ -1,0 +1,38 @@
+{
+    "node_types_api": {
+        "url": "http://localhost:8080/api/node-types",
+        "headers": {
+            "Authorization": "Bearer your_api_token_here",
+            "Content-Type": "application/json"
+        },
+        "timeout": 30,
+        "retry_attempts": 3
+    },
+    "fault_patterns_api": {
+        "url": "http://localhost:8080/api/fault-patterns",
+        "headers": {
+            "Authorization": "Bearer your_api_token_here",
+            "Content-Type": "application/json"
+        },
+        "timeout": 30,
+        "retry_attempts": 3
+    },
+    "healing_templates_api": {
+        "url": "http://localhost:8080/api/healing-templates",
+        "headers": {
+            "Authorization": "Bearer your_api_token_here",
+            "Content-Type": "application/json"
+        },
+        "timeout": 30,
+        "retry_attempts": 3
+    },
+    "recovery_tactics_api": {
+        "url": "http://localhost:8080/api/recovery-tactics",
+        "headers": {
+            "Authorization": "Bearer your_api_token_here",
+            "Content-Type": "application/json"
+        },
+        "timeout": 30,
+        "retry_attempts": 3
+    }
+}
