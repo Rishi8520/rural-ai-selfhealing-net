@@ -1,0 +1,36 @@
+{
+  "network_topology": {
+    "total_nodes": 50,
+    "layers": {
+      "core": {
+        "count": 5,
+        "description": "High-capacity backbone routing",
+        "node_range": "0-4",
+        "data_rate": "1Gbps",
+        "delay": "2ms"
+      },
+      "distribution": {
+        "count": 15,
+        "description": "Regional traffic aggregation",
+        "node_range": "5-19",
+        "data_rate": "100Mbps",
+        "delay": "10ms"
+      },
+      "access": {
+        "count": 30,
+        "description": "End-user connection points",
+        "node_range": "20-49",
+        "data_rate": "50Mbps",
+        "delay": "5ms"
+      }
+    },
+    "connections": {
+      "core_topology": "Star with central hub (CORE-0) + redundancy",
+      "distribution_topology": "Ring around regions, 3:1 ratio to core",
+      "access_topology": "2:1 ratio to distribution",
+      "total_interfaces": 51
+    },
+    "fault_patterns": [
+    ]
+  }
+}
