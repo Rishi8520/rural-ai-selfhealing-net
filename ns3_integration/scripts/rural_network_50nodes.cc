@@ -4,7 +4,6 @@
  * Implements TST-01, TST-02 with Randomized Fault Injection
  * Features: Randomized Fiber Cut & Power Fluctuation with Severity-Based Visualization
  * Enhanced Agent Integration with Closed-Loop Healing
- * ./ns3 run "rural_network_50nodes --mode=itu_competition --enableAgents=true --targetDataPoints=500"
  */
 #define _USE_MATH_DEFINES
 #include "ns3/core-module.h"
@@ -371,7 +370,7 @@ SimulationConfig ITU_Competition_Rural_Network::CreateITU_CompetitionConfig(int 
     // **NEW: Agent integration**
     config.enableAgentIntegration = true;
     config.enableHealingDeployment = true;
-    config.agentInterfaceDir = "ns3_integration/agent_interface";
+    config.agentInterfaceDir = "/media/rishi/Windows-SSD/PROJECT_&_RESEARCH/NOKIA/Buil-a-thon/rural_ai_selfhealing_net/ns3_integration/agent_interface";
     
     // **NEW: Randomized fault parameters**
     config.enableRandomizedFaults = true;
@@ -417,7 +416,7 @@ SimulationConfig ITU_Competition_Rural_Network::CreateRandomizedFaultConfig()
     // **NEW: Agent integration with visual feedback**
     config.enableAgentIntegration = true;
     config.enableHealingDeployment = true;
-    config.agentInterfaceDir = "ns3_integration/agent_interface";
+    config.agentInterfaceDir = "/media/rishi/Windows-SSD/PROJECT_&_RESEARCH/NOKIA/Buil-a-thon/rural_ai_selfhealing_net/ns3_integration/agent_interface";
     
     // **NEW: Aggressive randomized fault parameters for demo**
     config.enableRandomizedFaults = true;
@@ -631,6 +630,8 @@ void AgentIntegrationAPI::ExportRealTimeFaultEvents(const std::vector<FaultEvent
         return;
     }
     
+    std::cout << "📤 Exporting " << events.size() << " fault events" << std::endl;
+    
     jsonFile << "{\n";
     jsonFile << "  \"timestamp\": \"" << Simulator::Now().GetSeconds() << "\",\n";
     jsonFile << "  \"events\": [\n";
@@ -662,9 +663,45 @@ void AgentIntegrationAPI::ExportRealTimeFaultEvents(const std::vector<FaultEvent
     jsonFile << "}\n";
     jsonFile.close();
     
-    if (!events.empty()) {
-        std::cout << "📤 Exported " << events.size() << " fault events to agents" << std::endl;
+    // Also create individual fault files
+    for (const auto& event : events) {
+        WriteFaultEventJSON(event);
     }
+    
+    std::cout << "✅ Exported " << events.size() << " fault events to agents" << std::endl;
+}
+
+void AgentIntegrationAPI::WriteFaultEventJSON(const FaultEvent& event)
+{
+    std::string individualFaultFile = watchDirectory + "/fault_" + std::to_string((int)event.timestamp) + ".json";
+    
+    std::ofstream faultFile(individualFaultFile);
+    if (!faultFile.is_open()) {
+        std::cout << "❌ Failed to create individual fault file: " << individualFaultFile << std::endl;
+        return;
+    }
+    
+    faultFile << "{\n";
+    faultFile << "  \"event_id\": \"evt_" << event.faultType << "_" << (int)event.timestamp << "\",\n";
+    faultFile << "  \"timestamp\": " << event.timestamp << ",\n";
+    faultFile << "  \"event_type\": \"" << event.eventType << "\",\n";
+    faultFile << "  \"fault_type\": \"" << event.faultType << "\",\n";
+    faultFile << "  \"description\": \"" << event.description << "\",\n";
+    faultFile << "  \"severity\": " << event.severity << ",\n";
+    faultFile << "  \"visual_effect\": \"" << event.visualEffect << "\",\n";
+    faultFile << "  \"affected_nodes\": [";
+    
+    for (size_t i = 0; i < event.affectedNodes.size(); ++i) {
+        faultFile << event.affectedNodes[i];
+        if (i < event.affectedNodes.size() - 1) faultFile << ", ";
+    }
+    
+    faultFile << "],\n";
+    faultFile << "  \"requires_immediate_action\": " << (event.severity > 0.7 ? "true" : "false") << "\n";
+    faultFile << "}\n";
+    faultFile.close();
+    
+    std::cout << "📁 Individual fault file created: " << individualFaultFile << std::endl;
 }
 
 void AgentIntegrationAPI::WriteDeploymentStatus(const std::string& planId, bool success, const std::string& details)
@@ -840,6 +877,7 @@ void ITU_Competition_Rural_Network::ScheduleRandomizedFaultPatterns()
 void ITU_Competition_Rural_Network::UpdateFaultProgression()
 {
     double currentTime = Simulator::Now().GetSeconds();
+    std::vector<FaultEvent> currentEvents;  // **ADD THIS: Declare currentEvents vector**
     
     for (auto& fault : gradualFaults) {
         double startDeg = fault.startDegradation.GetSeconds();
@@ -850,8 +888,23 @@ void ITU_Competition_Rural_Network::UpdateFaultProgression()
             if (!fault.isActive) {
                 fault.isActive = true;
                 AnnounceFaultEvent(fault, "fault_started");
+                
+                // **ADD THIS: Create FaultEvent and add to vector**
+                FaultEvent event;
+                event.timestamp = currentTime;
+                event.eventType = "fault_started";
+                event.faultType = fault.faultType;
+                event.affectedNodes = {fault.targetNode, fault.connectedNode};
+                event.description = fault.faultDescription;
+                event.severity = fault.currentSeverity;
+                currentEvents.push_back(event);
+                currentEvents.push_back(event);  // ✅ Add to current events
+                faultEvents.push_back(event);    // ✅ Add to global events
+                std::cout << "🚨 FAULT EVENT CREATED: " << fault.faultType 
+                          << " at node " << fault.targetNode 
+                          << " severity " << fault.severity << std::endl;
             }
-            
+
             // Calculate current severity based on progression
             if (currentTime <= faultOcc) {
                 // Degradation phase
@@ -872,9 +925,22 @@ void ITU_Competition_Rural_Network::UpdateFaultProgression()
             
         } else if (currentTime > endTime && fault.isActive) {
             fault.isActive = false;
-            fault.currentSeverity = 0.0;
-            AnnounceFaultEvent(fault, "fault_ended");
+            //fault.currentSeverity = 0.0;
+            //AnnounceFaultEvent(fault, "fault_ended");
+            FaultEvent endEvent;
+            endEvent.timestamp = currentTime;
+            endEvent.eventType = "fault_ended";
+            endEvent.faultType = fault.faultType;
+            endEvent.affectedNodes = {fault.targetNode, fault.connectedNode};
+            endEvent.description = fault.faultDescription + " - RESOLVED";
+            endEvent.severity = 0.0;
             
+            currentEvents.push_back(endEvent);
+            faultEvents.push_back(endEvent);
+            
+            std::cout << "✅ FAULT RESOLVED: " << fault.faultType 
+                      << " at node " << fault.targetNode << std::endl;
+        }
             // **NEW: Restore original node size**
             RestoreOriginalNodeSize(fault.targetNode);
             if (fault.faultType == "fiber_cut") {
@@ -890,6 +956,11 @@ void ITU_Competition_Rural_Network::UpdateFaultProgression()
                 }
             }
         }
+    }
+    
+    // **ADD THIS: Export events to agent interface**
+    if (!currentEvents.empty() && agentAPI) {
+        agentAPI->ExportRealTimeFaultEvents(currentEvents);
     }
 }
 

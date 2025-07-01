@@ -2,6 +2,9 @@ import os
 os.environ['CUDA_VISIBLE_DEVICES'] = '-1'
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
+from dotenv import load_dotenv
+load_dotenv()  # This loads the .env file
+
 import asyncio
 import logging
 import json
@@ -688,11 +691,11 @@ class EnhancedHealingAgent:
     async def initialize_communication(self):
         try:
             self.a2a_subscriber = self.context.socket(zmq.SUB)
-            self.a2a_subscriber.connect("tcp://127.0.0.1:5555")
+            self.a2a_subscriber.connect("tcp://127.0.0.1:5556")
             self.a2a_subscriber.setsockopt_string(zmq.SUBSCRIBE, "")
             
             self.mcp_publisher = self.context.socket(zmq.PUB)
-            self.mcp_publisher.bind("tcp://127.0.0.1:5556")
+            self.mcp_publisher.bind("tcp://127.0.0.1:5559")
             
             self.orchestrator_publisher = self.context.socket(zmq.PUB)
             self.orchestrator_publisher.bind("tcp://127.0.0.1:5558")
@@ -1161,7 +1164,8 @@ Focus on Nokia rural network best practices. Ensure actions are technically feas
         try:
             await self.send_healing_response_to_calculation_agent(anomaly_alert, healing_plan)
             await self.send_healing_plan_to_orchestrator(healing_plan)
-            
+            await self.save_healing_plan_for_orchestrator(healing_plan)
+
             self.comm_metrics['responses_sent'] += 1
             
         except Exception as e:
@@ -1210,7 +1214,7 @@ Focus on Nokia rural network best practices. Ensure actions are technically feas
             orchestrator_message = {
                 'message_type': 'healing_plan',
                 'timestamp': datetime.now().isoformat(),
-                'source_agent': 'healing_agent',
+                'source_agent': 'healing_agent', 
                 'target_agent': 'orchestration_agent',
                 'healing_plan_data': {
                     'plan_id': healing_plan.plan_id,
@@ -1221,21 +1225,205 @@ Focus on Nokia rural network best practices. Ensure actions are technically feas
                     'confidence': healing_plan.confidence,
                     'requires_approval': healing_plan.requires_approval,
                     'total_estimated_duration': healing_plan.total_estimated_duration,
-                    'healing_actions': [asdict(action) for action in healing_plan.healing_actions]
+                    'healing_actions': [asdict(action) for action in healing_plan.healing_actions],
+                    
+                    # **ADD ALL 21 LSTM PARAMETERS**
+                    'current_node_metrics': {
+                        # Core network metrics
+                        'throughput': getattr(healing_plan, 'current_throughput', 0.0),
+                        'latency': getattr(healing_plan, 'current_latency', 0.0),
+                        'packet_loss': getattr(healing_plan, 'current_packet_loss', 0.0),
+                        'jitter': getattr(healing_plan, 'current_jitter', 0.0),
+                        
+                        # Signal and system metrics
+                        'signal_strength': getattr(healing_plan, 'current_signal_strength', -60.0),
+                        'cpu_usage': getattr(healing_plan, 'current_cpu_usage', 0.3),
+                        'memory_usage': getattr(healing_plan, 'current_memory_usage', 0.4),
+                        'buffer_occupancy': getattr(healing_plan, 'current_buffer_occupancy', 0.2),
+                        
+                        # Connectivity metrics
+                        'active_links': getattr(healing_plan, 'current_active_links', 2),
+                        'neighbor_count': getattr(healing_plan, 'current_neighbor_count', 3),
+                        'link_utilization': getattr(healing_plan, 'current_link_utilization', 0.5),
+                        
+                        # Load metrics
+                        'critical_load': getattr(healing_plan, 'current_critical_load', 0.25),
+                        'normal_load': getattr(healing_plan, 'current_normal_load', 0.6),
+                        
+                        # Energy metric
+                        'energy_level': getattr(healing_plan, 'current_energy_level', 0.8),
+                        
+                        # Position metrics
+                        'x_position': getattr(healing_plan, 'current_x_position', 0.0),
+                        'y_position': getattr(healing_plan, 'current_y_position', 0.0),
+                        'z_position': getattr(healing_plan, 'current_z_position', 0.0),
+                        
+                        # Health metrics
+                        'degradation_level': getattr(healing_plan, 'current_degradation_level', 0.0),
+                        'fault_severity': getattr(healing_plan, 'current_fault_severity', 0.0),
+                        
+                        # Power metrics
+                        'power_stability': getattr(healing_plan, 'current_power_stability', 0.9),
+                        'voltage_level': getattr(healing_plan, 'current_voltage_level', 0.95)
+                    },
+                    
+                    # **ADD TARGET METRICS**
+                    'target_node_metrics': {
+                        'throughput': getattr(healing_plan, 'target_throughput', 50.0),
+                        'latency': getattr(healing_plan, 'target_latency', 10.0),
+                        'packet_loss': getattr(healing_plan, 'target_packet_loss', 0.01),
+                        'jitter': getattr(healing_plan, 'target_jitter', 1.0),
+                        'signal_strength': getattr(healing_plan, 'target_signal_strength', -60.0),
+                        'cpu_usage': getattr(healing_plan, 'target_cpu_usage', 0.3),
+                        'memory_usage': getattr(healing_plan, 'target_memory_usage', 0.4),
+                        'buffer_occupancy': getattr(healing_plan, 'target_buffer_occupancy', 0.2),
+                        'active_links': getattr(healing_plan, 'target_active_links', 4),
+                        'neighbor_count': getattr(healing_plan, 'target_neighbor_count', 4),
+                        'link_utilization': getattr(healing_plan, 'target_link_utilization', 0.5),
+                        'critical_load': getattr(healing_plan, 'target_critical_load', 0.25),
+                        'normal_load': getattr(healing_plan, 'target_normal_load', 0.6),
+                        'energy_level': getattr(healing_plan, 'target_energy_level', 0.8),
+                        'x_position': getattr(healing_plan, 'target_x_position', 0.0),
+                        'y_position': getattr(healing_plan, 'target_y_position', 0.0),
+                        'z_position': getattr(healing_plan, 'target_z_position', 0.0),
+                        'degradation_level': 0.0,
+                        'fault_severity': 0.0,
+                        'power_stability': 0.95,
+                        'voltage_level': 1.0
+                    }
                 },
                 'execution_metadata': {
                     'auto_execute': not healing_plan.requires_approval,
                     'priority_level': healing_plan.severity,
-                    'estimated_completion_time': datetime.now().timestamp() + healing_plan.total_estimated_duration
+                    'estimated_completion_time': datetime.now().timestamp() + healing_plan.total_estimated_duration,
+                    'healing_context': {
+                        'detected_anomaly_type': getattr(healing_plan, 'anomaly_type', 'unknown'),
+                        'affected_parameters': getattr(healing_plan, 'affected_parameters', []),
+                        'network_impact_radius': getattr(healing_plan, 'network_impact_radius', 1),
+                        'estimated_recovery_time': getattr(healing_plan, 'estimated_recovery_time', 300),
+                        'backup_nodes_available': getattr(healing_plan, 'backup_nodes_available', []),
+                        'resource_requirements': getattr(healing_plan, 'resource_requirements', {}),
+                        'risk_assessment': getattr(healing_plan, 'risk_assessment', 'medium')
+                    }
                 }
             }
             
             await self.orchestrator_publisher.send_json(orchestrator_message)
-            logger.info(f"Healing plan sent to Orchestrator: {healing_plan.plan_id}")
+            logger.info(f"📤 Complete healing plan sent to Orchestrator with all 21 parameters: {healing_plan.plan_id}")
             
         except Exception as e:
             logger.error(f"Failed to send healing plan to Orchestrator: {e}")
 
+    async def save_healing_plan_for_orchestrator(self, healing_plan: HealingPlan):
+        """NEW: Save healing plan as file for orchestration agent with ALL 21 parameters"""
+        try:
+            # Create healing plans for orchestration directory
+            orchestration_input_dir = Path("healing_plans_for_orchestration")
+            orchestration_input_dir.mkdir(exist_ok=True)
+            
+            # Create healing plan file
+            plan_file = orchestration_input_dir / f"healing_plan_{healing_plan.plan_id}.json"
+            
+            # **COMPLETE PLAN DATA WITH ALL 21 PARAMETERS**
+            plan_data = {
+                # Basic plan metadata
+                'plan_id': healing_plan.plan_id,
+                'anomaly_id': healing_plan.anomaly_id,
+                'node_id': healing_plan.node_id,
+                'severity': healing_plan.severity,
+                'generated_timestamp': healing_plan.generated_timestamp,
+                'confidence': healing_plan.confidence,
+                'requires_approval': healing_plan.requires_approval,
+                'total_estimated_duration': healing_plan.total_estimated_duration,
+                'healing_actions': [asdict(action) for action in healing_plan.healing_actions],
+                
+                # **ADD ALL 21 LSTM PARAMETERS - Current node state**
+                'current_node_metrics': {
+                    # Core network metrics
+                    'throughput': getattr(healing_plan, 'current_throughput', 0.0),
+                    'latency': getattr(healing_plan, 'current_latency', 0.0),
+                    'packet_loss': getattr(healing_plan, 'current_packet_loss', 0.0),
+                    'jitter': getattr(healing_plan, 'current_jitter', 0.0),
+                    
+                    # Signal and system metrics
+                    'signal_strength': getattr(healing_plan, 'current_signal_strength', -60.0),
+                    'cpu_usage': getattr(healing_plan, 'current_cpu_usage', 0.3),
+                    'memory_usage': getattr(healing_plan, 'current_memory_usage', 0.4),
+                    'buffer_occupancy': getattr(healing_plan, 'current_buffer_occupancy', 0.2),
+                    
+                    # Connectivity metrics
+                    'active_links': getattr(healing_plan, 'current_active_links', 2),
+                    'neighbor_count': getattr(healing_plan, 'current_neighbor_count', 3),
+                    'link_utilization': getattr(healing_plan, 'current_link_utilization', 0.5),
+                    
+                    # Load metrics
+                    'critical_load': getattr(healing_plan, 'current_critical_load', 0.25),
+                    'normal_load': getattr(healing_plan, 'current_normal_load', 0.6),
+                    
+                    # Energy metric
+                    'energy_level': getattr(healing_plan, 'current_energy_level', 0.8),
+                    
+                    # Position metrics
+                    'x_position': getattr(healing_plan, 'current_x_position', 0.0),
+                    'y_position': getattr(healing_plan, 'current_y_position', 0.0),
+                    'z_position': getattr(healing_plan, 'current_z_position', 0.0),
+                    
+                    # Health metrics
+                    'degradation_level': getattr(healing_plan, 'current_degradation_level', 0.0),
+                    'fault_severity': getattr(healing_plan, 'current_fault_severity', 0.0),
+                    
+                    # Power metrics
+                    'power_stability': getattr(healing_plan, 'current_power_stability', 0.9),
+                    'voltage_level': getattr(healing_plan, 'current_voltage_level', 0.95)
+                },
+                
+                # **ADD EXPECTED POST-HEALING METRICS**
+                'target_node_metrics': {
+                    # Expected metrics after healing actions
+                    'throughput': getattr(healing_plan, 'target_throughput', 50.0),
+                    'latency': getattr(healing_plan, 'target_latency', 10.0),
+                    'packet_loss': getattr(healing_plan, 'target_packet_loss', 0.01),
+                    'jitter': getattr(healing_plan, 'target_jitter', 1.0),
+                    'signal_strength': getattr(healing_plan, 'target_signal_strength', -60.0),
+                    'cpu_usage': getattr(healing_plan, 'target_cpu_usage', 0.3),
+                    'memory_usage': getattr(healing_plan, 'target_memory_usage', 0.4),
+                    'buffer_occupancy': getattr(healing_plan, 'target_buffer_occupancy', 0.2),
+                    'active_links': getattr(healing_plan, 'target_active_links', 4),
+                    'neighbor_count': getattr(healing_plan, 'target_neighbor_count', 4),
+                    'link_utilization': getattr(healing_plan, 'target_link_utilization', 0.5),
+                    'critical_load': getattr(healing_plan, 'target_critical_load', 0.25),
+                    'normal_load': getattr(healing_plan, 'target_normal_load', 0.6),
+                    'energy_level': getattr(healing_plan, 'target_energy_level', 0.8),
+                    'x_position': getattr(healing_plan, 'target_x_position', 0.0),
+                    'y_position': getattr(healing_plan, 'target_y_position', 0.0),
+                    'z_position': getattr(healing_plan, 'target_z_position', 0.0),
+                    'degradation_level': 0.0,  # Target: No degradation
+                    'fault_severity': 0.0,     # Target: No fault
+                    'power_stability': 0.95,   # Target: High stability
+                    'voltage_level': 1.0       # Target: Optimal voltage
+                },
+                
+                # **ADD HEALING CONTEXT**
+                'healing_context': {
+                    'detected_anomaly_type': getattr(healing_plan, 'anomaly_type', 'unknown'),
+                    'affected_parameters': getattr(healing_plan, 'affected_parameters', []),
+                    'network_impact_radius': getattr(healing_plan, 'network_impact_radius', 1),
+                    'estimated_recovery_time': getattr(healing_plan, 'estimated_recovery_time', 300),
+                    'backup_nodes_available': getattr(healing_plan, 'backup_nodes_available', []),
+                    'resource_requirements': getattr(healing_plan, 'resource_requirements', {}),
+                    'risk_assessment': getattr(healing_plan, 'risk_assessment', 'medium')
+                }
+            }
+            
+            with open(plan_file, 'w') as f:
+                json.dump(plan_data, f, indent=2, default=str)
+            
+            logger.info(f"📋 Complete healing plan saved for orchestrator: {plan_file}")
+            logger.info(f"📊 Plan includes all 21 LSTM parameters + healing context")
+            
+        except Exception as e:
+            logger.error(f"❌ Error saving healing plan for orchestrator: {e}")
+    
     async def monitor_healing_performance(self):
         logger.info("Starting performance monitoring...")
         

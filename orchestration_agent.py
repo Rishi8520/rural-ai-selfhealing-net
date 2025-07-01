@@ -293,6 +293,56 @@ class EnhancedOrchestrationAgent(OrchestrationAgent):
             logger.error(f"❌ Error processing healing plan file {plan_file}: {e}")
             self.metrics.failed_operations += 1
 
+    async def execute_orchestration_deployment(self, tosca_template: ToscaTemplate, 
+                                         deployment_config: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Execute orchestration deployment for NS-3 simulation
+        (No xOPera needed - simulation-based execution)
+        """
+        try:
+            deployment_id = f"DEPLOY_{tosca_template.template_id}_{int(time.time())}"
+        
+            logger.info(f"🚀 Executing simulation-based orchestration deployment: {deployment_id}")
+        
+        # Simulate deployment execution (no real infrastructure needed)
+            execution_result = {
+            'deployment_id': deployment_id,
+            'status': 'success',
+            'execution_type': 'simulation_based',
+            'tosca_template_applied': tosca_template.file_path,
+            'deployment_config_applied': deployment_config,
+            'timestamp': datetime.now().isoformat(),
+            'simulated_infrastructure_changes': [
+                f"Node {tosca_template.node_id} healing actions scheduled",
+                "Network topology update queued for NS-3",
+                "Healing policies activated in simulation"
+            ],
+            'next_steps': [
+                "NS-3 will process deployment file",
+                "Healing actions will be visualized",
+                "Metrics will be collected and fed back"
+            ]
+            }
+        
+        # Log successful "deployment" (simulation scheduling)
+            logger.info(f"✅ Simulation deployment completed: {deployment_id}")
+            logger.info(f"📋 TOSCA template: {tosca_template.file_path}")
+            logger.info(f"🎯 Target node: {tosca_template.node_id}")
+        
+            self.metrics.successful_deployments += 1
+        
+            return execution_result
+        
+        except Exception as e:
+            logger.error(f"❌ Simulation deployment failed: {e}")
+            self.metrics.failed_operations += 1
+        
+            return {
+            'status': 'failed',
+            'error': str(e),
+            'timestamp': datetime.now().isoformat()
+        }
+
     async def execute_comprehensive_orchestration_from_file(self, healing_plan_data: Dict[str, Any]):
         """NEW: Execute comprehensive orchestration from file-based healing plan"""
         try:
@@ -335,6 +385,38 @@ class EnhancedOrchestrationAgent(OrchestrationAgent):
         except Exception as e:
             logger.error(f"❌ File-based comprehensive orchestration failed: {e}")
             self.metrics.failed_operations += 1
+
+    async def generate_periodic_reports(self):
+        """Generate periodic orchestration reports"""
+        logger.info("Starting periodic report generation...")
+        
+        while self.is_running:
+            try:
+                await asyncio.sleep(1800)  # Every 30 minutes
+                
+                report = {
+                    'report_timestamp': datetime.now().isoformat(),
+                    'reporting_period': '30 minutes',
+                    'orchestration_metrics': asdict(self.metrics),
+                    'active_orchestrations': len(self.active_orchestrations),
+                    'tosca_templates_generated': self.metrics.tosca_templates_generated,
+                    'ns3_plans_exported': self.metrics.ns3_plans_exported,
+                    'successful_deployments': self.metrics.successful_deployments,
+                    'failed_operations': self.metrics.failed_operations,
+                    'avg_processing_time': self.metrics.avg_processing_time
+                }
+                
+                # Save report
+                timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+                report_file = self.orchestration_reports_dir / f"periodic_orchestration_report_{timestamp}.json"
+                
+                with open(report_file, 'w') as f:
+                    json.dump(report, f, indent=2, default=str)
+                
+                logger.info(f"Periodic orchestration report generated: {report_file}")
+                
+            except Exception as e:
+                logger.error(f"Error generating periodic report: {e}")
 
     async def create_ns3_deployment_file(self, healing_plan_data: Dict[str, Any], 
                                        tosca_template: ToscaTemplate, execution_result: Optional[Dict[str, Any]]):
