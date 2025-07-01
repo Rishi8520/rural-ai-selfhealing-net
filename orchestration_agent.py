@@ -636,6 +636,7 @@ class EnhancedOrchestrationAgent(OrchestrationAgent):
                 logger.error(f"❌ Error processing orchestration queue: {e}")
                 self.metrics.failed_operations += 1
 
+    """
     async def execute_comprehensive_orchestration(self, healing_plan_data: Dict[str, Any]):
         """PRESERVED: Execute comprehensive orchestration with TOSCA and NS3 integration"""
         try:
@@ -678,7 +679,7 @@ class EnhancedOrchestrationAgent(OrchestrationAgent):
 
     # **ALL REMAINING METHODS ARE PRESERVED EXACTLY AS YOU HAD THEM**
     # [Including all TOSCA generation, NS3 integration, deployment, monitoring, etc.]
-    # [I'll include the key ones here for completeness]
+   
 
     async def generate_enhanced_tosca_template(self, healing_plan_data: Dict[str, Any]) -> ToscaTemplate:
         """PRESERVED: Generate enhanced TOSCA template from healing plan"""
@@ -741,7 +742,7 @@ class EnhancedOrchestrationAgent(OrchestrationAgent):
         except Exception as e:
             logger.error(f"❌ Error generating TOSCA template: {e}")
             raise
-
+"""
     # **ENHANCED: Performance monitoring with file metrics**
     async def monitor_orchestration_performance(self):
         """ENHANCED: Monitor orchestration performance metrics including file processing"""
