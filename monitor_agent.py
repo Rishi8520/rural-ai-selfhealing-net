@@ -41,10 +41,7 @@ class EnhancedMonitorAgent:
         # Directory structure
         self.ns3_simulation_dir = Path("/home/rishi/ns-allinone-3.44/ns-3.44")
         # OR better yet, detect current working directory:
-        if Path("ns3_integration/agent_interface").exists():
-            self.agent_interface_dir = Path("ns3_integration/agent_interface")
-        else:
-            self.agent_interface_dir = Path("/home/rishi/ns-allinone-3.44/ns-3.44/ns3_integration/agent_interface")        
+        self.agent_interface_dir = Path("/media/rishi/Windows-SSD/PROJECT_&_RESEARCH/NOKIA/Buil-a-thon/rural_ai_selfhealing_net/ns3_integration/agent_interface")
         self.calculation_input_dir = Path("calculation_agent_input")
         self.monitoring_reports_dir = Path("calculation_agent_input/monitoring_reports")
         
@@ -203,6 +200,14 @@ class EnhancedMonitorAgent:
         
         while self.is_running:
             try:
+                if self.agent_interface_dir.exists():
+                    fault_files = list(self.agent_interface_dir.glob("fault_*.json"))
+                    new_fault_files = [f for f in fault_files if f not in self.processed_fault_ids]
+                
+                    if new_fault_files:
+                        logger.info(f"🚨 Real-time fault detected! Files: {len(new_fault_files)}")
+                        await self.process_individual_fault_files(new_fault_files)
+            
                 fault_events_file = self.realtime_files['fault_events_realtime']
                 
                 if not fault_events_file.exists():
@@ -270,6 +275,55 @@ class EnhancedMonitorAgent:
         
         self.realtime_monitoring_active = False
         logger.info("🛑 ROBUST real-time fault monitoring stopped")
+
+    async def process_individual_fault_files(self, fault_files: List[Path]):
+        """Process individual fault files detected from NS-3"""
+        try:
+            for fault_file in fault_files:
+                logger.info(f"📄 Processing individual fault file: {fault_file.name}")
+            
+                try:
+                    async with aiofiles.open(fault_file, 'r') as f:
+                        content = await f.read()
+                
+                    if not content.strip():
+                        logger.debug(f"📄 Fault file {fault_file.name} is empty")
+                        continue
+                
+                    fault_data = json.loads(content)
+                
+                # Extract event ID to track processed files
+                    event_id = fault_data.get('event_id', f"evt_{fault_file.stem}")
+                
+                    if event_id not in self.processed_fault_ids:
+                        logger.info(f"🚨 Processing new individual fault: {event_id}")
+                    
+                    # Convert individual fault to events format
+                        events_data = {
+                        'timestamp': fault_data.get('timestamp', time.time()),
+                        'events': [fault_data]
+                        }
+                    
+                    # Process as real-time fault
+                        await self.process_realtime_fault_event_robust(events_data)
+                    
+                    # Mark as processed
+                        self.processed_fault_ids.add(event_id)
+                        self.processed_fault_ids.add(fault_file)  # Also track file path
+                    
+                        self.monitoring_stats['real_faults_detected'] += 1
+                        logger.info(f"✅ Individual fault processed: {event_id}")
+                    else:
+                        logger.debug(f"📄 Fault {event_id} already processed")
+                        self.monitoring_stats['duplicate_faults_avoided'] += 1
+                    
+                except json.JSONDecodeError as e:
+                    logger.debug(f"📄 Fault file {fault_file.name} not valid JSON yet: {e}")
+                except Exception as e:
+                    logger.error(f"❌ Error processing fault file {fault_file.name}: {e}")
+                
+        except Exception as e:
+            logger.error(f"❌ Error processing individual fault files: {e}")
 
     async def process_realtime_fault_event_robust(self, fault_data: Dict[str, Any]):
         """Process real-time fault events and send ONLY to Calculation Agent"""
@@ -396,19 +450,52 @@ class EnhancedMonitorAgent:
                 # Apply fault-specific metrics
                 if fault_type == "fiber_cut":
                     base_metrics.update({
-                        'throughput': 50.0 * (1.0 - severity * 0.8),
-                        'latency': 10.0 * (1.0 + severity * 2.0),
-                        'packet_loss': 0.01 + severity * 0.3,
-                        'jitter': 1.0 * (1.0 + severity * 1.5),
-                        'connectivity_status': 'degraded' if severity > 0.5 else 'stable'
-                    })
+        'throughput': 50.0 * (1.0 - severity * 0.8),
+        'latency': 10.0 * (1.0 + severity * 2.0),
+        'packet_loss': 0.01 + severity * 0.3,
+        'jitter': 1.0 * (1.0 + severity * 1.5),
+        'connectivity_status': 'degraded' if severity > 0.5 else 'stable',
+        # **ADD ALL MISSING FEATURES:**
+        'signal_strength': -60.0 * (1.0 + severity * 0.2),
+        'cpu_usage': 0.3 + severity * 0.1,
+        'memory_usage': 0.4 + severity * 0.1,
+        'buffer_occupancy': 0.2 + severity * 0.3,
+        'active_links': max(1, int(3 * (1.0 - severity))),
+        'neighbor_count': max(1, int(4 * (1.0 - severity))),
+        'link_utilization': 0.5 + severity * 0.4,
+        'critical_load': 0.25 + severity * 0.3,
+        'normal_load': 0.6 + severity * 0.2,
+        'energy_level': 0.8 - severity * 0.1,
+        'x_position': float(node_id * 100),  # Default positioning
+        'y_position': float(node_id * 50),
+        'z_position': 0.0,
+        'power_stability': 0.9 - severity * 0.1,
+        'voltage_level': 0.95 - severity * 0.05
+    })
                 elif fault_type == "power_fluctuation":
                     base_metrics.update({
-                        'power_stability': 0.9 * (1.0 - severity * 0.5),
-                        'voltage_level': 0.95 * (1.0 - severity * 0.2),
-                        'energy_level': 0.8 * (1.0 - severity * 0.1),
-                        'power_status': 'unstable' if severity > 0.6 else 'stable'
-                    })
+        'power_stability': 0.9 * (1.0 - severity * 0.5),
+        'voltage_level': 0.95 * (1.0 - severity * 0.2),
+        'energy_level': 0.8 * (1.0 - severity * 0.1),
+        'power_status': 'unstable' if severity > 0.6 else 'stable',
+        # **ADD ALL OTHER FEATURES:**
+        'throughput': 50.0 * (1.0 - severity * 0.3),
+        'latency': 10.0 * (1.0 + severity * 1.0),
+        'packet_loss': 0.01 + severity * 0.1,
+        'jitter': 1.0 * (1.0 + severity * 0.8),
+        'signal_strength': -60.0 * (1.0 + severity * 0.1),
+        'cpu_usage': 0.3 + severity * 0.2,
+        'memory_usage': 0.4 + severity * 0.15,
+        'buffer_occupancy': 0.2 + severity * 0.2,
+        'active_links': max(1, int(3 * (1.0 - severity * 0.3))),
+        'neighbor_count': max(1, int(4 * (1.0 - severity * 0.2))),
+        'link_utilization': 0.5 + severity * 0.2,
+        'critical_load': 0.25 + severity * 0.2,
+        'normal_load': 0.6 + severity * 0.1,
+        'x_position': float(node_id * 100),
+        'y_position': float(node_id * 50),
+        'z_position': 0.0
+    })
                 
                 formatted_data['lstm_training_data']['network_metrics'][node_key] = base_metrics
         
@@ -558,34 +645,66 @@ class EnhancedMonitorAgent:
             return None
 
     async def parse_network_metrics(self, metrics_file: Path) -> Dict[str, Any]:
-        """Parse network metrics CSV file"""
+        """Parse network metrics CSV file with ALL required LSTM features"""
         metrics_data = {}
         try:
             async with aiofiles.open(metrics_file, 'r') as f:
                 content = await f.read()
                 lines = content.strip().split('\n')
-                
+            
                 if len(lines) < 2:
                     return metrics_data
-                
-                # Parse recent data points (last 50 lines)
+            
+            # Parse header to understand column structure
+                header = lines[0].split(',')
+                logger.info(f"📊 CSV Header: {header}")
+            
+            # Parse recent data points (last 50 lines)
                 recent_lines = lines[-50:] if len(lines) > 50 else lines[1:]
-                
+            
                 for line in recent_lines:
                     values = line.split(',')
-                    if len(values) >= 4:
+                    if len(values) >= len(header):
+                    # Map CSV columns to expected features
                         node_id = values[1] if len(values) > 1 else 'unknown'
                         node_key = f"node_{node_id}"
-                        
+                    
+                    # **UPDATED: Extract ALL 21 required features**
                         metrics_data[node_key] = {
-                            'timestamp': float(values[0]) if values[0] else time.time(),
-                            'node_id': node_id,
-                            'throughput': float(values[3]) if len(values) > 3 and values[3] else 0.0,
-                            'latency': float(values[4]) if len(values) > 4 and values[4] else 0.0,
-                            'packet_loss': float(values[5]) if len(values) > 5 and values[5] else 0.0,
-                            'data_source': 'static_metrics_file'
-                        }
-                        
+                        'timestamp': float(values[0]) if values[0] else time.time(),
+                        'node_id': node_id,
+                        # Core network metrics (columns 3-6)
+                        'throughput': float(values[3]) if len(values) > 3 and values[3] else 0.0,
+                        'latency': float(values[4]) if len(values) > 4 and values[4] else 0.0,
+                        'packet_loss': float(values[5]) if len(values) > 5 and values[5] else 0.0,
+                        'jitter': float(values[6]) if len(values) > 6 and values[6] else 0.0,
+                        # Signal and system metrics (columns 7-10)
+                        'signal_strength': float(values[7]) if len(values) > 7 and values[7] else -60.0,
+                        'cpu_usage': float(values[8]) if len(values) > 8 and values[8] else 0.3,
+                        'memory_usage': float(values[9]) if len(values) > 9 and values[9] else 0.4,
+                        'buffer_occupancy': float(values[10]) if len(values) > 10 and values[10] else 0.2,
+                        # Connectivity metrics (columns 11-13)
+                        'active_links': int(values[11]) if len(values) > 11 and values[11] else 2,
+                        'neighbor_count': int(values[12]) if len(values) > 12 and values[12] else 3,
+                        'link_utilization': float(values[13]) if len(values) > 13 and values[13] else 0.5,
+                        # Load metrics (columns 14-15)
+                        'critical_load': float(values[14]) if len(values) > 14 and values[14] else 0.25,
+                        'normal_load': float(values[15]) if len(values) > 15 and values[15] else 0.6,
+                        # Energy metric (column 16)
+                        'energy_level': float(values[16]) if len(values) > 16 and values[16] else 0.8,
+                        # Position metrics (columns 17-19)
+                        'x_position': float(values[17]) if len(values) > 17 and values[17] else 0.0,
+                        'y_position': float(values[18]) if len(values) > 18 and values[18] else 0.0,
+                        'z_position': float(values[19]) if len(values) > 19 and values[19] else 0.0,
+                        # Health metrics (columns 21-24)
+                        'degradation_level': float(values[23]) if len(values) > 23 and values[23] else 0.0,
+                        'fault_severity': float(values[24]) if len(values) > 24 and values[24] else 0.0,
+                        # Power metrics (columns 22-23)
+                        'power_stability': float(values[22]) if len(values) > 22 and values[22] else 0.9,
+                        'voltage_level': float(values[21]) if len(values) > 21 and values[21] else 0.95,
+                        'data_source': 'static_metrics_file'
+                    }
+                                          
         except Exception as e:
             logger.error(f"❌ Error parsing network metrics: {e}")
         
