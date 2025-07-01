@@ -365,62 +365,113 @@ class LSTMAnomalyDetector:
 
     async def generate_shap_plots(self, shap_values_1d: np.ndarray, base_value_scalar: float, data_1d: np.ndarray, feature_names: List[str], plot_suffix: str):
         """
-        Generates and saves SHAP plots for a single prediction.
+        Generates SHAP plots with fallback to alternative gradient bar plot.
         """
         if not self.save_shap_plots:
-            logger.info(f"Node {self.node_id}: SHAP plot saving disabled.")
             return
 
         try:
             import matplotlib
-            matplotlib.use('Agg')  # Use non-interactive backend
+            matplotlib.use('Agg')
             import matplotlib.pyplot as plt
+            import matplotlib.colors as mcolors
             
             os.makedirs(self.plot_dir, exist_ok=True)
 
-            # Ensure data_1d and shap_values_1d are 1D arrays and have the same length as feature_names
-            if len(data_1d) != len(feature_names) or len(shap_values_1d) != len(feature_names):
-                logger.error(f"Node {self.node_id}: Mismatch in lengths for SHAP plotting.")
-                return
-
-            # Create Explanation object for single sample
-            plot_explanation = shap.Explanation(
-                values=shap_values_1d,
-                base_values=base_value_scalar,
-                data=data_1d,
-                feature_names=feature_names
-            )
-
-            # Waterfall plot
+            # Try standard SHAP plotting first
             try:
+                # Your existing SHAP plotting code here...
+                plot_explanation = shap.Explanation(
+                    values=shap_values_1d,
+                    base_values=base_value_scalar,
+                    data=data_1d,
+                    feature_names=feature_names
+                )
+                
+                # Waterfall plot
                 waterfall_path = os.path.join(self.plot_dir, f"waterfall_{plot_suffix}.png")
-                plt.figure(figsize=(10, 6))  # Create new figure
+                plt.figure(figsize=(10, 6))
                 shap.plots.waterfall(plot_explanation, show=False)
                 plt.title(f"Waterfall Plot - Node {self.node_id} - {plot_suffix}")
                 plt.tight_layout()
                 plt.savefig(waterfall_path, bbox_inches='tight', dpi=150)
-                plt.close()  # Close the figure
-                logger.info(f"Node {self.node_id}: Saved Waterfall plot to {waterfall_path}")
-            except Exception as e:
-                logger.error(f"Node {self.node_id}: Error saving Waterfall plot: {e}")
-
-            # Force plot
-            try:
-                force_path = os.path.join(self.plot_dir, f"force_{plot_suffix}.html")
-                force_plot = shap.force_plot(
-                    base_value=plot_explanation.base_values,
-                    shap_values=plot_explanation.values,
-                    features=plot_explanation.data,
-                    feature_names=plot_explanation.feature_names,
-                    show=False
-                )
-                shap.save_html(force_path, force_plot)
-                logger.info(f"Node {self.node_id}: Saved Force plot to {force_path}")
-            except Exception as e:
-                logger.error(f"Node {self.node_id}: Error saving Force plot: {e}")
-
+                plt.close()
+                
+                logger.info(f"Node {self.node_id}: Successfully saved SHAP plots")
+                
+            except Exception as shap_error:
+                logger.warning(f"Node {self.node_id}: SHAP plotting failed ({shap_error}), using alternative gradient bar plot")
+                
+                # **ALTERNATIVE GRADIENT BAR PLOT**
+                await self.create_alternative_gradient_plot(shap_values_1d, feature_names, plot_suffix)
+                
         except Exception as e:
-            logger.error(f"Node {self.node_id}: Error in generate_shap_plots: {e}", exc_info=True)
+            logger.error(f"Node {self.node_id}: Complete plotting failure: {e}", exc_info=True)
+
+    async def create_alternative_gradient_plot(self, shap_values: np.ndarray, feature_names: List[str], plot_suffix: str):
+        """
+        Creates alternative gradient bar plot when SHAP plotting fails.
+        Red-to-green gradient representing degree of deviation.
+        """
+        try:
+            import matplotlib.pyplot as plt
+            import matplotlib.colors as mcolors
+            
+            # Normalize SHAP values for color mapping
+            max_abs_value = max(abs(shap_values)) if len(shap_values) > 0 else 1.0
+            norm = plt.Normalize(vmin=-max_abs_value, vmax=max_abs_value)
+            
+            # Create red-to-green colormap
+            cmap = mcolors.LinearSegmentedColormap.from_list(
+                'deviation_gradient', 
+                ['red', 'yellow', 'green']
+            )
+            
+            # Map SHAP values to colors based on deviation
+            colors = cmap(norm(shap_values))
+            
+            # Sort features by absolute importance
+            sorted_indices = np.argsort(np.abs(shap_values))[::-1]
+            sorted_features = [feature_names[i] for i in sorted_indices]
+            sorted_values = shap_values[sorted_indices]
+            sorted_colors = colors[sorted_indices]
+            
+            # Create alternative bar plot
+            plt.figure(figsize=(12, 8))
+            bars = plt.barh(range(len(sorted_features)), sorted_values, color=sorted_colors)
+            
+            # Customize plot
+            plt.yticks(range(len(sorted_features)), sorted_features)
+            plt.xlabel('Feature Impact (SHAP Value)')
+            plt.ylabel('Features')
+            plt.title(f'Alternative Feature Importance - Node {self.node_id} - {plot_suffix}')
+            plt.grid(True, axis='x', linestyle='--', alpha=0.7)
+            
+            # Add value labels on bars
+            for i, (bar, value) in enumerate(zip(bars, sorted_values)):
+                plt.text(value + (0.01 if value >= 0 else -0.01), i, 
+                        f'{value:.3f}', va='center', 
+                        ha='left' if value >= 0 else 'right')
+            
+            # Add colorbar legend
+            sm = plt.cm.ScalarMappable(cmap=cmap, norm=norm)
+            sm.set_array([])
+            cbar = plt.colorbar(sm)
+            cbar.set_label('Impact Direction (Red=Negative, Green=Positive)')
+            
+            plt.tight_layout()
+            
+            # Save alternative plot
+            alt_plot_path = os.path.join(self.plot_dir, f"alternative_gradient_{plot_suffix}.png")
+            plt.savefig(alt_plot_path, bbox_inches='tight', dpi=150)
+            plt.close()
+            
+            logger.info(f"Node {self.node_id}: Saved alternative gradient plot to {alt_plot_path}")
+            
+        except Exception as e:
+            logger.error(f"Node {self.node_id}: Alternative plotting also failed: {e}")
+
+
 
 
     async def predict_anomaly(self, input_data_raw: Dict[str, Any], all_feature_names: List[str]):
@@ -1289,17 +1340,17 @@ class CalculationAgent:
             
             # CORRECTED message structure to match healing agent expectations
             anomaly_alert = {
-                'type': 'anomaly_alert',  # ✅ Changed from 'message_type' to 'type'
-                'anomaly_id': f"ANOM_{node_id}_{int(time.time())}",  # ✅ Moved to top level
-                'node_id': node_id,  # ✅ Moved to top level
+                'type': 'anomaly_alert',  # 
+                'anomaly_id': f"ANOM_{node_id}_{int(time.time())}",  
+                'node_id': node_id,  
                 'timestamp': datetime.now().isoformat(),
                 'source_agent': 'calculation_agent',
                 'target_agent': 'healing_agent',
                 'message_id': f"CALC_ANOM_{int(time.time())}_{node_id}",
-                'anomaly_score': anomaly_result['anomaly_score'],  # ✅ Moved to top level
-                'severity': dynamic_severity,  # ✅ Moved to top level
+                'anomaly_score': anomaly_result['anomaly_score'],  #
+                'severity': dynamic_severity,  
                 'detection_timestamp': datetime.now().isoformat(),
-                'confidence': dynamic_confidence,  # ✅ Moved to top level
+                'confidence': dynamic_confidence,  
                 'network_context': {
                     'node_type': self.get_node_type(node_id),
                     'fault_pattern': 'dynamic_detection'
