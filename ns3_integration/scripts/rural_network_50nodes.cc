@@ -164,7 +164,26 @@ public:
     
     // Deployment feedback to agents
     void WriteDeploymentStatus(const std::string& planId, bool success, const std::string& details);
-    
+    bool IsInterfaceReady() {
+        // Check if the interface directory exists and is writable
+        try {
+            // Test if we can write to the interface directory
+            std::ofstream testFile(watchDirectory + "/test_write.tmp");
+            if (testFile.is_open()) {
+                testFile << "interface_test" << std::endl;
+                testFile.close();
+                
+                // Remove test file
+                std::remove((watchDirectory + "/test_write.tmp").c_str());
+                
+                return true; // Interface is ready
+            }
+            return false;
+        } catch (const std::exception& e) {
+            std::cout << "⚠️ Interface readiness check failed: " << e.what() << std::endl;
+            return false;
+        }
+    }
 private:
     std::string watchDirectory;
     std::string faultEventsFile;
@@ -606,22 +625,70 @@ std::pair<uint32_t, uint32_t> RandomizedFaultGenerator::GetRandomConnectedNodes(
 void ITU_Competition_Rural_Network::InitializeAgentIntegration()
 {
     try {
-        agentAPI = new AgentIntegrationAPI(m_config.agentInterfaceDir);
+        // ✅ Use absolute path to avoid truncation issues
+        std::string absoluteInterfaceDir = "/media/rishi/Windows-SSD/PROJECT_&_RESEARCH/NOKIA/Buil-a-thon/rural_ai_selfhealing_net/ns3_integration/agent_interface";
+        
+        // ✅ Create directory if it doesn't exist
+        std::string createDirCommand = "mkdir -p " + absoluteInterfaceDir;
+        int result = system(createDirCommand.c_str());
+        if (result != 0) {
+            std::cout << "⚠️ Warning: Could not create interface directory" << std::endl;
+        }
+        
+        // ✅ Initialize agent API with absolute path
+        agentAPI = new AgentIntegrationAPI(absoluteInterfaceDir);
+        
+        // ✅ Verify API initialization
+        if (!agentAPI) {
+            throw std::runtime_error("Failed to create AgentIntegrationAPI instance");
+        }
+        
+        // ✅ Initialize healing engine
         healingEngine = new HealingDeploymentEngine(agentAPI);
         
-        std::cout << "✅ Agent integration initialized successfully" << std::endl;
-        std::cout << "📁 Interface directory: " << m_config.agentInterfaceDir << std::endl;
+        if (!healingEngine) {
+            throw std::runtime_error("Failed to create HealingDeploymentEngine instance");
+        }
         
-        // Create initial interface files
-        agentAPI->ExportRealTimeFaultEvents(faultEvents);
+        std::cout << "✅ Agent Integration API initialized: " << absoluteInterfaceDir << std::endl;
+        std::cout << "✅ Agent integration initialized successfully" << std::endl;
+        std::cout << "📁 Interface directory: " << absoluteInterfaceDir << std::endl;
+        std::cout << "🛠️ Healing deployment engine initialized" << std::endl;
+        
+        // ✅ Test interface readiness
+        if (agentAPI->IsInterfaceReady()) {
+            std::cout << "✅ Agent interface is ready for communication" << std::endl;
+        } else {
+            std::cout << "⚠️ Agent interface not fully ready yet" << std::endl;
+        }
+        
+        // ✅ Create initial interface files with empty events
+        std::vector<FaultEvent> initialEvents; // Start with empty events
+        agentAPI->ExportRealTimeFaultEvents(initialEvents);
+        std::cout << "📤 Exporting " << initialEvents.size() << " initial fault events" << std::endl;
+        std::cout << "✅ Exported " << initialEvents.size() << " fault events to agents" << std::endl;
+        
+        // ✅ Update config to use absolute path
+        m_config.agentInterfaceDir = absoluteInterfaceDir;
+        
+        std::cout << "🎯 Agent integration fully operational" << std::endl;
         
     } catch (const std::exception& e) {
         std::cout << "❌ Agent integration failed: " << e.what() << std::endl;
-        agentAPI = nullptr;
-        healingEngine = nullptr;
+        
+        // ✅ Cleanup on failure
+        if (agentAPI) {
+            delete agentAPI;
+            agentAPI = nullptr;
+        }
+        if (healingEngine) {
+            delete healingEngine;
+            healingEngine = nullptr;
+        }
+        
+        std::cout << "🔄 Continuing simulation without agent integration" << std::endl;
     }
 }
-
 void AgentIntegrationAPI::ExportRealTimeFaultEvents(const std::vector<FaultEvent>& events)
 {
     std::ofstream jsonFile(faultEventsFile);
@@ -877,7 +944,7 @@ void ITU_Competition_Rural_Network::ScheduleRandomizedFaultPatterns()
 void ITU_Competition_Rural_Network::UpdateFaultProgression()
 {
     double currentTime = Simulator::Now().GetSeconds();
-    std::vector<FaultEvent> currentEvents;  // **ADD THIS: Declare currentEvents vector**
+    std::vector<FaultEvent> currentEvents;  // ✅ Correctly declared
     
     for (auto& fault : gradualFaults) {
         double startDeg = fault.startDegradation.GetSeconds();
@@ -889,7 +956,7 @@ void ITU_Competition_Rural_Network::UpdateFaultProgression()
                 fault.isActive = true;
                 AnnounceFaultEvent(fault, "fault_started");
                 
-                // **ADD THIS: Create FaultEvent and add to vector**
+                // ✅ CREATE AND ADD FAULT EVENT
                 FaultEvent event;
                 event.timestamp = currentTime;
                 event.eventType = "fault_started";
@@ -897,9 +964,10 @@ void ITU_Competition_Rural_Network::UpdateFaultProgression()
                 event.affectedNodes = {fault.targetNode, fault.connectedNode};
                 event.description = fault.faultDescription;
                 event.severity = fault.currentSeverity;
-                currentEvents.push_back(event);
+                
                 currentEvents.push_back(event);  // ✅ Add to current events
                 faultEvents.push_back(event);    // ✅ Add to global events
+                
                 std::cout << "🚨 FAULT EVENT CREATED: " << fault.faultType 
                           << " at node " << fault.targetNode 
                           << " severity " << fault.severity << std::endl;
@@ -915,7 +983,7 @@ void ITU_Competition_Rural_Network::UpdateFaultProgression()
                 fault.currentSeverity = fault.severity;
             }
             
-            // **NEW: Update node size based on current severity**
+            // ✅ UPDATE NODE SIZE BASED ON CURRENT SEVERITY
             UpdateNodeSizeBasedOnSeverity(fault);
             
             // Update visual indicators
@@ -925,8 +993,8 @@ void ITU_Competition_Rural_Network::UpdateFaultProgression()
             
         } else if (currentTime > endTime && fault.isActive) {
             fault.isActive = false;
-            //fault.currentSeverity = 0.0;
-            //AnnounceFaultEvent(fault, "fault_ended");
+            
+            // ✅ CREATE FAULT ENDED EVENT
             FaultEvent endEvent;
             endEvent.timestamp = currentTime;
             endEvent.eventType = "fault_ended";
@@ -940,8 +1008,8 @@ void ITU_Competition_Rural_Network::UpdateFaultProgression()
             
             std::cout << "✅ FAULT RESOLVED: " << fault.faultType 
                       << " at node " << fault.targetNode << std::endl;
-        }
-            // **NEW: Restore original node size**
+            
+            // ✅ RESTORE ORIGINAL NODE SIZE
             RestoreOriginalNodeSize(fault.targetNode);
             if (fault.faultType == "fiber_cut") {
                 RestoreOriginalNodeSize(fault.connectedNode);
@@ -958,8 +1026,9 @@ void ITU_Competition_Rural_Network::UpdateFaultProgression()
         }
     }
     
-    // **ADD THIS: Export events to agent interface**
+    // ✅ EXPORT EVENTS TO AGENT INTERFACE (PROPERLY PLACED)
     if (!currentEvents.empty() && agentAPI) {
+        std::cout << "📤 Exporting " << currentEvents.size() << " fault events to agents" << std::endl;
         agentAPI->ExportRealTimeFaultEvents(currentEvents);
     }
 }
