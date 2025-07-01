@@ -1270,7 +1270,6 @@ class CalculationAgent:
 
             await self.send_anomaly_alert_to_healing_agent(node_id, anomaly_result)
 
-    # EXACT communication method from calculation_agent-7.py
     async def send_anomaly_alert_to_healing_agent(self, node_id, anomaly_result):
         try:
             if self.a2a_publisher is None:
@@ -1278,31 +1277,29 @@ class CalculationAgent:
 
             detector = self.node_detectors.get(node_id)
             
-            # DYNAMIC confidence calculation - NO hardcoding
+            # DYNAMIC confidence calculation
             dynamic_confidence = self.confidence_calculator.calculate_dynamic_confidence(
                 node_id, anomaly_result, detector
             )
             
-            # DYNAMIC severity determination - NO hardcoding  
+            # DYNAMIC severity determination
             dynamic_severity = self.confidence_calculator.determine_dynamic_severity(
                 anomaly_result['anomaly_score'], node_id
             )
             
-            # EXACT message structure from calculation_agent-7.py
+            # CORRECTED message structure to match healing agent expectations
             anomaly_alert = {
-                'message_type': 'anomaly_alert',
+                'type': 'anomaly_alert',  # ✅ Changed from 'message_type' to 'type'
+                'anomaly_id': f"ANOM_{node_id}_{int(time.time())}",  # ✅ Moved to top level
+                'node_id': node_id,  # ✅ Moved to top level
                 'timestamp': datetime.now().isoformat(),
                 'source_agent': 'calculation_agent',
                 'target_agent': 'healing_agent',
                 'message_id': f"CALC_ANOM_{int(time.time())}_{node_id}",
-                'anomaly_details': {
-                    'anomaly_id': f"ANOM_{node_id}_{int(time.time())}",
-                    'node_id': node_id,
-                    'anomaly_score': anomaly_result['anomaly_score'],
-                    'severity': dynamic_severity,  # DYNAMIC
-                    'detection_timestamp': datetime.now().isoformat(),
-                    'confidence': dynamic_confidence  # DYNAMIC
-                },
+                'anomaly_score': anomaly_result['anomaly_score'],  # ✅ Moved to top level
+                'severity': dynamic_severity,  # ✅ Moved to top level
+                'detection_timestamp': datetime.now().isoformat(),
+                'confidence': dynamic_confidence,  # ✅ Moved to top level
                 'network_context': {
                     'node_type': self.get_node_type(node_id),
                     'fault_pattern': 'dynamic_detection'
