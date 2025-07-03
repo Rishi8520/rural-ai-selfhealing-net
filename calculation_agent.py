@@ -95,6 +95,82 @@ def convert_numpy_types(obj):
         return [convert_numpy_types(item) for item in obj]
     return obj
 
+def find_existing_anomaly_id(node_id, detection_timestamp, db_path='rag_knowledge_base.db'):
+    """
+    Searches for an existing anomaly in the database within a time window.
+    Returns the anomaly_id if found, None otherwise.
+    """
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+                
+               # Search for anomalies within ±10 seconds of detection time
+        query = """
+        SELECT anomaly_id FROM Anomalies
+        WHERE node_id = ? AND ABS(timestamp - ?) < 10
+        ORDER BY ABS(timestamp - ?) ASC LIMIT 1;
+        """
+        cursor.execute(query, (node_id, detection_timestamp, detection_timestamp))
+        result = cursor.fetchone()
+        conn.close()
+                
+        if result:
+            logger.info(f"Found existing anomaly_id: {result[0]} for node {node_id} at timestamp {detection_timestamp}")
+            return result[0]
+        else:
+            logger.debug(f"No existing anomaly found for node {node_id} at timestamp {detection_timestamp}")
+            return None
+                    
+    except sqlite3.Error as e:
+        logger.error(f"Database error while searching for existing anomaly: {e}")
+        return None
+    except Exception as e:
+        logger.error(f"Unexpected error while searching for existing anomaly: {e}")
+        return None
+
+def insert_new_anomaly_to_database(anomaly_id, node_id, timestamp, anomaly_results, db_path='rag_knowledge_base.db'):
+    """
+    Inserts a newly detected anomaly into the database.
+    Returns True if successful, False otherwise.
+    """
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+                
+                # Insert new anomaly record
+        cursor.execute("""
+            INSERT OR REPLACE INTO Anomalies (anomaly_id, timestamp, node_id, severity, description)
+            VALUES (?, ?, ?, ?, ?)
+            """, (
+                    anomaly_id,
+                    timestamp,
+                    node_id,
+                    anomaly_results.get('severity_classification', 'Unknown'),
+                    anomaly_results.get('description', f"Real-time anomaly detected for {node_id}")
+        ))
+                
+        conn.commit()
+        conn.close()
+        logger.info(f"Successfully inserted new anomaly {anomaly_id} into database")
+        return True
+                
+    except sqlite3.Error as e:
+        logger.error(f"Database error while inserting new anomaly: {e}")
+        return False
+    except Exception as e:
+        logger.error(f"Unexpected error while inserting new anomaly: {e}")
+        return False
+
+def generate_database_compatible_anomaly_id(node_id, timestamp):
+    """
+    Generates an anomaly_id in the format expected by the healing agent database.
+    Format: ANOM_<timestamp>_<node_id>_<random_suffix>
+    """
+    import uuid
+    random_suffix = uuid.uuid4().hex[:6]
+    return f"ANOM_{int(timestamp)}_{node_id}_{random_suffix}"
+        # Send alert to Healing Agent (via PUB/SUB)
+        # Send alert to Healing Agent (via PUB/SUB) - ONLY for anomalies
 
 # --- LSTM Model for Anomaly Detection (Robust Keras Sequential Model) ---
 # This class will encapsulate a Keras Sequential model, ensuring its input shape is defined.
@@ -214,7 +290,7 @@ class LSTMAnomalyDetector:
         logger.info(f"Node {self.node_id}: LSTM model built and compiled with hidden_size={hidden_size}, lr={learning_rate}, layers={num_layers}")
 
     def save_model(self):
-        """Saves the trained LSTM model, scaler, and dynamic threshold."""
+        """Saves the trained LSTM model, scaler, dynamic threshold, AND hyperparameters."""
         os.makedirs(MODEL_DIR, exist_ok=True)
         try:
             # Save the LSTM model weights only — safer than saving full model
@@ -226,47 +302,213 @@ class LSTMAnomalyDetector:
                 joblib.dump(self.scaler, self.scaler_path)
                 logger.info(f"Node {self.node_id}: Saved scaler to {self.scaler_path}")
 
+        # ✅ FIXED: Save threshold AND hyperparameters with correct extraction
             if self.dynamic_anomaly_threshold is not None:
+                threshold_and_hyperparams = {
+                'dynamic_anomaly_threshold': float(self.dynamic_anomaly_threshold),
+                'hyperparameters': {
+                    'input_features_count': self.input_features_count,
+                    'sequence_length': self.sequence_length,
+                    'hidden_size': self.model.hidden_size if self.model else 64,  # ✅ CORRECT extraction
+                    'num_layers': self.model.num_layers if self.model else 2,     # ✅ CORRECT extraction  
+                    'dropout_rate': self.model.dropout_rate if self.model else 0.2  # ✅ CORRECT extraction
+                }
+            }
+
                 with open(self.threshold_path, 'w') as f:
-                    json.dump({'dynamic_anomaly_threshold': float(self.dynamic_anomaly_threshold)}, f)
-                logger.info(f"Node {self.node_id}: Saved dynamic anomaly threshold to {self.threshold_path}")
+                    json.dump(threshold_and_hyperparams, f, indent=2)
+                    logger.info(f"Node {self.node_id}: Saved threshold and hyperparameters: hidden_size={threshold_and_hyperparams['hyperparameters']['hidden_size']}")
 
         except Exception as e:
             logger.error(f"Node {self.node_id}: Error saving model, scaler, or threshold: {e}", exc_info=True)
 
     def load_model(self):
-        """Loads the LSTM model weights, scaler, and dynamic threshold."""
+        """FIXED: Load model with hyperparameters from updated threshold file"""
         try:
-            # Rebuild the model architecture first — must match saved weights
+        # Check if files exist
+            if not (os.path.exists(self.model_path) and 
+                    os.path.exists(self.scaler_path) and 
+                    os.path.exists(self.threshold_path)):
+                logger.info(f"Node {self.node_id}: Model files missing")
+                return False
+
+        # ✅ LOAD HYPERPARAMETERS from fixed threshold file
+            with open(self.threshold_path, 'r') as f:
+                threshold_data = json.load(f)
+
+            if 'hyperparameters' not in threshold_data:
+                logger.error(f"Node {self.node_id}: No hyperparameters in threshold file - run fix_all_models.py first")
+                return False
+
+            hyperparams = threshold_data['hyperparameters']
+            hidden_size = hyperparams['hidden_size']
+            num_layers = hyperparams['num_layers'] 
+            dropout_rate = hyperparams['dropout_rate']
+
+            logger.info(f"Node {self.node_id}: Loading with hidden_size={hidden_size}, layers={num_layers}")
+
+        # ✅ CREATE MODEL with correct hyperparameters
             self.model = LSTMAnomalyModel(
-                input_size=self.input_features_count,
-                hidden_size=64,
-                num_layers=2,
-                dropout_rate=0.2,
-                sequence_length=self.sequence_length
+            input_size=self.input_features_count,
+            hidden_size=hidden_size,
+            num_layers=num_layers,
+            dropout_rate=dropout_rate,
+            sequence_length=self.sequence_length
             )
 
-            # Load model weights only — preserves InputLayer and graph
+        # Compile and load weights
+            self.model.compile(optimizer=Adam(learning_rate=0.001), loss='mse')
             self.model._model.load_weights(self.model_path)
-            logger.info(f"Node {self.node_id}: Loaded LSTM model weights from {self.model_path}")
 
-            if os.path.exists(self.scaler_path):
-                self.scaler = joblib.load(self.scaler_path)
-                logger.info(f"Node {self.node_id}: Loaded scaler from {self.scaler_path}")
+        # Load scaler and threshold
+            self.scaler = joblib.load(self.scaler_path)
+            self.dynamic_anomaly_threshold = threshold_data['dynamic_anomaly_threshold']
 
-            if os.path.exists(self.threshold_path):
-                with open(self.threshold_path, 'r') as f:
-                    self.dynamic_anomaly_threshold = json.load(f)['dynamic_anomaly_threshold']
-                logger.info(f"Node {self.node_id}: Loaded dynamic anomaly threshold from {self.threshold_path}")
-
-            self.is_trained = True  # Mark as trained once load completes
-
-            # Rebuild SHAP explainer after model is loaded
-            self.shap_explainer = shap.GradientExplainer(self.model._model, self.shap_background_data)
-            logger.info(f"Node {self.node_id}: Reinitialized SHAP GradientExplainer after model load.")
+            self.is_trained = True
+            logger.info(f"Node {self.node_id}: ✅ Model loaded successfully!")
+            return True
 
         except Exception as e:
-            logger.error(f"Node {self.node_id}: Failed to load model, scaler, or threshold: {e}", exc_info=True)
+            logger.error(f"Node {self.node_id}: ❌ Failed to load model: {e}")
+            return False
+
+
+    def _extract_actual_hyperparams_from_weights(self):
+        """ENHANCED: Extract actual hyperparameters from weights file with comprehensive search"""
+        try:
+            import h5py
+        
+            with h5py.File(self.model_path, 'r') as f:
+            # ✅ COMPREHENSIVE weight inspection
+                def find_all_lstm_weights(group, path="", weights_info=None):
+                    if weights_info is None:
+                        weights_info = {'kernels': [], 'biases': [], 'recurrent_kernels': []}
+                
+                    for key in group.keys():
+                        current_path = f"{path}/{key}" if path else key
+                    
+                        if isinstance(group[key], h5py.Group):
+                            find_all_lstm_weights(group[key], current_path, weights_info)
+                        elif isinstance(group[key], h5py.Dataset):
+                            dataset = group[key]
+                            shape = dataset.shape
+                        
+                        # Categorize weight types
+                            if 'kernel' in key.lower() and 'recurrent' not in key.lower():
+                                weights_info['kernels'].append({'path': current_path, 'shape': shape})
+                            elif 'recurrent_kernel' in key.lower():
+                                weights_info['recurrent_kernels'].append({'path': current_path, 'shape': shape})
+                            elif 'bias' in key.lower():
+                                weights_info['biases'].append({'path': current_path, 'shape': shape})
+                
+                    return weights_info
+
+                weights_info = find_all_lstm_weights(f)
+            
+                logger.info(f"Node {self.node_id}: Found {len(weights_info['kernels'])} kernels, "
+                            f"{len(weights_info['recurrent_kernels'])} recurrent kernels, "
+                            f"{len(weights_info['biases'])} biases")
+
+            # ✅ EXTRACT hyperparameters from first LSTM kernel
+                if weights_info['kernels']:
+                    first_kernel = weights_info['kernels'][0]
+                    kernel_shape = first_kernel['shape']
+                
+                    if len(kernel_shape) == 2 and kernel_shape[0] == self.input_features_count:
+                    # LSTM kernel shape: [input_size, hidden_size * 4]
+                        hidden_times_4 = kernel_shape[1]
+                        inferred_hidden_size = hidden_times_4 // 4
+                    
+                    # ✅ DETERMINE number of layers from number of kernels
+                        num_layers = len([k for k in weights_info['kernels'] if 'lstm' in k['path'].lower()])
+                        if num_layers == 0:
+                            num_layers = max(1, len(weights_info['kernels']) // 2)  # Estimate
+                    
+                        hyperparams = {
+                        'hidden_size': inferred_hidden_size,
+                        'num_layers': num_layers,
+                        'dropout_rate': 0.2  # Default, can't be inferred from weights
+                        }
+                    
+                        logger.info(f"Node {self.node_id}: ✅ Successfully extracted: "
+                                    f"hidden_size={inferred_hidden_size}, layers={num_layers}")
+                        return hyperparams
+                    else:
+                        logger.warning(f"Node {self.node_id}: Unexpected kernel shape: {kernel_shape}")
+            
+            # ✅ FALLBACK: Try recurrent kernels
+                if weights_info['recurrent_kernels']:
+                    first_recurrent = weights_info['recurrent_kernels'][0]
+                    recurrent_shape = first_recurrent['shape']
+                
+                    if len(recurrent_shape) == 2:
+                    # Recurrent kernel shape: [hidden_size, hidden_size * 4]
+                        hidden_size = recurrent_shape[0]
+                        num_layers = len(weights_info['recurrent_kernels'])
+                    
+                        hyperparams = {
+                        'hidden_size': hidden_size,
+                        'num_layers': num_layers,
+                        'dropout_rate': 0.2
+                        }
+                    
+                        logger.info(f"Node {self.node_id}: ✅ Extracted from recurrent: "
+                                    f"hidden_size={hidden_size}, layers={num_layers}")
+                        return hyperparams
+
+                logger.warning(f"Node {self.node_id}: Could not extract hyperparameters from any weights")
+                return None
+
+        except Exception as e:
+            logger.error(f"Node {self.node_id}: Error extracting hyperparameters: {e}")
+            return None
+
+    def _infer_hidden_size_from_weights_enhanced(self):
+        """Enhanced method to infer hidden_size from saved weight file shapes."""
+        try:
+            import h5py
+            with h5py.File(self.model_path, 'r') as f:
+            # More comprehensive search for LSTM kernels
+                def find_lstm_kernel_recursive(group, path=""):
+                    for key in group.keys():
+                        current_path = f"{path}/{key}" if path else key
+                        if isinstance(group[key], h5py.Group):
+                            result = find_lstm_kernel_recursive(group[key], current_path)
+                            if result is not None:
+                                return result
+                        elif isinstance(group[key], h5py.Dataset):
+                        # Look for LSTM kernel patterns (more comprehensive)
+                            key_lower = key.lower()
+                            path_lower = current_path.lower()
+                        
+                            if (('lstm' in path_lower or 'rnn' in path_lower) and 
+                                ('kernel' in key_lower or 'weight' in key_lower) and
+                                'bias' not in key_lower):
+                                return group[key]
+                    return None
+
+                kernel_weights = find_lstm_kernel_recursive(f)
+            
+                if kernel_weights is not None:
+                    kernel_shape = kernel_weights.shape
+                    logger.info(f"Node {self.node_id}: Found LSTM kernel with shape {kernel_shape}")
+                
+                # LSTM kernel shape: [input_size, hidden_size * 4]
+                    if len(kernel_shape) == 2 and kernel_shape[0] == self.input_features_count:
+                        hidden_times_4 = kernel_shape[1]
+                        inferred_hidden_size = hidden_times_4 // 4
+                        logger.info(f"Node {self.node_id}: ✅ Inferred hidden_size={inferred_hidden_size} from shape {kernel_shape}")
+                        return inferred_hidden_size
+                    else:
+                        logger.warning(f"Node {self.node_id}: Unexpected kernel shape: {kernel_shape}")
+                        return 64
+                else:
+                    logger.warning(f"Node {self.node_id}: Could not find LSTM kernel in weights file")
+                    return 64
+
+        except Exception as e:
+            logger.warning(f"Node {self.node_id}: Error inferring hidden size: {e}")
+            return 64
 
     def train_model(self, X_train, y_train, epochs=1, batch_size=32, verbose=0):
         """
@@ -954,7 +1196,7 @@ class CalculationAgent:
             "anomaly_threshold_percentile": 99, # Changed to percentile
             "alert_debounce_interval": 10,
             "model_training_batch_size": 32,
-            "train_on_startup": True,
+            "train_on_startup": False,
             "training_data_limit": 10000,
             "lstm_features": [
                 'throughput', 'latency', 'packet_loss', 'jitter',
@@ -1319,8 +1561,12 @@ class CalculationAgent:
                     anomaly_type="lstm_prediction"
                 ).inc()
 
-            await self.send_anomaly_alert_to_healing_agent(node_id, anomaly_result)
-
+            #await self.send_anomaly_alert_to_healing_agent(node_id, anomaly_result)
+            await self.process_anomaly_detection_and_alerting(node_id, anomaly_result, raw_data_point_dict)
+        else:
+        # For normal operation, still call the method but it will just log
+            await self.process_anomaly_detection_and_alerting(node_id, anomaly_result, raw_data_point_dict)
+    
     async def send_anomaly_alert_to_healing_agent(self, node_id, anomaly_result):
         try:
             if self.a2a_publisher is None:
@@ -1379,227 +1625,495 @@ class CalculationAgent:
         else:
             return "GENERIC"
 
-    # JSON file monitoring (unchanged)
     async def data_processing_loop(self):
         """
         Continuously looks for new JSON files every 10 seconds and processes them.
         """
         logger.info("Starting JSON file monitoring loop...")
-        
         processed_files = set()  # Track processed files
-        
+
         while True:
             try:
-                # Look for JSON files with the pattern calculation_input_*.json
-                json_files = glob.glob("calculation_input_*.json")
-                
-                # Sort files by modification time (newest first)
-                json_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-                
-                for json_file in json_files:
+            # ✅ Look for JSON files in both directories
+                static_files = glob.glob("calculation_agent_input/calculation_input_*.json")
+                fault_files = glob.glob("calculation_agent_input/realtime_fault_*.json") 
+                notification_files = glob.glob("calculation_agent_input/fault_notification_*.json")
+    
+                all_files = static_files + fault_files + notification_files
+    
+            # ✅ Debug logging only when files are found
+                if all_files:
+                    logger.debug(f"🔍 Found {len(all_files)} files: static={len(static_files)}, fault={len(fault_files)}, notification={len(notification_files)}")
+    
+            # ✅ SINGLE processing loop (removed duplicate)
+                for json_file in all_files:
                     if json_file not in processed_files:
-                        logger.info(f"Processing new file: {json_file}")
-                        
+                        logger.info(f"📄 Processing new file: {json_file}")
+            
                         try:
                             with open(json_file, 'r') as f:
                                 file_content = f.read().strip()
-                                
-                            # Handle the JSON structure from the attached files
+                
+                        # ✅ Handle malformed JSON structure
                             if file_content.startswith('"monitor_metadata"'):
                                 file_content = '{' + file_content + '}'
-                            
+                
                             data = json.loads(file_content)
-                            
+                        
+                        # ✅ DEBUG: Log all keys in file
+                            logger.info(f"🔍 DEBUG {json_file}: Keys found: {list(data.keys())}")
+                        
+                        # ✅ DEBUG: Check for fault indicators
+                            has_fault_events = 'fault_events' in data
+                            has_fault_type = 'fault_type' in data
+                            has_affected_nodes = 'affected_nodes' in data
+                            has_lstm_training = 'lstm_training_data' in data and 'network_metrics' in data['lstm_training_data']
+                            has_notification = 'notification_type' in data
+                       
+                            logger.info(f"🔍 DEBUG {json_file}: lstm_training={has_lstm_training}, fault_events={has_fault_events}, fault_type={has_fault_type}, affected_nodes={has_affected_nodes}, notification={has_notification}")
+                
+                        # ✅ STATIC DATA PROCESSING
                             if 'lstm_training_data' in data and 'network_metrics' in data['lstm_training_data']:
+                                logger.info(f"📊 Processing static data from {json_file}")
                                 network_metrics = data['lstm_training_data']['network_metrics']
-                                
-                                # Process each node's data
+                    
                                 for node_key, node_data in network_metrics.items():
-                                    # Convert node_key to expected format (node_0 -> node_00)
                                     if node_key.startswith('node_'):
                                         node_number = node_key.split('_')[1]
                                         formatted_node_id = f"node_{int(node_number):02d}"
-                                        
-                                        # Prepare data point for processing
+                            
                                         raw_data_point = {
-                                            'current_time': node_data.get('timestamp', 0.0),
-                                            'throughput': node_data.get('throughput', 0.0),
-                                            'latency': node_data.get('latency', 0.0),
-                                            'packet_loss': node_data.get('packet_loss', 0.0),
-                                            'cpu_usage': node_data.get('cpu_usage', 0.0),
-                                            'memory_usage': node_data.get('memory_usage', 0.0),
-                                            'jitter': node_data.get('jitter', 0.0),
-                                            'signal_strength': node_data.get('signal_strength', 0.0),
-                                            'buffer_occupancy': node_data.get('buffer_occupancy', 0.0),
-                                            'active_links': node_data.get('active_links', 0),
-                                            'neighbor_count': node_data.get('neighbor_count', 0),
-                                            'link_utilization': node_data.get('link_utilization', 0.0),
-                                            'critical_load': node_data.get('critical_load', 0.0),
-                                            'normal_load': node_data.get('normal_load', 0.0),
-                                            'energy_level': node_data.get('energy_level', 0.0),
-                                            'x_position': node_data.get('x_position', 0.0),
-                                            'y_position': node_data.get('y_position', 0.0),
-                                            'z_position': node_data.get('z_position', 0.0),
-                                            'degradation_level': node_data.get('degradation_level', 0.0),
-                                            'fault_severity': node_data.get('fault_severity', 0.0),
-                                            'power_stability': node_data.get('power_stability', 0.0),
-                                            'voltage_level': node_data.get('voltage_level', 0.0)
+                                        'current_time': node_data.get('timestamp', 0.0),
+                                        'throughput': node_data.get('throughput', 0.0),
+                                        'latency': node_data.get('latency', 0.0),
+                                        'packet_loss': node_data.get('packet_loss', 0.0),
+                                        'cpu_usage': node_data.get('cpu_usage', 0.0),
+                                        'memory_usage': node_data.get('memory_usage', 0.0),
+                                        'jitter': node_data.get('jitter', 0.0),
+                                        'signal_strength': node_data.get('signal_strength', 0.0),
+                                        'buffer_occupancy': node_data.get('buffer_occupancy', 0.0),
+                                        'active_links': node_data.get('active_links', 0),
+                                        'neighbor_count': node_data.get('neighbor_count', 0),
+                                        'link_utilization': node_data.get('link_utilization', 0.0),
+                                        'critical_load': node_data.get('critical_load', 0.0),
+                                        'normal_load': node_data.get('normal_load', 0.0),
+                                        'energy_level': node_data.get('energy_level', 0.0),
+                                        'x_position': node_data.get('x_position', 0.0),
+                                        'y_position': node_data.get('y_position', 0.0),
+                                        'z_position': node_data.get('z_position', 0.0),
+                                        'degradation_level': node_data.get('degradation_level', 0.0),
+                                        'fault_severity': node_data.get('fault_severity', 0.0),
+                                        'power_stability': node_data.get('power_stability', 0.0),
+                                        'voltage_level': node_data.get('voltage_level', 0.0)
                                         }
-                                        
-                                        # Process the data point
+                            
                                         await self.process_data_point(formatted_node_id, raw_data_point)
+                
+                        # ✅ FAULT DATA PROCESSING - WRAPPED FORMAT
+                            elif 'fault_events' in data:
+                                logger.info(f"🚨 FAULT DATA DETECTED (wrapped) in {json_file}")
+                                fault_events = data['fault_events']
                             
+                                for fault_event in fault_events:
+                                    fault_type = fault_event.get('fault_type', 'unknown')
+                                    affected_nodes = fault_event.get('affected_nodes', [])
+                                    severity = fault_event.get('severity', 0.0)
+                                    timestamp = fault_event.get('timestamp', 0.0)
+                                    event_id = fault_event.get('event_id', 'unknown')
+                        
+                                    logger.info(f"⚠️ Processing wrapped fault: {fault_type} affecting nodes {affected_nodes} with severity {severity}")
+                        
+                                    for node_id in affected_nodes:
+                                        if isinstance(node_id, int):
+                                            formatted_node_id = f"node_{node_id:02d}"
+                                        else:
+                                            formatted_node_id = str(node_id)
+                            
+                                    # Create comprehensive fault data point
+                                        fault_data_point = {
+                                        'current_time': timestamp,
+                                        'fault_type': fault_type,
+                                        'fault_severity': severity,
+                                        'is_fault_event': True,
+                                        'event_id': event_id,
+                                        'throughput': 0.0,
+                                        'latency': 0.0,
+                                        'packet_loss': 0.0,
+                                        'cpu_usage': 0.0,
+                                        'memory_usage': 0.0,
+                                        'jitter': 0.0,
+                                        'signal_strength': 0.0,
+                                        'buffer_occupancy': 0.0,
+                                        'active_links': 0,
+                                        'neighbor_count': 0,
+                                        'link_utilization': 0.0,
+                                        'critical_load': 0.0,
+                                        'normal_load': 0.0,
+                                        'energy_level': 0.0,
+                                        'x_position': 0.0,
+                                        'y_position': 0.0,
+                                        'z_position': 0.0,
+                                        'degradation_level': severity,
+                                        'power_stability': 0.0,
+                                        'voltage_level': 0.0
+                                        }
+                            
+                                        await self.process_fault_event(formatted_node_id, fault_data_point)
+                
+                        # ✅ NEW: DIRECT FAULT EVENT DETECTION (for individual fault files like fault_20.json)
+                            elif 'fault_type' in data and 'affected_nodes' in data:
+                                logger.info(f"🚨 DIRECT FAULT EVENT DETECTED in {json_file}")
+                            
+                                fault_type = data.get('fault_type', 'unknown')
+                                affected_nodes = data.get('affected_nodes', [])
+                                severity = data.get('severity', 0.0)
+                                timestamp = data.get('timestamp', 0.0)
+                                event_id = data.get('event_id', 'unknown')
+                            
+                                logger.info(f"⚠️ Processing direct fault: {fault_type} affecting nodes {affected_nodes} with severity {severity}")
+                            
+                                for node_id in affected_nodes:
+                                    if isinstance(node_id, int):
+                                        formatted_node_id = f"node_{node_id:02d}"
+                                    else:
+                                        formatted_node_id = str(node_id)
+                        
+                                    fault_data_point = {
+                                    'current_time': timestamp,
+                                    'fault_type': fault_type,
+                                    'fault_severity': severity,
+                                    'is_fault_event': True,
+                                    'event_id': event_id,
+                                    'throughput': 0.0,
+                                    'latency': 0.0,
+                                    'packet_loss': 0.0,
+                                    'cpu_usage': 0.0,
+                                    'memory_usage': 0.0,
+                                    'jitter': 0.0,
+                                    'signal_strength': 0.0,
+                                    'buffer_occupancy': 0.0,
+                                    'active_links': 0,
+                                    'neighbor_count': 0,
+                                    'link_utilization': 0.0,
+                                    'critical_load': 0.0,
+                                    'normal_load': 0.0,
+                                    'energy_level': 0.0,
+                                    'x_position': 0.0,
+                                    'y_position': 0.0,
+                                    'z_position': 0.0,
+                                    'degradation_level': severity,
+                                    'power_stability': 0.0,
+                                    'voltage_level': 0.0
+                                    }
+                        
+                                    await self.process_fault_event(formatted_node_id, fault_data_point)
+                
+                        # ✅ NOTIFICATION FILE PROCESSING - ENHANCED
+                            elif 'notification_type' in data:
+                                logger.info(f"📨 FAULT NOTIFICATION DETECTED in {json_file}")
+                        
+                            # ✅ NEW: Handle fault notifications with affected nodes info
+                                if data.get('notification_type') == 'realtime_fault_detected':
+                                    fault_summary = data.get('fault_summary', {})
+                                    affected_nodes = fault_summary.get('affected_nodes', [])
+                                    fault_types = fault_summary.get('fault_types', [])
+                                    max_severity = fault_summary.get('max_severity', 0.0)
+                                    requires_action = fault_summary.get('requires_immediate_action', False)
+
+                                # ✅ FIXED: Handle both list and integer for affected_nodes
+                                    if isinstance(affected_nodes, list):
+                                        node_count = len(affected_nodes)
+                                        node_list = affected_nodes
+                                    else:
+                                    # affected_nodes is actually a count
+                                        node_count = affected_nodes
+                                        node_list = []
+
+                                    logger.info(f"📋 Notification summary: {node_count} nodes affected, "
+                                                f"fault types: {fault_types}, max severity: {max_severity}, "
+                                                f"requires action: {requires_action}")
+                            
+                                # ✅ NEW: Check if we need to read the referenced fault file
+                                    data_file = data.get('data_file', '')
+                                    if data_file:
+                                    # Construct full path
+                                        if not data_file.startswith('calculation_agent_input/'):
+                                            fault_file_path = f"calculation_agent_input/{data_file.split('/')[-1]}"
+                                        else:
+                                            fault_file_path = data_file
+
+                                    # ✅ NEW: Read and process the referenced fault file if it exists
+                                        if os.path.exists(fault_file_path) and fault_file_path not in processed_files:
+                                            logger.info(f"📂 Reading referenced fault file: {fault_file_path}")
+                                            try:
+                                                with open(fault_file_path, 'r') as f:
+                                                    fault_data = json.load(f)
+                                            
+                                            # ✅ NEW: Handle both wrapped and direct fault formats in referenced files
+                                                if 'fault_events' in fault_data:
+                                                    logger.info(f"🔄 Processing fault events from referenced file: {fault_file_path}")
+                                                # Process wrapped fault events
+                                                    for fault_event in fault_data['fault_events']:
+                                                        fault_type = fault_event.get('fault_type', 'unknown')
+                                                        affected_nodes = fault_event.get('affected_nodes', [])
+                                                        severity = fault_event.get('severity', 0.0)
+                                                        timestamp = fault_event.get('timestamp', 0.0)
+                                                
+                                                        for node_id in affected_nodes:
+                                                            if isinstance(node_id, int):
+                                                                formatted_node_id = f"node_{node_id:02d}"
+                                                            else:
+                                                                formatted_node_id = str(node_id)
+                                                
+                                                            fault_data_point = {
+                                                            'current_time': timestamp,
+                                                            'fault_type': fault_type,
+                                                            'fault_severity': severity,
+                                                            'is_fault_event': True,
+                                                            'throughput': 0.0,
+                                                            'latency': 0.0,
+                                                            'packet_loss': 0.0,
+                                                            'cpu_usage': 0.0,
+                                                            'memory_usage': 0.0,
+                                                            'jitter': 0.0,
+                                                            'signal_strength': 0.0,
+                                                            'buffer_occupancy': 0.0,
+                                                            'active_links': 0,
+                                                            'neighbor_count': 0,
+                                                            'link_utilization': 0.0,
+                                                            'critical_load': 0.0,
+                                                            'normal_load': 0.0,
+                                                            'energy_level': 0.0,
+                                                            'x_position': 0.0,
+                                                            'y_position': 0.0,
+                                                            'z_position': 0.0,
+                                                            'degradation_level': severity,
+                                                            'power_stability': 0.0,
+                                                            'voltage_level': 0.0
+                                                            }
+                                                
+                                                            await self.process_fault_event(formatted_node_id, fault_data_point)
+                                            
+                                            # ✅ NEW: Handle direct fault format in referenced files
+                                                elif 'fault_type' in fault_data and 'affected_nodes' in fault_data:
+                                                    logger.info(f"🔄 Processing direct fault from referenced file: {fault_file_path}")
+                                                    fault_type = fault_data.get('fault_type', 'unknown')
+                                                    affected_nodes = fault_data.get('affected_nodes', [])
+                                                    severity = fault_data.get('severity', 0.0)
+                                                    timestamp = fault_data.get('timestamp', 0.0)
+                                                    event_id = fault_data.get('event_id', 'unknown')
+                                                
+                                                    logger.info(f"⚠️ Processing referenced direct fault: {fault_type} affecting nodes {affected_nodes} with severity {severity}")
+                                                
+                                                    for node_id in affected_nodes:
+                                                        if isinstance(node_id, int):
+                                                            formatted_node_id = f"node_{node_id:02d}"
+                                                        else:
+                                                            formatted_node_id = str(node_id)
+                                            
+                                                        fault_data_point = {
+                                                        'current_time': timestamp,
+                                                        'fault_type': fault_type,
+                                                        'fault_severity': severity,
+                                                        'is_fault_event': True,
+                                                        'event_id': event_id,
+                                                        'throughput': 0.0,
+                                                        'latency': 0.0,
+                                                        'packet_loss': 0.0,
+                                                        'cpu_usage': 0.0,
+                                                        'memory_usage': 0.0,
+                                                        'jitter': 0.0,
+                                                        'signal_strength': 0.0,
+                                                        'buffer_occupancy': 0.0,
+                                                        'active_links': 0,
+                                                        'neighbor_count': 0,
+                                                        'link_utilization': 0.0,
+                                                        'critical_load': 0.0,
+                                                        'normal_load': 0.0,
+                                                        'energy_level': 0.0,
+                                                        'x_position': 0.0,
+                                                        'y_position': 0.0,
+                                                        'z_position': 0.0,
+                                                        'degradation_level': severity,
+                                                        'power_stability': 0.0,
+                                                        'voltage_level': 0.0
+                                                        }
+                                            
+                                                        await self.process_fault_event(formatted_node_id, fault_data_point)
+                                            
+                                            # Mark the referenced file as processed
+                                                processed_files.add(fault_file_path)
+                                            except Exception as e:
+                                                logger.error(f"Error reading referenced fault file {fault_file_path}: {e}")
+                                else:
+                                    logger.info(f"📨 Processing other notification type: {data.get('notification_type')}")
+                
+                        # ✅ UNKNOWN FILE FORMAT
+                            else:
+                                logger.warning(f"❓ Unknown file format in {json_file}")
+                                logger.warning(f"❓ File keys: {list(data.keys())}")
+                                logger.warning(f"❓ Sample content: {str(data)[:200]}...")
+                
+                        # ✅ Mark file as processed
                             processed_files.add(json_file)
-                            logger.info(f"Successfully processed file: {json_file}")
-                            
+                            logger.info(f"✅ Successfully processed file: {json_file}")
+                
                         except json.JSONDecodeError as e:
-                            logger.error(f"Error decoding JSON from file {json_file}: {e}")
+                            logger.error(f"❌ JSON decode error in {json_file}: {e}")
+                            processed_files.add(json_file)  # Skip malformed files
                         except Exception as e:
-                            logger.error(f"Error processing file {json_file}: {e}", exc_info=True)
-                
-                # Wait for 10 seconds before checking for new files
-                await asyncio.sleep(10)
-                
+                            logger.error(f"❌ Error processing file {json_file}: {e}", exc_info=True)
+                            processed_files.add(json_file)  # Skip problematic files
+    
             except Exception as e:
-                logger.error(f"Error in JSON file monitoring loop: {e}", exc_info=True)
-                await asyncio.sleep(5)
+                logger.error(f"❌ Error in data processing loop: {e}", exc_info=True)
 
-        def find_existing_anomaly_id(node_id, detection_timestamp, db_path='rag_knowledge_base.db'):
-            """
-            Searches for an existing anomaly in the database within a time window.
-            Returns the anomaly_id if found, None otherwise.
-            """
-            try:
-                conn = sqlite3.connect(db_path)
-                cursor = conn.cursor()
-                
-                # Search for anomalies within ±10 seconds of detection time
-                query = """
-                SELECT anomaly_id FROM Anomalies
-                WHERE node_id = ? AND ABS(timestamp - ?) < 10
-                ORDER BY ABS(timestamp - ?) ASC LIMIT 1;
-                """
-                cursor.execute(query, (node_id, detection_timestamp, detection_timestamp))
-                result = cursor.fetchone()
-                conn.close()
-                
-                if result:
-                    logger.info(f"Found existing anomaly_id: {result[0]} for node {node_id} at timestamp {detection_timestamp}")
-                    return result[0]
-                else:
-                    logger.debug(f"No existing anomaly found for node {node_id} at timestamp {detection_timestamp}")
-                    return None
-                    
-            except sqlite3.Error as e:
-                logger.error(f"Database error while searching for existing anomaly: {e}")
-                return None
-            except Exception as e:
-                logger.error(f"Unexpected error while searching for existing anomaly: {e}")
-                return None
+        # ✅ ALWAYS wait 10 seconds before next iteration
+            await asyncio.sleep(10)
 
-        def insert_new_anomaly_to_database(anomaly_id, node_id, timestamp, anomaly_results, db_path='rag_knowledge_base.db'):
-            """
-            Inserts a newly detected anomaly into the database.
-            Returns True if successful, False otherwise.
-            """
-            try:
-                conn = sqlite3.connect(db_path)
-                cursor = conn.cursor()
-                
-                # Insert new anomaly record
-                cursor.execute("""
-                    INSERT OR REPLACE INTO Anomalies (anomaly_id, timestamp, node_id, severity, description)
-                    VALUES (?, ?, ?, ?, ?)
-                """, (
-                    anomaly_id,
-                    timestamp,
-                    node_id,
-                    anomaly_results.get('severity_classification', 'Unknown'),
-                    anomaly_results.get('description', f"Real-time anomaly detected for {node_id}")
-                ))
-                
-                conn.commit()
-                conn.close()
-                logger.info(f"Successfully inserted new anomaly {anomaly_id} into database")
-                return True
-                
-            except sqlite3.Error as e:
-                logger.error(f"Database error while inserting new anomaly: {e}")
-                return False
-            except Exception as e:
-                logger.error(f"Unexpected error while inserting new anomaly: {e}")
-                return False
+    async def process_fault_event(self, node_id: str, fault_data: Dict[str, Any]):
+        """
+        Process fault event for a specific node - FOCUSED ON DETECTION AND ALERTING ONLY
+        """
+        try:
+            fault_type = fault_data.get('fault_type', 'unknown')
+            fault_severity = fault_data.get('fault_severity', 0.0)
+            timestamp = fault_data.get('current_time', 0.0)
+            event_id = fault_data.get('event_id', 'unknown')
+        
+            logger.info(f"🚨 Node {node_id}: Processing fault event - {fault_type} (severity: {fault_severity}) at time {timestamp}, event_id: {event_id}")
+        
+        # ✅ Generate synthetic metrics based on fault type
+            synthetic_metrics = self.generate_fault_metrics(node_id, fault_type, fault_severity)
+        
+        # ✅ Process through LSTM detector if available
+            detector = self.node_detectors.get(node_id)
+            if detector and detector.is_trained:
+                logger.info(f"🔍 Node {node_id}: Processing fault through trained LSTM detector")
+            
+            # Run anomaly prediction on synthetic fault metrics
+                anomaly_result = await detector.predict_anomaly(synthetic_metrics, self.numerical_features_for_lstm)
+            
+            # ✅ Force anomaly detection for fault events
+                original_score = anomaly_result['anomaly_score']
+                enhanced_score = max(original_score, min(1.0, fault_severity + 0.3))
+            
+            # Update anomaly result with fault-enhanced score
+                anomaly_result['anomaly_score'] = enhanced_score
+                anomaly_result['status'] = "Fault-induced Anomaly"
+            
+            # Add fault-specific context
+                anomaly_result['fault_context'] = {
+                'fault_type': fault_type,
+                'fault_severity': fault_severity,
+                'fault_timestamp': timestamp,
+                'event_id': event_id,
+                'detection_method': 'fault_event_processing'
+                }
+            
+                logger.warning(f"🔥 Node {node_id}: Fault-based anomaly detected! "
+                          f"Score: {enhanced_score:.4f} (Original: {original_score:.4f}, "
+                          f"Fault Severity: {fault_severity:.4f})")
+            
+            # ✅ Send alert to healing agent
+                await self.send_fault_alert_to_healing_agent(node_id, anomaly_result, fault_data)
+            
+            # ✅ Use existing pipeline for database integration
+                await self.process_anomaly_detection_and_alerting(node_id, anomaly_result, synthetic_metrics)
+        
+            else:
+            # ✅ Handle case when no trained detector is available
+                logger.warning(f"⚠️ Node {node_id}: No trained detector available, sending direct fault alert")
+            
+            # Create basic anomaly result for non-trained nodes
+                direct_anomaly_result = {
+                'anomaly_score': min(1.0, fault_severity + 0.2),
+                'status': 'Fault Detected (Direct)',
+                'fault_context': {
+                    'fault_type': fault_type,
+                    'fault_severity': fault_severity,
+                    'fault_timestamp': timestamp,
+                    'event_id': event_id,
+                    'detection_method': 'direct_fault_processing'
+                }
+                }
+            
+            # Send alert even without LSTM detector
+                await self.send_fault_alert_to_healing_agent(node_id, direct_anomaly_result, fault_data)
+                await self.process_anomaly_detection_and_alerting(node_id, direct_anomaly_result, synthetic_metrics)
+        
+            logger.info(f"✅ Node {node_id}: Fault event processing completed for {fault_type}")
+        
+        except Exception as e:
+            logger.error(f"❌ Error processing fault event for {node_id}: {e}", exc_info=True)
 
-        def generate_database_compatible_anomaly_id(node_id, timestamp):
-            """
-            Generates an anomaly_id in the format expected by the healing agent database.
-            Format: ANOM_<timestamp>_<node_id>_<random_suffix>
-            """
-            import uuid
-            random_suffix = uuid.uuid4().hex[:6]
-            return f"ANOM_{int(timestamp)}_{node_id}_{random_suffix}"
-        # Send alert to Healing Agent (via PUB/SUB)
-        # Send alert to Healing Agent (via PUB/SUB) - ONLY for anomalies
+    async def process_anomaly_detection_and_alerting(self, node_id, anomaly_results, raw_data_point_dict):
+        """
+        Process anomaly detection results and send alerts if needed.
+        This handles the database integration and messaging to healing agent.
+        """
+    # Send alert to Healing Agent (via PUB/SUB) - ONLY for anomalies
         if anomaly_results["status"] == "Anomaly detected":
             simulation_time_for_alert = raw_data_point_dict.get('current_time', 0.0)
             detection_timestamp = int(time.time())
-            
-            # Step 1: Try to find existing anomaly in database
+        
+        # Step 1: Try to find existing anomaly in database
             existing_anomaly_id = find_existing_anomaly_id(node_id, detection_timestamp)
-            
+        
             if existing_anomaly_id:
-                # Use existing anomaly_id from database
+            # Use existing anomaly_id from database
                 anomaly_id = existing_anomaly_id
                 logger.info(f"Node {node_id}: Using existing anomaly_id from database: {anomaly_id}")
             else:
-                # Generate new database-compatible anomaly_id
+            # Generate new database-compatible anomaly_id
                 anomaly_id = generate_database_compatible_anomaly_id(node_id, detection_timestamp)
-                
-                # Insert the new anomaly into database
+            
+            # Insert the new anomaly into database
                 insert_success = insert_new_anomaly_to_database(
-                    anomaly_id, 
-                    node_id, 
-                    detection_timestamp, 
-                    anomaly_results
+                anomaly_id, 
+                node_id, 
+                detection_timestamp, 
+                anomaly_results
                 )
-                
+            
                 if insert_success:
                     logger.info(f"Node {node_id}: Generated and inserted new anomaly_id: {anomaly_id}")
                 else:
                     logger.warning(f"Node {node_id}: Failed to insert anomaly into database, but proceeding with ID: {anomaly_id}")
 
-            # Create message compatible with Healing Agent expectations
+        # Create message compatible with Healing Agent expectations
             message_to_healing = {
-                "type": "anomaly_alert",
-                "anomaly_id": anomaly_id,  # Now uses database-consistent ID
-                "node_id": node_id,
-                "timestamp": datetime.now().isoformat(),
-                "simulation_time": simulation_time_for_alert,
-                "anomaly_score": anomaly_results['anomaly_score'],
-                "severity": anomaly_results.get("severity_classification", "N/A"),
-                "description": f"Anomaly detected for node {node_id}",
-                "actual_metrics": anomaly_results.get('actual_metrics', {}),
-                "predicted_metrics": anomaly_results.get('predicted_metrics', {}),
-                "source_agent": "calculation_agent",
-                "root_cause_indicators": anomaly_results.get("root_cause_indicators", []),
-                "recommended_actions": anomaly_results.get("recommended_actions", [])
+            "type": "anomaly_alert",
+            "anomaly_id": anomaly_id,  # Now uses database-consistent ID
+            "node_id": node_id,
+            "timestamp": datetime.now().isoformat(),
+            "simulation_time": simulation_time_for_alert,
+            "anomaly_score": anomaly_results['anomaly_score'],
+            "severity": anomaly_results.get("severity_classification", "N/A"),
+            "description": f"Anomaly detected for node {node_id}",
+            "actual_metrics": anomaly_results.get('actual_metrics', {}),
+            "predicted_metrics": anomaly_results.get('predicted_metrics', {}),
+            "source_agent": "calculation_agent",
+            "root_cause_indicators": anomaly_results.get("root_cause_indicators", []),
+            "recommended_actions": anomaly_results.get("recommended_actions", [])
             }
 
             try:
-                await self.a2a_publisher_socket.send_json(message_to_healing)
+            # ✅ FIXED: Use correct socket reference
+                await self.a2a_publisher.send_json(message_to_healing)
                 logger.info(f"Node {node_id}: A2A: Published anomaly alert with ID {anomaly_id} (Score: {anomaly_results['anomaly_score']:.4f})")
             except Exception as e:
                 logger.error(f"Node {node_id}: Failed to send alert to Healing Agent: {e}", exc_info=True)
 
-            # Send status update to MCP Agent - ONLY for anomalies
+        # Send status update to MCP Agent - ONLY for anomalies
             mcp_message = {
-                "source": "CalculationAgent",
-                "type": "anomaly_status",
-                "node_id": node_id,
-                "timestamp": datetime.now().isoformat(),
-                "simulation_time": raw_data_point_dict.get('current_time', 0.0),
-                "status": anomaly_results["status"],
-                "details": anomaly_results
+            "source": "CalculationAgent",
+            "type": "anomaly_status",
+            "node_id": node_id,
+            "timestamp": datetime.now().isoformat(),
+            "simulation_time": raw_data_point_dict.get('current_time', 0.0),
+            "status": anomaly_results["status"],
+            "details": anomaly_results
             }
 
             try:
@@ -1608,171 +2122,194 @@ class CalculationAgent:
             except Exception as e:
                 logger.error(f"Node {node_id}: Failed to push status to MCP: {e}", exc_info=True)
         else:
-            # For non-anomalies, just log but don't send messages
+        # For non-anomalies, just log but don't send messages
             logger.debug(f"Node {node_id}: Normal operation (Score: {anomaly_results['anomaly_score']:.4f})")
 
-
-
-    async def data_processing_loop(self):
+    def generate_fault_metrics(self, node_id: str, fault_type: str, fault_severity: float) -> Dict[str, float]:
         """
-        Continuously looks for new JSON files every 10 seconds and processes them.
+        Generate synthetic metrics based on fault type and severity
         """
-        logger.info("Starting JSON file monitoring loop...")
+    # Base metrics (normal operation)
+        base_metrics = {
+        'throughput': 100.0,
+        'latency': 10.0,
+        'packet_loss': 0.01,
+        'cpu_usage': 0.3,
+        'memory_usage': 0.4,
+        'jitter': 2.0,
+        'signal_strength': -70.0,
+        'buffer_occupancy': 0.2,
+        'active_links': 4,
+        'neighbor_count': 6,
+        'link_utilization': 0.5,
+        'critical_load': 0.1,
+        'normal_load': 0.8,
+        'energy_level': 0.9,
+        'x_position': 0.0,
+        'y_position': 0.0,
+        'z_position': 0.0,
+        'degradation_level': 0.1,
+        'fault_severity': fault_severity,
+        'power_stability': 0.95,
+        'voltage_level': 12.0,
+        'current_time': time.time()
+        }
+    
+    # ✅ Modify metrics based on fault type
+        if fault_type == 'power_fluctuation':
+            base_metrics['power_stability'] = max(0.0, 0.95 - fault_severity)
+            base_metrics['voltage_level'] = max(8.0, 12.0 - (fault_severity * 3))
+            base_metrics['cpu_usage'] = min(1.0, 0.3 + fault_severity * 0.4)
+            base_metrics['degradation_level'] = min(1.0, 0.1 + fault_severity * 0.6)
         
-        processed_files = set()  # Track processed files
+        elif fault_type == 'network_congestion':
+            base_metrics['throughput'] = max(10.0, 100.0 - (fault_severity * 60))
+            base_metrics['latency'] = min(100.0, 10.0 + (fault_severity * 40))
+            base_metrics['packet_loss'] = min(0.5, 0.01 + fault_severity * 0.2)
+            base_metrics['link_utilization'] = min(1.0, 0.5 + fault_severity * 0.4)
         
-        while True:
-            try:
-                # Look for JSON files with the pattern calculation_input_*.json
-                json_files = glob.glob("calculation_input_*.json")
-                
-                # Sort files by modification time (newest first)
-                json_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-                
-                for json_file in json_files:
-                    if json_file not in processed_files:
-                        logger.info(f"Processing new file: {json_file}")
-                        
-                        try:
-                            with open(json_file, 'r') as f:
-                                file_content = f.read().strip()
-                                
-                            # Handle the JSON structure from the attached files
-                            if file_content.startswith('"monitor_metadata"'):
-                                # The file contains JSON content without outer braces
-                                file_content = '{' + file_content + '}'
-                            
-                            data = json.loads(file_content)
-                            
-                            if 'lstm_training_data' in data and 'network_metrics' in data['lstm_training_data']:
-                                network_metrics = data['lstm_training_data']['network_metrics']
-                                
-                                # Process each node's data
-                                for node_key, node_data in network_metrics.items():
-                                    # Convert node_key to expected format (node_0 -> node_00)
-                                    if node_key.startswith('node_'):
-                                        node_number = node_key.split('_')[1]
-                                        formatted_node_id = f"node_{int(node_number):02d}"
-                                        
-                                        # Prepare data point for processing
-                                        raw_data_point = {
-                                            'current_time': node_data.get('timestamp', 0.0),
-                                            'throughput': node_data.get('throughput', 0.0),
-                                            'latency': node_data.get('latency', 0.0),
-                                            'packet_loss': node_data.get('packet_loss', 0.0),
-                                            'cpu_usage': node_data.get('cpu_usage', 0.0),
-                                            'memory_usage': node_data.get('memory_usage', 0.0),
-                                            # Add other metrics as needed based on your LSTM features
-                                            'jitter': 0.0,  # Default values for missing metrics
-                                            'signal_strength': 0.0,
-                                            'buffer_occupancy': 0.0,
-                                            'active_links': 0,
-                                            'neighbor_count': 0,
-                                            'link_utilization': 0.0,
-                                            'critical_load': 0.0,
-                                            'normal_load': 0.0,
-                                            'energy_level': 0.0,
-                                            'x_position': 0.0,
-                                            'y_position': 0.0,
-                                            'z_position': 0.0,
-                                            'degradation_level': 0.0,
-                                            'fault_severity': 0.0,
-                                            'power_stability': 0.0,
-                                            'voltage_level': 0.0
-                                        }
-                                        
-                                        # Process the data point
-                                        await self.process_data_point(formatted_node_id, raw_data_point)
-                            
-                            processed_files.add(json_file)
-                            logger.info(f"Successfully processed file: {json_file}")
-                            
-                        except json.JSONDecodeError as e:
-                            logger.error(f"Error decoding JSON from file {json_file}: {e}")
-                        except Exception as e:
-                            logger.error(f"Error processing file {json_file}: {e}", exc_info=True)
-                
-                # Wait for 10 seconds before checking for new files
-                await asyncio.sleep(10)
-                
-            except Exception as e:
-                logger.error(f"Error in JSON file monitoring loop: {e}", exc_info=True)
-                await asyncio.sleep(5)
+        elif fault_type == 'hardware_fault':
+            base_metrics['cpu_usage'] = min(1.0, 0.3 + fault_severity * 0.5)
+            base_metrics['memory_usage'] = min(1.0, 0.4 + fault_severity * 0.4)
+            base_metrics['degradation_level'] = min(1.0, 0.1 + fault_severity * 0.8)
+            base_metrics['signal_strength'] = max(-120.0, -70.0 - (fault_severity * 30))
+        
+        else:  # Generic fault
+            base_metrics['degradation_level'] = min(1.0, 0.1 + fault_severity * 0.5)
+            base_metrics['fault_severity'] = fault_severity
+    
+        logger.info(f"🔧 Node {node_id}: Generated fault metrics for {fault_type} - "
+                f"power_stability: {base_metrics['power_stability']:.3f}, "
+                f"degradation: {base_metrics['degradation_level']:.3f}")
+    
+        return base_metrics
 
+    async def send_fault_alert_to_healing_agent(self, node_id: str, anomaly_result: Dict, fault_data: Dict):
+        """
+        Send fault-specific alert to healing agent
+        """
+        try:
+        # ✅ ENHANCED: Calculate dynamic confidence for better healing decisions
+            detector = self.node_detectors.get(node_id)
+            dynamic_confidence = self.confidence_calculator.calculate_dynamic_confidence(
+                node_id, anomaly_result, detector
+            ) if hasattr(self, 'confidence_calculator') else 0.8
+        
+            fault_alert = {
+                'message_type': 'anomaly_alert',  # Different from anomaly_alert
+                'fault_id': f"FAULT_{node_id}_{int(time.time())}",
+                'anomaly_id': f"ANOM_{node_id}_{int(time.time())}",  # Also include anomaly ID
+                'node_id': node_id,
+                'timestamp': datetime.now().isoformat(),
+                'source_agent': 'calculation_agent',
+                'target_agent': 'healing_agent',
+                'fault_type': fault_data.get('fault_type'),
+                'fault_severity': fault_data.get('fault_severity'),
+                'anomaly_score': anomaly_result['anomaly_score'],
+                'severity': anomaly_result.get('severity_classification', 'High'),
+                'detection_method': 'fault_event_processing',
+                'fault_context': anomaly_result.get('fault_context', {}),
+                'network_context': {
+                    'node_type': self.get_node_type(node_id),
+                '   fault_pattern': 'real_time_fault'
+                },
+            
+            # ✅ NEW: Essential fields for healing agent decision making
+                'confidence': dynamic_confidence,
+                'description': f"Fault detected: {fault_data.get('fault_type', 'unknown')} on {node_id} with severity {fault_data.get('fault_severity', 0.0):.3f}",
+                'event_id': fault_data.get('event_id', f"evt_{node_id}_{int(time.time())}"),
+                'simulation_time': fault_data.get('current_time', time.time()),
+            
+            # ✅ NEW: Include actual and predicted metrics for healing context
+                'actual_metrics': anomaly_result.get('actual_metrics', {}),
+                'predicted_metrics': anomaly_result.get('predicted_metrics', {}),
+            
+            # ✅ NEW: Root cause analysis for targeted healing
+                'root_cause_indicators': anomaly_result.get('root_cause_indicators', []),
+                'affected_components': anomaly_result.get('affected_components', ['System_Health']),
+            
+            # ✅ NEW: Critical for healing plan generation
+                'requires_immediate_action': True,  # All faults require action
+                'priority': self.determine_fault_priority(fault_data.get('fault_severity', 0.0)),
+            
+            # ✅ NEW: Additional context for healing decisions
+                'detection_timestamp': datetime.now().isoformat(),
+                'message_id': f"CALC_FAULT_{int(time.time())}_{node_id}",
+            
+            # ✅ NEW: Include fault-specific technical details
+                'technical_details': {
+                'enhanced_anomaly_score': anomaly_result['anomaly_score'],
+                'original_lstm_score': anomaly_result.get('original_lstm_score', anomaly_result['anomaly_score']),
+                'score_enhancement_applied': True,
+                'detection_threshold': getattr(detector, 'dynamic_anomaly_threshold', 0.0) if detector else 0.0
+                }
+            }
+        
+            await self.a2a_publisher.send_json(fault_alert)
+            logger.info(f"🚨 COMPREHENSIVE fault alert sent for {node_id}: {fault_alert['fault_id']} "
+                    f"(Type: {fault_data.get('fault_type')}, Severity: {fault_data.get('fault_severity', 0.0):.3f}, "
+                    f"Priority: {fault_alert['priority']})")
+        
+        except Exception as e:
+            logger.error(f"Failed to send fault alert for {node_id}: {e}")
 
+    def determine_fault_priority(self, fault_severity: float) -> str:
+        """
+        Determine fault priority based on severity for healing agent prioritization
+        """
+        if fault_severity >= 0.8:
+            return 'CRITICAL'
+        elif fault_severity >= 0.6:
+            return 'HIGH'
+        elif fault_severity >= 0.4:
+            return 'MEDIUM'
+        else:
+            return 'LOW'
 
     async def start(self):
         """
-        Starts the Calculation Agent:
-        1. Loads initial training data for all nodes from specified training_data_file.
-        2. Builds and trains/loads LSTM models for each node.
-        3. Optimizes hyperparameters using SSA for each node if training.
-        4. Performs pre-live testing using testing_data_file.
-        5. Enters a loop to receive live data from Monitor Agent's file and perform predictions.
+        Starts the Calculation Agent - NOW WITH PRE-TRAINED MODEL LOADING
         """
-        logger.info("Calculation Agent started. Performing initial setup (training/loading models for all nodes)...")
-
+        logger.info("🚀 Calculation Agent started - LOADING PRE-TRAINED MODELS...")
+    
+    # Load training data to get feature info (needed for model architecture)
         node_training_data = await self.load_and_prepare_initial_training_data(self.config['training_data_file'])
-
+    
         if self.input_features_count == 0 or not self.numerical_features_for_lstm:
             logger.error("No numerical features identified from training data. Cannot initialize detectors. Exiting.")
             sys.exit(1)
-
+    
+    # Initialize detectors
         self._initialize_detectors(self.input_features_count, self.numerical_features_for_lstm)
-
-        training_tasks = []
+    
+    # ✅ NEW: Load pre-trained models for all nodes
+        models_loaded = 0
+        models_need_training = 0
+    
         for node_id in self.node_ids:
             detector = self.node_detectors[node_id]
-            # Try loading model first if not training on startup
-            if not self.config['train_on_startup'] and detector.load_model():
-                logger.info(f"Node {node_id}: Loaded existing model. Skipping retraining.")
-            else:
-                X_train_np, y_train_np = node_training_data.get(node_id, (np.array([]), np.array([])))
-
-                if X_train_np.size > 0:
-                    training_tasks.append(
-                        asyncio.create_task(
-                            self.optimize_lstm_with_ssa(node_id, X_train_np, y_train_np)
-                        )
-                    )
-                else:
-                    logger.warning(f"Node {node_id}: No sufficient training data available. Detector for this node will not be trained.")
-                    detector.is_trained = False
         
-        # Only proceed with gather if there are actual training tasks
-        if training_tasks:
-            logger.info(f"Calculation Agent: Awaiting completion of {len(training_tasks)} training tasks...")
-            results = await asyncio.gather(*training_tasks, return_exceptions=True)
-            for i, result in enumerate(results):
-                current_node_id = self.node_ids[i] if i < len(self.node_ids) else "Unknown_Node_Index" # Handle potential index mismatch
-                if isinstance(result, Exception):
-                    logger.error(f"Error during training/optimization for node {current_node_id}: {result}", exc_info=True)
-                    # If an error occurred during training, ensure detector.is_trained is False
-                    if current_node_id in self.node_detectors:
-                        self.node_detectors[current_node_id].is_trained = False
-                else:
-                    detector = self.node_detectors[current_node_id]
-                    if detector.is_trained:
-                        detector.save_model()
-                        logger.info(f"Node {current_node_id}: Training completed and model saved successfully.")
-                    else:
-                        logger.warning(f"Node {current_node_id}: Training task completed but detector.is_trained is still False. Check previous logs for details.")
-        else:
-            logger.warning("No nodes had sufficient training data or models were loaded. Skipping mass training phase.")
-
-
-        logger.info("Calculation Agent: Initial setup complete for all monitored nodes.")
-
-        # --- Perform pre-live testing phase ---
-        # Only run pre-live testing if at least one detector is trained
-        #if any(d.is_trained for d in self.node_detectors.values()):
-            #await self.perform_pre_live_testing()
-        #else:
-           # logger.warning("Skipping pre-live testing: No detectors were trained.")
-
-
-        logger.info("Calculation Agent: Entering live data monitoring phase. Waiting for data from Monitor Agent...")
-
+        # Try to load existing model
+            if detector.load_model():
+                models_loaded += 1
+                logger.info(f"✅ Node {node_id}: Pre-trained model loaded successfully!")
+            else:
+                models_need_training += 1
+                logger.warning(f"⚠️ Node {node_id}: No pre-trained model found or loading failed")
+            # You can choose to train here or skip
+                detector.is_trained = False
+    
+        logger.info(f"📊 MODEL LOADING SUMMARY:")
+        logger.info(f"   ✅ Models loaded: {models_loaded}/{len(self.node_ids)}")
+        logger.info(f"   ⚠️ Models need training: {models_need_training}")
+    
+        if models_loaded == 0:
+            logger.error("❌ No models could be loaded! Please check the lstm_model/ directory.")
+            return
+    
+        logger.info("🎯 Calculation Agent: Entering live data monitoring phase...")
+        logger.info("👂 Waiting for data from Monitor Agent...")
+    
         self.is_running = True
         await self.data_processing_loop()
 
@@ -1782,10 +2319,17 @@ class CalculationAgent:
         """
         logger.info("Calculation Agent: Stopping...")
         self.is_running = False
-        self.a2a_publisher_socket.close()
-        # Changed this line to close the renamed socket attribute
-        self._mcp_push_socket.close()
-        self.context.term()
+    
+    # ✅ Fix the attribute name
+        if hasattr(self, 'a2a_publisher'):
+            self.a2a_publisher.close()
+    
+        if hasattr(self, '_mcp_push_socket'):
+            self._mcp_push_socket.close()
+    
+        if hasattr(self, 'context'):
+            self.context.term()
+    
         logger.info("Calculation Agent: Stopped.")
 
 

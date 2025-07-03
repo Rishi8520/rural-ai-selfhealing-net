@@ -230,21 +230,54 @@ class APIKnowledgeLoader:
     
     async def load_knowledge_from_apis(self):
         knowledge_data = {}
-        
+    
         for api_name, api_config in self.knowledge_apis.items():
             try:
                 response = requests.get(api_config['url'], headers=api_config.get('headers', {}), timeout=30)
                 if response.status_code == 200:
-                    knowledge_data[api_name] = response.json()
-                    logger.info(f"Loaded knowledge from {api_name}: {len(knowledge_data[api_name])} items")
+                # ✅ FIXED: Properly parse JSON response
+                    try:
+                        api_data = response.json()
+                    
+                    # Handle different response formats
+                        if isinstance(api_data, list):
+                            knowledge_data[api_name] = api_data
+                        elif isinstance(api_data, dict):
+                        # Extract data from nested structure if needed
+                            knowledge_data[api_name] = api_data.get('data', [api_data])
+                        elif isinstance(api_data, str):
+                        # Try to parse string as JSON
+                            try:
+                                parsed_data = json.loads(api_data)
+                                knowledge_data[api_name] = parsed_data if isinstance(parsed_data, list) else [parsed_data]
+                            except json.JSONDecodeError:
+                                logger.error(f"API {api_name} returned non-JSON string: {api_data[:100]}...")
+                                knowledge_data[api_name] = []
+                        else:
+                            knowledge_data[api_name] = [api_data]
+                        
+                        logger.info(f"Loaded knowledge from {api_name}: {len(knowledge_data[api_name])} items")
+                    
+                    except json.JSONDecodeError as e:
+                        logger.error(f"Failed to parse JSON from {api_name}: {e}")
+                        logger.error(f"Response content: {response.text[:200]}...")
+                        knowledge_data[api_name] = []
+                    
                 else:
                     logger.error(f"Failed to load from {api_name}: HTTP {response.status_code}")
+                    logger.error(f"Response: {response.text[:200]}...")
                     knowledge_data[api_name] = []
-            except Exception as e:
-                logger.error(f"Error loading from {api_name}: {e}")
+                
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Network error loading from {api_name}: {e}")
                 knowledge_data[api_name] = []
-        
+            except Exception as e:
+                logger.error(f"Unexpected error loading from {api_name}: {e}")
+                knowledge_data[api_name] = []
+    
         return knowledge_data
+    
+
 
 class DatabaseManager:
     def __init__(self, db_path='api_driven_network_knowledge.db'):
@@ -342,95 +375,151 @@ class DatabaseManager:
     async def _store_node_types(self, node_types_data):
         try:
             self.cursor.execute("DELETE FROM NodeTypes WHERE source_api = 'api'")
+        
+            if not node_types_data:
+                logger.warning("No node types data to store")
+                return
             
             for item in node_types_data:
+            # ✅ FIXED: Handle both dict and string items
+                if isinstance(item, str):
+                    logger.warning(f"Received string instead of dict for node type: {item[:50]}...")
+                    continue
+                
+                if not isinstance(item, dict):
+                    logger.warning(f"Invalid node type item type: {type(item)}")
+                    continue
+                
                 self.cursor.execute("""
                     INSERT INTO NodeTypes (node_type_name, description, critical_metrics, common_faults, healing_strategies, source_api)
                     VALUES (?, ?, ?, ?, ?, ?)
                 """, (
-                    item.get('name', 'unknown'),
+                    item.get('name', item.get('node_type_name', 'unknown')),
                     item.get('description', ''),
-                    ','.join(item.get('critical_metrics', [])),
-                    ','.join(item.get('common_faults', [])),
-                    ','.join(item.get('healing_strategies', [])),
+                    ','.join(item.get('critical_metrics', [])) if isinstance(item.get('critical_metrics'), list) else str(item.get('critical_metrics', '')),
+                    ','.join(item.get('common_faults', [])) if isinstance(item.get('common_faults'), list) else str(item.get('common_faults', '')),
+                    ','.join(item.get('healing_strategies', [])) if isinstance(item.get('healing_strategies'), list) else str(item.get('healing_strategies', '')),
                     'api'
                 ))
-            
+        
             self.conn.commit()
             logger.info(f"Stored {len(node_types_data)} node types from API")
-            
+        
         except Exception as e:
             logger.error(f"Error storing node types: {e}")
+            logger.error(f"Sample data: {node_types_data[:2] if node_types_data else 'No data'}")
 
     async def _store_fault_patterns(self, fault_patterns_data):
         try:
             self.cursor.execute("DELETE FROM FaultPatterns WHERE source_api = 'api'")
+        
+            if not fault_patterns_data:
+                logger.warning("No fault patterns data to store")
+                return
             
             for item in fault_patterns_data:
+            # ✅ FIXED: Handle both dict and string items
+                if isinstance(item, str):
+                    logger.warning(f"Received string instead of dict for fault pattern: {item[:50]}...")
+                    continue
+                
+                if not isinstance(item, dict):
+                    logger.warning(f"Invalid fault pattern item type: {type(item)}")
+                    continue
+                
                 self.cursor.execute("""
                     INSERT INTO FaultPatterns (pattern_name, symptoms, causes, healing_actions, source_api)
                     VALUES (?, ?, ?, ?, ?)
                 """, (
-                    item.get('name', 'unknown'),
-                    ','.join(item.get('symptoms', [])),
-                    ','.join(item.get('causes', [])),
-                    ','.join(item.get('healing_actions', [])),
+                    item.get('name', item.get('pattern_name', 'unknown')),
+                    ','.join(item.get('symptoms', [])) if isinstance(item.get('symptoms'), list) else str(item.get('symptoms', '')),
+                    ','.join(item.get('causes', [])) if isinstance(item.get('causes'), list) else str(item.get('causes', '')),
+                    ','.join(item.get('healing_actions', [])) if isinstance(item.get('healing_actions'), list) else str(item.get('healing_actions', '')),
                     'api'
                 ))
-            
+        
             self.conn.commit()
             logger.info(f"Stored {len(fault_patterns_data)} fault patterns from API")
-            
+        
         except Exception as e:
             logger.error(f"Error storing fault patterns: {e}")
+            logger.error(f"Sample data: {fault_patterns_data[:2] if fault_patterns_data else 'No data'}")
 
     async def _store_healing_templates(self, healing_templates_data):
         try:
             self.cursor.execute("DELETE FROM HealingTemplates WHERE source_api = 'api'")
+        
+            if not healing_templates_data:
+                logger.warning("No healing templates data to store")
+                return
             
             for item in healing_templates_data:
+            # ✅ FIXED: Handle both dict and string items
+                if isinstance(item, str):
+                    logger.warning(f"Received string instead of dict for healing template: {item[:50]}...")
+                    continue
+                
+                if not isinstance(item, dict):
+                    logger.warning(f"Invalid healing template item type: {type(item)}")
+                    continue
+                
                 self.cursor.execute("""
                     INSERT INTO HealingTemplates (template_name, action_type, description, duration, success_rate, prerequisites, source_api)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    item.get('name', 'unknown'),
+                    item.get('name', item.get('template_name', 'unknown')),
                     item.get('action_type', ''),
                     item.get('description', ''),
                     item.get('duration', 60),
                     item.get('success_rate', 0.5),
-                    ','.join(item.get('prerequisites', [])),
+                    ','.join(item.get('prerequisites', [])) if isinstance(item.get('prerequisites'), list) else str(item.get('prerequisites', '')),
                     'api'
                 ))
-            
+        
             self.conn.commit()
             logger.info(f"Stored {len(healing_templates_data)} healing templates from API")
-            
+        
         except Exception as e:
             logger.error(f"Error storing healing templates: {e}")
+            logger.error(f"Sample data: {healing_templates_data[:2] if healing_templates_data else 'No data'}")
 
     async def _store_recovery_tactics(self, recovery_tactics_data):
         try:
             self.cursor.execute("DELETE FROM RecoveryTactics WHERE source_api = 'api'")
+        
+            if not recovery_tactics_data:
+                logger.warning("No recovery tactics data to store")
+                return
             
             for item in recovery_tactics_data:
+            # ✅ FIXED: Handle both dict and string items
+                if isinstance(item, str):
+                    logger.warning(f"Received string instead of dict for recovery tactic: {item[:50]}...")
+                    continue
+                
+                if not isinstance(item, dict):
+                    logger.warning(f"Invalid recovery tactic item type: {type(item)}")
+                    continue
+                
                 self.cursor.execute("""
                     INSERT INTO RecoveryTactics (tactic_id, tactic_name, description, estimated_time_seconds, priority, node_type_applicable, source_api)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                 """, (
-                    item.get('id', f"tactic_{int(time.time())}"),
-                    item.get('name', 'unknown'),
+                    item.get('id', item.get('tactic_id', f"tactic_{int(time.time())}")),
+                    item.get('name', item.get('tactic_name', 'unknown')),
                     item.get('description', ''),
-                    item.get('estimated_time', 60),
+                    item.get('estimated_time', item.get('estimated_time_seconds', 60)),
                     item.get('priority', 'medium'),
-                    ','.join(item.get('applicable_node_types', [])),
+                    ','.join(item.get('applicable_node_types', [])) if isinstance(item.get('applicable_node_types'), list) else str(item.get('applicable_node_types', '')),
                     'api'
                 ))
-            
+        
             self.conn.commit()
             logger.info(f"Stored {len(recovery_tactics_data)} recovery tactics from API")
-            
+        
         except Exception as e:
             logger.error(f"Error storing recovery tactics: {e}")
+            logger.error(f"Sample data: {recovery_tactics_data[:2] if recovery_tactics_data else 'No data'}")
 
     def _update_metadata(self, knowledge_data):
         try:
@@ -560,8 +649,8 @@ class DatabaseManager:
 class EnhancedHealingAgent:
     def __init__(self):
         self.context = zmq.asyncio.Context()
-        self.a2a_subscriber = None
-        self.mcp_publisher = None
+        self.a_subscriber = None
+        self.m_publisher = None
         self.orchestrator_publisher = None
         
         self.gemini_api_key = os.getenv('GOOGLE_API_KEY')
@@ -690,19 +779,23 @@ class EnhancedHealingAgent:
 
     async def initialize_communication(self):
         try:
-            self.a2a_subscriber = self.context.socket(zmq.SUB)
-            self.a2a_subscriber.connect("tcp://127.0.0.1:5556")
-            self.a2a_subscriber.setsockopt_string(zmq.SUBSCRIBE, "")
+            self.a_subscriber = self.context.socket(zmq.SUB)
+            self.a_subscriber.connect("tcp://127.0.0.1:5556")
+            self.a_subscriber.setsockopt_string(zmq.SUBSCRIBE, "")
             
-            self.mcp_publisher = self.context.socket(zmq.PUB)
-            self.mcp_publisher.bind("tcp://127.0.0.1:5559")
+            self.a_subscriber.setsockopt(zmq.RCVTIMEO, 1000)  # 1 second timeout
+            self.a_subscriber.setsockopt(zmq.CONFLATE, 1)     # Keep only latest message
+
+            self.m_publisher = self.context.socket(zmq.PUB)
+            self.m_publisher.bind("tcp://127.0.0.1:5559")
             
             self.orchestrator_publisher = self.context.socket(zmq.PUB)
             self.orchestrator_publisher.bind("tcp://127.0.0.1:5558")
             
             logger.info("Enhanced Healing Agent communication initialized")
-            await asyncio.sleep(2)
-            
+            await asyncio.sleep(5)
+            logger.info("Testing ZeroMQ subscriber connection...")
+
         except Exception as e:
             logger.error(f"Communication initialization failed: {e}")
             raise
@@ -737,14 +830,17 @@ class EnhancedHealingAgent:
         
         while self.is_running:
             try:
+                logger.debug("Waiting for message on subscriber socket...")
                 message = await asyncio.wait_for(
-                    self.a2a_subscriber.recv_json(),
-                    timeout=1.0
+                    self.a_subscriber.recv_json(),
+                    timeout=5.0
                 )
-                
+                logger.info(f"📨 RAW MESSAGE RECEIVED: {message}")  # ✅ LOG ALL MESSAGES
+
                 if message.get('message_type') == 'anomaly_alert':
                     await self.handle_incoming_anomaly_alert(message)
-                    
+                else:
+                    logger.warning(f"Unexpected message type: {message.get('message_type', 'MISSING')}")   
             except asyncio.TimeoutError:
                 continue
             except Exception as e:
@@ -770,24 +866,41 @@ class EnhancedHealingAgent:
 
     def parse_anomaly_alert(self, alert_message: Dict[str, Any]) -> Optional[AnomalyAlert]:
         try:
-            anomaly_details = alert_message.get('anomaly_details', {})
-            network_context = alert_message.get('network_context', {})
-            
-            # Extract confidence - NO default value
-            confidence = anomaly_details.get('confidence')
+        # ✅ FIXED: Handle both nested and flat message structures
+            if 'anomaly_details' in alert_message:
+            # Original nested structure
+                anomaly_details = alert_message.get('anomaly_details', {})
+                network_context = alert_message.get('network_context', {})
+                confidence = anomaly_details.get('confidence')
+                node_id = anomaly_details.get('node_id', '')
+                anomaly_id = anomaly_details.get('anomaly_id', '')
+                anomaly_score = anomaly_details.get('anomaly_score', 0.0)
+                severity = anomaly_details.get('severity', 'unknown')
+                detection_timestamp = anomaly_details.get('detection_timestamp', '')
+            else:
+            # ✅ NEW: Handle flat structure from calculation agent
+                network_context = alert_message.get('network_context', {})
+                confidence = alert_message.get('confidence')  # Direct access
+                node_id = alert_message.get('node_id', '')
+                anomaly_id = alert_message.get('anomaly_id', '')
+                anomaly_score = alert_message.get('anomaly_score', 0.0)
+                severity = alert_message.get('severity', 'unknown')
+                detection_timestamp = alert_message.get('detection_timestamp', '')
+        
+        # Extract confidence - NO default value
             if confidence is None:
                 logger.error("No confidence provided in anomaly alert")
                 return None
-            
+        
             return AnomalyAlert(
-                message_id=alert_message.get('message_id', ''),
-                node_id=anomaly_details.get('node_id', ''),
-                anomaly_id=anomaly_details.get('anomaly_id', ''),
-                anomaly_score=anomaly_details.get('anomaly_score', 0.0),
-                severity=anomaly_details.get('severity', 'unknown'),
-                detection_timestamp=anomaly_details.get('detection_timestamp', ''),
-                network_context=network_context,
-                confidence=confidence  # DYNAMIC confidence from calculation agent
+            message_id=alert_message.get('message_id', ''),
+            node_id=node_id,
+            anomaly_id=anomaly_id,
+            anomaly_score=anomaly_score,
+            severity=severity,
+            detection_timestamp=detection_timestamp,
+            network_context=network_context,
+            confidence=confidence  # DYNAMIC confidence from calculation agent
             )
         except Exception as e:
             logger.error(f"Error parsing anomaly alert: {e}")
@@ -1203,7 +1316,7 @@ Focus on Nokia rural network best practices. Ensure actions are technically feas
                 }
             }
             
-            await self.mcp_publisher.send_json(response)
+            await self.m_publisher.send_json(response)
             logger.info(f"Healing response sent to Calculation Agent: {healing_plan.plan_id}")
             
         except Exception as e:
@@ -1506,10 +1619,10 @@ Focus on Nokia rural network best practices. Ensure actions are technically feas
         try:
             self.is_running = False
             
-            if self.a2a_subscriber:
-                self.a2a_subscriber.close()
-            if self.mcp_publisher:
-                self.mcp_publisher.close()
+            if self.a_subscriber:
+                self.a_subscriber.close()
+            if self.m_publisher:
+                self.m_publisher.close()
             if self.orchestrator_publisher:
                 self.orchestrator_publisher.close()
             if self.context:

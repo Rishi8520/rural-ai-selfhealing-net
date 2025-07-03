@@ -1,1 +1,10 @@
-{"dynamic_anomaly_threshold": 0.09727091372013093}
+{
+  "dynamic_anomaly_threshold": 0.09415112674236298,
+  "hyperparameters": {
+    "hidden_size": 128,
+    "num_layers": 3,
+    "dropout_rate": 0.2,
+    "input_features_count": 18,
+    "sequence_length": 1
+  }
+}

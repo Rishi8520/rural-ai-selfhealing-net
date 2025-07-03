@@ -1,0 +1,35 @@
+{
+  "shutdown_timestamp": "2025-07-03T21:32:29.083102",
+  "final_metrics": {
+    "healing_plans_received": 2,
+    "tosca_templates_generated": 4,
+    "ns3_plans_exported": 4,
+    "orchestration_executions": 2,
+    "successful_deployments": 4,
+    "failed_operations": 0,
+    "avg_processing_time": 0.017078876495361328,
+    "file_healing_plans_processed": 2,
+    "ns3_deployment_files_created": 4,
+    "realtime_orchestration_cycles": 2,
+    "tosca_validation_successes": 4,
+    "tosca_validation_failures": 0
+  },
+  "performance_summary": {
+    "total_orchestrations": 2,
+    "tosca_templates_generated": 4,
+    "tosca_validation_success_rate": 100.0,
+    "deployment_success_rate": 200.0,
+    "avg_processing_time": 0.017078876495361328
+  },
+  "communication_summary": {
+    "zeromq_plans_processed": 2,
+    "file_plans_processed": 2,
+    "total_communication_channels": 2
+  },
+  "file_generation_summary": {
+    "tosca_templates": 4,
+    "ns3_integration_plans": 4,
+    "ns3_deployment_files": 4,
+    "total_files": 12
+  }
+}

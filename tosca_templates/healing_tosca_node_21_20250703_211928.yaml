@@ -1,0 +1,479 @@
+description: Nokia Rural Network Self-Healing Infrastructure
+imports:
+- tosca-normative-types:1.0
+- nokia-rural-network-types:2.1
+metadata:
+  action_count: 4
+  generated_timestamp: '2025-07-03T21:19:28.923736'
+  healing_plan_id: HEAL_node_21_1751557768
+  node_type: ACC
+  target_node_id: node_21
+  template_author: Nokia-AI-System
+  template_name: nokia-rural-network-healing
+  template_version: 2.1.0
+  validation_enabled: true
+topology_template:
+  description: Self-healing orchestration for node_21 (ACC)
+  inputs:
+    execution_timeout:
+      default: 1800
+      type: integer
+    healing_plan_id:
+      default: HEAL_node_21_1751557768
+      type: string
+    target_node_id:
+      default: node_21
+      type: string
+  node_templates:
+    healing_service_emergency_reroute_0:
+      interfaces:
+        Healing:
+          execute: nokia.scripts.emergency_reroute_execute.py
+          rollback: nokia.scripts.emergency_reroute_rollback.py
+          validate: nokia.scripts.emergency_reroute_validate.py
+        Standard:
+          configure: nokia.scripts.emergency_reroute_configure.sh
+          create: nokia.scripts.emergency_reroute_create.sh
+          delete: nokia.scripts.emergency_reroute_delete.sh
+          start: nokia.scripts.emergency_reroute_start.sh
+          stop: nokia.scripts.emergency_reroute_stop.sh
+      properties:
+        estimated_duration: 30
+        monitoring_enabled: true
+        parameters:
+          estimated_time: 30
+          priority_level: high
+          tactic_id: '1'
+        priority: 1
+        rollback_enabled: true
+        service_type: emergency_reroute
+        success_probability: 0.6
+        target_node: node_21
+      requirements:
+      - target:
+          capability: healing_endpoint
+          node: healing_target_node_21
+      type: nokia.nodes.HealingService
+    healing_service_physical_repair_3:
+      interfaces:
+        Healing:
+          execute: nokia.scripts.physical_repair_execute.py
+          rollback: nokia.scripts.physical_repair_rollback.py
+          validate: nokia.scripts.physical_repair_validate.py
+        Standard:
+          configure: nokia.scripts.physical_repair_configure.sh
+          create: nokia.scripts.physical_repair_create.sh
+          delete: nokia.scripts.physical_repair_delete.sh
+          start: nokia.scripts.physical_repair_start.sh
+          stop: nokia.scripts.physical_repair_stop.sh
+      properties:
+        estimated_duration: 7200
+        monitoring_enabled: true
+        parameters:
+          estimated_time: 7200
+          priority_level: low
+          tactic_id: '2'
+        priority: 3
+        rollback_enabled: true
+        service_type: physical_repair
+        success_probability: 0.6
+        target_node: node_21
+      requirements:
+      - target:
+          capability: healing_endpoint
+          node: healing_target_node_21
+      type: nokia.nodes.HealingService
+    healing_service_power_switch_1:
+      interfaces:
+        Healing:
+          execute: nokia.scripts.power_switch_execute.py
+          rollback: nokia.scripts.power_switch_rollback.py
+          validate: nokia.scripts.power_switch_validate.py
+        Standard:
+          configure: nokia.scripts.power_switch_configure.sh
+          create: nokia.scripts.power_switch_create.sh
+          delete: nokia.scripts.power_switch_delete.sh
+          start: nokia.scripts.power_switch_start.sh
+          stop: nokia.scripts.power_switch_stop.sh
+      properties:
+        estimated_duration: 120
+        monitoring_enabled: true
+        parameters:
+          prerequisites:
+          - Backup power system operational
+          template_id: 2
+        priority: 2
+        rollback_enabled: true
+        service_type: power_switch
+        success_probability: 0.75
+        target_node: node_21
+      requirements:
+      - target:
+          capability: healing_endpoint
+          node: healing_target_node_21
+      type: nokia.nodes.HealingService
+    healing_service_redundant_path_activation_2:
+      interfaces:
+        Healing:
+          execute: nokia.scripts.redundant_path_activation_execute.py
+          rollback: nokia.scripts.redundant_path_activation_rollback.py
+          validate: nokia.scripts.redundant_path_activation_validate.py
+        Standard:
+          configure: nokia.scripts.redundant_path_activation_configure.sh
+          create: nokia.scripts.redundant_path_activation_create.sh
+          delete: nokia.scripts.redundant_path_activation_delete.sh
+          start: nokia.scripts.redundant_path_activation_start.sh
+          stop: nokia.scripts.redundant_path_activation_stop.sh
+      properties:
+        estimated_duration: 60
+        monitoring_enabled: true
+        parameters:
+          estimated_time: 60
+          priority_level: medium
+          tactic_id: '3'
+        priority: 2
+        rollback_enabled: true
+        service_type: redundant_path_activation
+        success_probability: 0.6
+        target_node: node_21
+      requirements:
+      - target:
+          capability: healing_endpoint
+          node: healing_target_node_21
+      type: nokia.nodes.HealingService
+    healing_target_node_21:
+      capabilities:
+        healing_endpoint:
+          properties:
+            healing_timeout: 300
+            max_concurrent_actions: 3
+            supported_actions:
+            - emergency_reroute
+            - power_switch
+            - redundant_path_activation
+            - physical_repair
+          type: nokia.capabilities.HealingEndpoint
+      properties:
+        current_status: degraded
+        healing_required: true
+        node_id: node_21
+        node_type: ACC
+        priority_level: high
+      requirements:
+      - compute_resources
+      - storage_capacity
+      type: nokia.nodes.AccessNode
+  outputs:
+    execution_summary:
+      type: string
+    healing_status:
+      type: string
+    performance_metrics:
+      type: map
+  policies:
+  - healing_policy_emergency_reroute_0:
+      implementation:
+        dependencies:
+        - nokia.artifacts.HealingScript
+        - nokia.artifacts.MonitoringAgent
+        - nokia.artifacts.ValidationEngine
+        primary: nokia.implementations.HealingManager
+      properties:
+        action_type: emergency_reroute
+        alert_on_failure: true
+        monitoring_interval: 5
+        priority: 1
+        retry_count: 3
+        retry_interval: 10
+        rollback_enabled: true
+        success_threshold: 0.6
+        timeout: 30
+      targets:
+      - healing_service_emergency_reroute_0
+      triggers:
+        healing_failure:
+          action:
+          - retry
+          - escalate
+          condition: get_attribute(['SELF', 'success_rate']) < get_property(['SELF',
+            'success_threshold'])
+          event: failure
+        healing_timeout:
+          action:
+          - rollback
+          - alert
+          condition: get_property(['SELF', 'timeout']) < get_attribute(['SELF', 'execution_time'])
+          event: timeout
+      type: nokia.policies.GenericHealing
+  - healing_policy_power_switch_1:
+      implementation:
+        dependencies:
+        - nokia.artifacts.HealingScript
+        - nokia.artifacts.MonitoringAgent
+        - nokia.artifacts.ValidationEngine
+        primary: nokia.implementations.HealingManager
+      properties:
+        action_type: power_switch
+        alert_on_failure: true
+        monitoring_interval: 5
+        priority: 2
+        retry_count: 3
+        retry_interval: 10
+        rollback_enabled: true
+        success_threshold: 0.75
+        timeout: 120
+      targets:
+      - healing_service_power_switch_1
+      triggers:
+        healing_failure:
+          action:
+          - retry
+          - escalate
+          condition: get_attribute(['SELF', 'success_rate']) < get_property(['SELF',
+            'success_threshold'])
+          event: failure
+        healing_timeout:
+          action:
+          - rollback
+          - alert
+          condition: get_property(['SELF', 'timeout']) < get_attribute(['SELF', 'execution_time'])
+          event: timeout
+      type: nokia.policies.GenericHealing
+  - healing_policy_redundant_path_activation_2:
+      implementation:
+        dependencies:
+        - nokia.artifacts.HealingScript
+        - nokia.artifacts.MonitoringAgent
+        - nokia.artifacts.ValidationEngine
+        primary: nokia.implementations.HealingManager
+      properties:
+        action_type: redundant_path_activation
+        alert_on_failure: true
+        monitoring_interval: 5
+        priority: 2
+        retry_count: 3
+        retry_interval: 10
+        rollback_enabled: true
+        success_threshold: 0.6
+        timeout: 60
+      targets:
+      - healing_service_redundant_path_activation_2
+      triggers:
+        healing_failure:
+          action:
+          - retry
+          - escalate
+          condition: get_attribute(['SELF', 'success_rate']) < get_property(['SELF',
+            'success_threshold'])
+          event: failure
+        healing_timeout:
+          action:
+          - rollback
+          - alert
+          condition: get_property(['SELF', 'timeout']) < get_attribute(['SELF', 'execution_time'])
+          event: timeout
+      type: nokia.policies.GenericHealing
+  - healing_policy_physical_repair_3:
+      implementation:
+        dependencies:
+        - nokia.artifacts.HealingScript
+        - nokia.artifacts.MonitoringAgent
+        - nokia.artifacts.ValidationEngine
+        primary: nokia.implementations.HealingManager
+      properties:
+        action_type: physical_repair
+        alert_on_failure: true
+        monitoring_interval: 5
+        priority: 3
+        retry_count: 3
+        retry_interval: 10
+        rollback_enabled: true
+        success_threshold: 0.6
+        timeout: 7200
+      targets:
+      - healing_service_physical_repair_3
+      triggers:
+        healing_failure:
+          action:
+          - retry
+          - escalate
+          condition: get_attribute(['SELF', 'success_rate']) < get_property(['SELF',
+            'success_threshold'])
+          event: failure
+        healing_timeout:
+          action:
+          - rollback
+          - alert
+          condition: get_property(['SELF', 'timeout']) < get_attribute(['SELF', 'execution_time'])
+          event: timeout
+      type: nokia.policies.GenericHealing
+  workflows:
+    comprehensive_healing_orchestration:
+      description: Comprehensive healing workflow with validation, parallel execution,
+        and rollback support
+      inputs:
+        auto_approve:
+          default: false
+          type: boolean
+        healing_plan_id:
+          required: true
+          type: string
+        node_id:
+          required: true
+          type: string
+        severity:
+          constraints:
+          - valid_values:
+            - low
+            - medium
+            - high
+            - critical
+          required: true
+          type: string
+        timeout_minutes:
+          default: 30
+          type: integer
+      outputs:
+        actions_executed:
+          type: list
+        completion_time:
+          type: timestamp
+        healing_status:
+          type: string
+        success_rate:
+          type: float
+      steps:
+        execute_emergency_reroute_0:
+          activities:
+          - call_operation: Standard.start
+          - call_operation: Healing.execute
+          - call_operation: Healing.validate
+          on_failure: rollback_emergency_reroute_0
+          on_success: validate_emergency_reroute_0
+          target: healing_service_emergency_reroute_0
+        execute_physical_repair_3:
+          activities:
+          - call_operation: Standard.start
+          - call_operation: Healing.execute
+          - call_operation: Healing.validate
+          on_failure: rollback_physical_repair_3
+          on_success: validate_physical_repair_3
+          target: healing_service_physical_repair_3
+        execute_power_switch_1:
+          activities:
+          - call_operation: Standard.start
+          - call_operation: Healing.execute
+          - call_operation: Healing.validate
+          on_failure: rollback_power_switch_1
+          on_success: validate_power_switch_1
+          target: healing_service_power_switch_1
+        execute_redundant_path_activation_2:
+          activities:
+          - call_operation: Standard.start
+          - call_operation: Healing.execute
+          - call_operation: Healing.validate
+          on_failure: rollback_redundant_path_activation_2
+          on_success: validate_redundant_path_activation_2
+          target: healing_service_redundant_path_activation_2
+        healing_complete:
+          activities:
+          - call_operation: Notification.success_alert
+          - call_operation: Cleanup.finalize
+          target: notification_service
+        healing_failed:
+          activities:
+          - call_operation: Notification.failure_alert
+          - call_operation: Escalation.trigger_manual_intervention
+          target: notification_service
+        parallel_healing_execution:
+          activities:
+          - call_operation: Coordination.start_parallel_execution
+          - delegate:
+            - execute_emergency_reroute_0
+            - execute_power_switch_1
+            - execute_redundant_path_activation_2
+            - execute_physical_repair_3
+          on_failure: parallel_rollback
+          on_success: post_healing_validation
+          target: coordination_service
+        post_healing_validation:
+          activities:
+          - call_operation: Validation.verify_healing_success
+          - call_operation: Monitoring.final_assessment
+          - call_operation: Reporting.generate_completion_report
+          on_failure: healing_partial_success
+          on_success: healing_complete
+          target: healing_validation_service
+        pre_healing_validation:
+          activities:
+          - call_operation: Validation.check_prerequisites
+          - call_operation: Validation.assess_risk
+          - call_operation: Validation.approve_execution
+          on_failure: healing_failed
+          on_success: parallel_healing_execution
+          target: healing_validation_service
+        rollback_emergency_reroute_0:
+          activities:
+          - call_operation: Healing.rollback
+          - call_operation: Standard.stop
+          - call_operation: Reporting.log_failure
+          on_failure: critical_failure
+          on_success: healing_failed
+          target: healing_service_emergency_reroute_0
+        rollback_physical_repair_3:
+          activities:
+          - call_operation: Healing.rollback
+          - call_operation: Standard.stop
+          - call_operation: Reporting.log_failure
+          on_failure: critical_failure
+          on_success: healing_failed
+          target: healing_service_physical_repair_3
+        rollback_power_switch_1:
+          activities:
+          - call_operation: Healing.rollback
+          - call_operation: Standard.stop
+          - call_operation: Reporting.log_failure
+          on_failure: critical_failure
+          on_success: healing_failed
+          target: healing_service_power_switch_1
+        rollback_redundant_path_activation_2:
+          activities:
+          - call_operation: Healing.rollback
+          - call_operation: Standard.stop
+          - call_operation: Reporting.log_failure
+          on_failure: critical_failure
+          on_success: healing_failed
+          target: healing_service_redundant_path_activation_2
+        validate_emergency_reroute_0:
+          activities:
+          - call_operation: Validation.check_success
+          - call_operation: Monitoring.collect_metrics
+          - call_operation: Reporting.update_status
+          on_failure: retry_emergency_reroute_0
+          on_success: continue_execution
+          target: healing_service_emergency_reroute_0
+        validate_physical_repair_3:
+          activities:
+          - call_operation: Validation.check_success
+          - call_operation: Monitoring.collect_metrics
+          - call_operation: Reporting.update_status
+          on_failure: retry_physical_repair_3
+          on_success: post_healing_validation
+          target: healing_service_physical_repair_3
+        validate_power_switch_1:
+          activities:
+          - call_operation: Validation.check_success
+          - call_operation: Monitoring.collect_metrics
+          - call_operation: Reporting.update_status
+          on_failure: retry_power_switch_1
+          on_success: continue_execution
+          target: healing_service_power_switch_1
+        validate_redundant_path_activation_2:
+          activities:
+          - call_operation: Validation.check_success
+          - call_operation: Monitoring.collect_metrics
+          - call_operation: Reporting.update_status
+          on_failure: retry_redundant_path_activation_2
+          on_success: continue_execution
+          target: healing_service_redundant_path_activation_2
+tosca_definitions_version: tosca_simple_yaml_1_3

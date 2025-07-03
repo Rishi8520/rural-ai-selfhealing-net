@@ -1,0 +1,65 @@
+{
+  "plan_id": "HEAL_node_21_1751557768",
+  "anomaly_id": "ANOM_node_21_1751557766",
+  "node_id": "node_21",
+  "severity": "N/A",
+  "generated_timestamp": "2025-07-03T21:19:28.919871",
+  "total_estimated_duration": 7410,
+  "confidence": 0.44254957723150257,
+  "requires_approval": false,
+  "healing_actions": [
+    {
+      "action_id": "DB_KB_1_1751557767",
+      "action_type": "emergency_reroute",
+      "priority": 1,
+      "description": "Immediately reroute traffic through alternative paths",
+      "parameters": {
+        "tactic_id": "1",
+        "estimated_time": 30,
+        "priority_level": "high"
+      },
+      "estimated_duration": 30,
+      "success_probability": 0.6
+    },
+    {
+      "action_id": "TMPL_2_1751557768",
+      "action_type": "power_switch",
+      "priority": 2,
+      "description": "Switch to backup power source",
+      "parameters": {
+        "template_id": 2,
+        "prerequisites": [
+          "Backup power system operational"
+        ]
+      },
+      "estimated_duration": 120,
+      "success_probability": 0.75
+    },
+    {
+      "action_id": "DB_KB_3_1751557767",
+      "action_type": "redundant_path_activation",
+      "priority": 2,
+      "description": "Activate pre-configured redundant fiber paths",
+      "parameters": {
+        "tactic_id": "3",
+        "estimated_time": 60,
+        "priority_level": "medium"
+      },
+      "estimated_duration": 60,
+      "success_probability": 0.6
+    },
+    {
+      "action_id": "DB_KB_2_1751557767",
+      "action_type": "physical_repair",
+      "priority": 3,
+      "description": "Dispatch repair team for physical fiber restoration",
+      "parameters": {
+        "tactic_id": "2",
+        "estimated_time": 7200,
+        "priority_level": "low"
+      },
+      "estimated_duration": 7200,
+      "success_probability": 0.6
+    }
+  ]
+}

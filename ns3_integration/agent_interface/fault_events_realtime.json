@@ -1,0 +1,25 @@
+{
+  "timestamp": "95",
+  "events": [
+    {
+      "event_id": "evt_31_58301",
+      "timestamp": 25,
+      "event_type": "fault_started",
+      "fault_type": "power_fluctuation",
+      "description": "Randomized power fluctuation at node 21",
+      "severity": 0.359717,
+      "affected_nodes": [21, 21],
+      "requires_immediate_action": false
+    },
+    {
+      "event_id": "evt_32_58301",
+      "timestamp": 25,
+      "event_type": "fault_started",
+      "fault_type": "power_fluctuation",
+      "description": "Randomized power fluctuation at node 21",
+      "severity": 0.359717,
+      "affected_nodes": [21, 21],
+      "requires_immediate_action": false
+    }
+  ]
+}

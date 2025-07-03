@@ -1,0 +1,11 @@
+{
+  "shutdown_timestamp": "2025-07-03T21:32:23.715924",
+  "final_metrics": {
+    "alerts_received": 2,
+    "healing_plans_generated": 2,
+    "responses_sent": 2,
+    "failed_operations": 477
+  },
+  "total_active_plans": 2,
+  "avg_processing_time": 1.063402533531189
+}

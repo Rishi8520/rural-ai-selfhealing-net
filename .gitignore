@@ -1,80 +1,37 @@
-# Python
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-pip-wheel-metadata/
-share/python-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
+# Exclude runtime input directory (but keep reports)
+calculation_agent_input/
 
-# Virtual Environment
+# Exclude runtime databases
+*.db
+!schema.db
+!example.db
+
+# Exclude large model weight files (but keep thresholds)
+lstm_model/*.weights.h5
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Virtual environment
 venv/
 env/
-ENV/
-env.bak/
-venv.bak/
 
-# Environment files
-.env
-.venv
-.env.local
-.env.*.local
-
-# IDEs
+# IDE files
 .vscode/
 .idea/
 *.swp
 *.swo
-*~
+
+# OS files
+.DS_Store
+Thumbs.db
 
 # Logs
 *.log
 logs/
-network_alerts.log
-
-# Generated runtime output files (keeping source data)
-enhanced_monitoring_report.json
-calculation_agent_data_stream.json
-mcp_agent_alerts.json
-
-# NS-3 generated animation and trace files (keeping source simulation)
-*_network_animation.xml
-rural-network-animation.xml
-*.tr
-*.pcap
-*.nam
 
 # Temporary files
 *.tmp
 *.temp
-.DS_Store
-Thumbs.db
-
-# Jupyter Notebook checkpoints
-.ipynb_checkpoints
-
-# pytest
-.pytest_cache/
-.coverage
-htmlcov/
-
-# mypy
-.mypy_cache/
-.dmypy.json
-dmypy.json
