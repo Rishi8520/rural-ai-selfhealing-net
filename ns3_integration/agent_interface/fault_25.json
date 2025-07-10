@@ -3,9 +3,9 @@
   "timestamp": 25,
   "event_type": "fault_started",
   "fault_type": "power_fluctuation",
-  "description": "Randomized power fluctuation at node 21",
-  "severity": 0.359717,
+  "description": "Randomized power fluctuation at node 49",
+  "severity": 0.936263,
   "visual_effect": "",
-  "affected_nodes": [21, 21],
-  "requires_immediate_action": false
+  "affected_nodes": [49, 49],
+  "requires_immediate_action": true
 }

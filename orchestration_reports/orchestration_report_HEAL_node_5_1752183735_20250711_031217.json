@@ -1,0 +1,34 @@
+{
+  "report_metadata": {
+    "report_id": "REPORT_HEAL_node_5_1752183735_1752183737",
+    "generated_timestamp": "2025-07-11T03:12:17.710443",
+    "healing_plan_id": "HEAL_node_5_1752183735",
+    "node_id": "node_5"
+  },
+  "orchestration_summary": {
+    "healing_actions_count": 5,
+    "tosca_template_generated": true,
+    "ns3_integration_completed": true,
+    "validation_results": {
+      "tosca_validation": "passed",
+      "deployment_validation": false
+    }
+  },
+  "generated_artifacts": {
+    "tosca_template": {
+      "file_path": "tosca_templates/healing_tosca_node_5_20250711_031217.yaml",
+      "template_id": "TOSCA_HEAL_node_5_1752183735_1752183737",
+      "node_templates_count": 6
+    },
+    "ns3_integration_plan": {
+      "file_path": "ns3_integration/ns3_integration_node_5_20250711_031217.json",
+      "plan_id": "NS3_HEAL_node_5_1752183735_1752183737"
+    }
+  },
+  "execution_summary": null,
+  "performance_metrics": {
+    "total_processing_time": -4.76837158203125e-07,
+    "tosca_generation_time": "tracked",
+    "validation_time": "tracked"
+  }
+}

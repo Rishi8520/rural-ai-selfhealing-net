@@ -694,7 +694,7 @@ class EnhancedHealingAgent:
     def initialize_gemini(self):
         try:
             genai.configure(api_key=self.gemini_api_key)
-            self.gemini_model = genai.GenerativeModel('gemini-pro')
+            self.gemini_model = genai.GenerativeModel('gemini-1.5-flash')
             logger.info("Gemini AI initialized successfully")
         except Exception as e:
             logger.error(f"Gemini AI initialization failed: {e}")
@@ -836,11 +836,12 @@ class EnhancedHealingAgent:
                     timeout=5.0
                 )
                 logger.info(f"📨 RAW MESSAGE RECEIVED: {message}")  # ✅ LOG ALL MESSAGES
+                message_type = message.get('message_type') or message.get('type', 'MISSING')
+                if message_type == 'anomaly_alert':
 
-                if message.get('message_type') == 'anomaly_alert':
                     await self.handle_incoming_anomaly_alert(message)
                 else:
-                    logger.warning(f"Unexpected message type: {message.get('message_type', 'MISSING')}")   
+                    logger.warning(f"Unexpected message type: {message_type}")
             except asyncio.TimeoutError:
                 continue
             except Exception as e:
@@ -856,10 +857,10 @@ class EnhancedHealingAgent:
                 return
 
             logger.info(f"Anomaly alert received: {anomaly_alert.anomaly_id}")
-            
+        
             self.comm_metrics['alerts_received'] += 1
             await self.processing_queue.put(anomaly_alert)
-            
+        
         except Exception as e:
             logger.error(f"Error handling anomaly alert: {e}")
             self.comm_metrics['failed_operations'] += 1

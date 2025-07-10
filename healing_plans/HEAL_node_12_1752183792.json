@@ -1,0 +1,79 @@
+{
+  "plan_id": "HEAL_node_12_1752183792",
+  "anomaly_id": "ANOM_node_12_1752183634",
+  "node_id": "node_12",
+  "severity": "critical",
+  "generated_timestamp": "2025-07-11T03:13:12.662580",
+  "total_estimated_duration": 7365,
+  "confidence": 0.36924341119612586,
+  "requires_approval": true,
+  "healing_actions": [
+    {
+      "action_id": "TMPL_3_1752183792",
+      "action_type": "load_balancing",
+      "priority": 1,
+      "description": "Redistribute traffic load across multiple links",
+      "parameters": {
+        "template_id": 3,
+        "prerequisites": [
+          "Multiple links available"
+        ]
+      },
+      "estimated_duration": 45,
+      "success_probability": 0.5599999999999999
+    },
+    {
+      "action_id": "DB_KB_1_1752183784",
+      "action_type": "emergency_reroute",
+      "priority": 1,
+      "description": "Immediately reroute traffic through alternative paths",
+      "parameters": {
+        "tactic_id": "1",
+        "estimated_time": 30,
+        "priority_level": "high"
+      },
+      "estimated_duration": 30,
+      "success_probability": 0.48
+    },
+    {
+      "action_id": "TMPL_4_1752183792",
+      "action_type": "qos_prioritization",
+      "priority": 1,
+      "description": "Activate emergency QoS policies",
+      "parameters": {
+        "template_id": 4,
+        "prerequisites": [
+          "QoS policies configured"
+        ]
+      },
+      "estimated_duration": 30,
+      "success_probability": 0.48
+    },
+    {
+      "action_id": "DB_KB_3_1752183784",
+      "action_type": "redundant_path_activation",
+      "priority": 2,
+      "description": "Activate pre-configured redundant fiber paths",
+      "parameters": {
+        "tactic_id": "3",
+        "estimated_time": 60,
+        "priority_level": "medium"
+      },
+      "estimated_duration": 60,
+      "success_probability": 0.48
+    },
+    {
+      "action_id": "DB_KB_2_1752183784",
+      "action_type": "physical_repair",
+      "priority": 3,
+      "description": "Dispatch repair team for physical fiber restoration",
+      "parameters": {
+        "tactic_id": "2",
+        "estimated_time": 7200,
+        "priority_level": "low"
+      },
+      "estimated_duration": 7200,
+      "success_probability": 0.48
+    }
+  ]
+}

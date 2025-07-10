@@ -1,0 +1,116 @@
+{
+  "deployment_metadata": {
+    "deployment_id": "DEPLOY_HEAL_node_4_1752183726_1752183726",
+    "healing_plan_id": "HEAL_node_4_1752183726",
+    "node_id": "node_4",
+    "timestamp": 1752183726.9534554,
+    "tosca_template_path": "tosca_templates/healing_tosca_node_4_20250711_031206.yaml",
+    "deployment_status": "queued",
+    "orchestration_agent": "robust_orchestration_agent",
+    "validation_passed": true,
+    "estimated_completion_time": 1752189231.953456
+  },
+  "healing_actions": [
+    {
+      "command": "generic_healing_action",
+      "node_id": "node_4",
+      "parameters": {
+        "action_type": "Remote_Diagnostics_and_Log_Analysis",
+        "healing_duration": 3600,
+        "generic_parameters": {
+          "system": "NetAct",
+          "node_id": "node_4",
+          "log_level": "DEBUG",
+          "focus_area": "Core Network Functionality"
+        }
+      }
+    },
+    {
+      "command": "activate_load_balancing",
+      "node_id": "node_4",
+      "parameters": {
+        "balancing_algorithm": "weighted_fair_queuing",
+        "redistribution_ratio": 0.7,
+        "neighbor_nodes": [
+          "node_00",
+          "node_01"
+        ],
+        "healing_duration": 45,
+        "dynamic_adjustment": true,
+        "threshold_monitoring": true
+      }
+    },
+    {
+      "command": "generic_healing_action",
+      "node_id": "node_4",
+      "parameters": {
+        "action_type": "emergency_reroute",
+        "healing_duration": 30,
+        "generic_parameters": {
+          "tactic_id": "1",
+          "estimated_time": 30,
+          "priority_level": "high"
+        }
+      }
+    },
+    {
+      "command": "generic_healing_action",
+      "node_id": "node_4",
+      "parameters": {
+        "action_type": "qos_prioritization",
+        "healing_duration": 30,
+        "generic_parameters": {
+          "template_id": 4,
+          "prerequisites": [
+            "QoS policies configured"
+          ]
+        }
+      }
+    },
+    {
+      "command": "generic_healing_action",
+      "node_id": "node_4",
+      "parameters": {
+        "action_type": "Redundancy_Failover_Check",
+        "healing_duration": 1800,
+        "generic_parameters": {
+          "redundancy_mechanism": "Check HA pair status and initiate failover if necessary",
+          "monitoring_interval": 60,
+          "backup_node_id": "node_4_backup"
+        }
+      }
+    }
+  ],
+  "ns3_commands": [
+    "ExecuteGenericHealing(node_4, 'Remote_Diagnostics_and_Log_Analysis')",
+    "UpdateGenericVisualization(node_4, 'healing')",
+    "ActivateLoadBalancing(node_4, 'weighted_fair_queuing')",
+    "SetLoadDistribution(node_4, ['node_00', 'node_01'])",
+    "EnableDynamicLoadAdjustment(node_4)",
+    "UpdateLoadBalancingVisualization(node_4, 'active')",
+    "ExecuteGenericHealing(node_4, 'emergency_reroute')",
+    "UpdateGenericVisualization(node_4, 'healing')",
+    "ExecuteGenericHealing(node_4, 'qos_prioritization')",
+    "UpdateGenericVisualization(node_4, 'healing')",
+    "ExecuteGenericHealing(node_4, 'Redundancy_Failover_Check')",
+    "UpdateGenericVisualization(node_4, 'healing')",
+    "InitializeHealingCoordination(node_4)",
+    "SynchronizeHealingActions(node_4)",
+    "MonitorHealingProgress(node_4)"
+  ],
+  "visualization_updates": [],
+  "network_topology_changes": [
+    {
+      "change_type": "multi_action_coordination",
+      "primary_node": "node_4",
+      "coordination_nodes": [
+        "node_00"
+      ],
+      "healing_sequence": "parallel_with_dependencies",
+      "coordination_timeout": 300
+    }
+  ],
+  "routing_updates": [],
+  "performance_targets": {},
+  "rollback_plan": []
+}

@@ -660,14 +660,22 @@ class LSTMAnomalyDetector:
             reconstruction_error = np.mean(np.square(predicted_scaled_next_step - actual_scaled_last_step))
             # Normalize anomaly score based on dynamic threshold 
             # A simple linear scaling, capping at 1.0
-            if (reconstruction_error>25) :
-                reconstruction_er = np.sqrt(reconstruction_error)/100
+            if reconstruction_error > self.dynamic_anomaly_threshold:
+    # Calculate how much the error exceeds the threshold
+                threshold_ratio = reconstruction_error / self.dynamic_anomaly_threshold
+    
+    # Use logarithmic scaling for better sensitivity across all fault types
+                if threshold_ratio >= 1.0:
+                    anomaly_score = min(1.0, 0.1 + (0.9 * np.log10(threshold_ratio) / 2.0))
+                else:
+                    anomaly_score = 0.0
+    
+                is_anomaly = True
             else:
-                reconstruction_er=0
-            anomaly_score = min(1.0, reconstruction_er / (self.dynamic_anomaly_threshold if self.dynamic_anomaly_threshold > 0 else 0.0))
-            is_anomaly = anomaly_score> 0
+                anomaly_score = 0.0  # ✅ CRITICAL: Always set anomaly_score in else block
+                is_anomaly = False
 
-            confidence_level = 100 * (1 - anomaly_score)
+            confidence_level = 100 * (1 - anomaly_score * 0.5)
 
             if is_anomaly:
                 status = "Anomaly detected"
@@ -1195,7 +1203,7 @@ class CalculationAgent:
             df = pd.read_csv(absolute_file_path)
             logger.info(f"Successfully loaded CSV from {absolute_file_path}. Total rows: {len(df)}, columns: {len(df.columns)}")
 
-            df['NodeId'] = df['NodeId'].apply(lambda x: f"node_{int(x):02d}")
+            df['NodeId'] = df['NodeId'].apply(lambda x: f"node_{int(x)}")
             unique_nodes_in_csv = df['NodeId'].unique().tolist()
             logger.info(f"Found {len(unique_nodes_in_csv)} unique nodes in training data: {unique_nodes_in_csv}")
 
@@ -1401,6 +1409,7 @@ class CalculationAgent:
 
         if not detector.is_trained:
             return
+        logger.debug(f"🔍 Processing {node_id}: throughput={raw_data_point_dict.get('throughput', 0):.2f}, latency={raw_data_point_dict.get('latency', 0):.2f}")
 
         anomaly_result = await detector.predict_anomaly(raw_data_point_dict, self.numerical_features_for_lstm)
 
@@ -1410,6 +1419,7 @@ class CalculationAgent:
                 node_id=node_id,
                 severity=anomaly_result.get("status", "normal")
             ).set(anomaly_result['anomaly_score'])
+        logger.debug(f"🔍 Checking threshold: {anomaly_result['anomaly_score']} > 0.5?")
 
         if anomaly_result['anomaly_score'] > 0.5:
             if hasattr(self, 'anomaly_detection_counter'):
@@ -1505,9 +1515,7 @@ class CalculationAgent:
         while True:
             try:
                 # Look for JSON files with the pattern calculation_input_*.json
-                json_files = glob.glob("calculation_input_*.json")
-                
-                # Sort files by modification time (newest first)
+                json_files = glob.glob("/media/rishi/Windows-SSD/PROJECT_&_RESEARCH/NOKIA/Buil-a-thon/rural_ai_selfhealing_net/calculation_agent_input/calculation_input_*.json")                # Sort files by modification time (newest first)
                 json_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
                 
                 for json_file in json_files:
@@ -1531,11 +1539,29 @@ class CalculationAgent:
                                 for node_key, node_data in network_metrics.items():
                                     # Convert node_key to expected format (node_0 -> node_00)
                                     if node_key.startswith('node_'):
-                                        node_number = node_key.split('_')[1]
-                                        formatted_node_id = f"node_{int(node_number):02d}"
-                                        
+                                        try:
+                                            if node_key.startswith('node_node_'):
+                # Remove the extra "node_" prefix: "node_node_17" → "node_17"
+                                                clean_node_key = node_key.replace('node_node_', 'node_')
+                                            else:
+                                                clean_node_key = node_key
+            
+            # Handle both formats: "node_17" or "node_17_something"
+                                            parts = clean_node_key.split('_')
+                                            if len(parts) >= 2:
+                                                node_number_str = parts[1]
+                
+                # Validate it's actually a number
+                                                node_number = int(node_number_str)
+                
+                # Keep the original format from NS3 (no zero padding needed)
+                                                formatted_node_id = f"node_{node_number}"
+                
+                # ✅ DEBUG: Log what we're processing
+                                                logger.debug(f"🔄 Processing node: {node_key} → {formatted_node_id}")
+                
                                         # Prepare data point for processing
-                                        raw_data_point = {
+                                                raw_data_point = {
                                             'current_time': node_data.get('timestamp', 0.0),
                                             'throughput': node_data.get('throughput', 0.0),
                                             'latency': node_data.get('latency', 0.0),
@@ -1558,11 +1584,16 @@ class CalculationAgent:
                                             'fault_severity': node_data.get('fault_severity', 0.0),
                                             'power_stability': node_data.get('power_stability', 0.0),
                                             'voltage_level': node_data.get('voltage_level', 0.0)
-                                        }
+                                                }
                                         
                                         # Process the data point
-                                        await self.process_data_point(formatted_node_id, raw_data_point)
-                            
+                                                await self.process_data_point(formatted_node_id, raw_data_point)
+                                            else:
+                                                logger.warning(f"❌ Invalid node key format: {node_key}")
+                                            
+                                        except (ValueError, IndexError) as e:
+                                            logger.error(f"❌ Error parsing node key '{node_key}': {e}")
+                                            continue
                             processed_files.add(json_file)
                             logger.info(f"Successfully processed file: {json_file}")
                             
@@ -1577,95 +1608,6 @@ class CalculationAgent:
             except Exception as e:
                 logger.error(f"Error in JSON file monitoring loop: {e}", exc_info=True)
                 await asyncio.sleep(5)
-
-        
-    async def data_processing_loop(self):
-        """
-        Continuously looks for new JSON files every 10 seconds and processes them.
-        """
-        logger.info("Starting JSON file monitoring loop...")
-        
-        processed_files = set()  # Track processed files
-        
-        while True:
-            try:
-                # Look for JSON files with the pattern calculation_input_*.json
-                json_files = glob.glob("calculation_input_*.json")
-                
-                # Sort files by modification time (newest first)
-                json_files.sort(key=lambda x: os.path.getmtime(x), reverse=True)
-                
-                for json_file in json_files:
-                    if json_file not in processed_files:
-                        logger.info(f"Processing new file: {json_file}")
-                        
-                        try:
-                            with open(json_file, 'r') as f:
-                                file_content = f.read().strip()
-                                
-                            # Handle the JSON structure from the attached files
-                            if file_content.startswith('"monitor_metadata"'):
-                                # The file contains JSON content without outer braces
-                                file_content = '{' + file_content + '}'
-                            
-                            data = json.loads(file_content)
-                            
-                            if 'lstm_training_data' in data and 'network_metrics' in data['lstm_training_data']:
-                                network_metrics = data['lstm_training_data']['network_metrics']
-                                
-                                # Process each node's data
-                                for node_key, node_data in network_metrics.items():
-                                    # Convert node_key to expected format (node_0 -> node_00)
-                                    if node_key.startswith('node_'):
-                                        node_number = node_key.split('_')[1]
-                                        formatted_node_id = f"node_{int(node_number):02d}"
-                                        
-                                        # Prepare data point for processing
-                                        raw_data_point = {
-                                            'current_time': node_data.get('timestamp', 0.0),
-                                            'throughput': node_data.get('throughput', 0.0),
-                                            'latency': node_data.get('latency', 0.0),
-                                            'packet_loss': node_data.get('packet_loss', 0.0),
-                                            'cpu_usage': node_data.get('cpu_usage', 0.0),
-                                            'memory_usage': node_data.get('memory_usage', 0.0),
-                                            # Add other metrics as needed based on your LSTM features
-                                            'jitter': 0.0,  # Default values for missing metrics
-                                            'signal_strength': 0.0,
-                                            'buffer_occupancy': 0.0,
-                                            'active_links': 0,
-                                            'neighbor_count': 0,
-                                            'link_utilization': 0.0,
-                                            'critical_load': 0.0,
-                                            'normal_load': 0.0,
-                                            'energy_level': 0.0,
-                                            'x_position': 0.0,
-                                            'y_position': 0.0,
-                                            'z_position': 0.0,
-                                            'degradation_level': 0.0,
-                                            'fault_severity': 0.0,
-                                            'power_stability': 0.0,
-                                            'voltage_level': 0.0
-                                        }
-                                        
-                                        # Process the data point
-                                        await self.process_data_point(formatted_node_id, raw_data_point)
-                            
-                            processed_files.add(json_file)
-                            logger.info(f"Successfully processed file: {json_file}")
-                            
-                        except json.JSONDecodeError as e:
-                            logger.error(f"Error decoding JSON from file {json_file}: {e}")
-                        except Exception as e:
-                            logger.error(f"Error processing file {json_file}: {e}", exc_info=True)
-                
-                # Wait for 10 seconds before checking for new files
-                await asyncio.sleep(10)
-                
-            except Exception as e:
-                logger.error(f"Error in JSON file monitoring loop: {e}", exc_info=True)
-                await asyncio.sleep(5)
-
-    
 
     async def start(self):
         """
@@ -1745,7 +1687,7 @@ class CalculationAgent:
         """
         logger.info("Calculation Agent: Stopping...")
         self.is_running = False
-        self.a2a_publisher_socket.close()
+        self.a2a_publisher_.close()
         # Changed this line to close the renamed socket attribute
         self._mcp_push_socket.close()
         self.context.term()
@@ -1758,7 +1700,7 @@ if __name__ == "__main__":
     test_pub_address_a2a = CALC_HEAL_PUB_SUB_ADDRESS
     test_push_address_mcp = CALC_MCP_PUSH_PULL_ADDRESS
 
-    test_node_ids = [f"node_{i:02d}" for i in range(50)]
+    test_node_ids = [f"node_{i}" for i in range(50)]
 
     if not os.path.exists(CONFIG_FILE):
         default_config = {

@@ -1,0 +1,80 @@
+{
+  "plan_id": "HEAL_node_4_1752183726",
+  "anomaly_id": "ANOM_node_4_1752183632",
+  "node_id": "node_4",
+  "severity": "critical",
+  "generated_timestamp": "2025-07-11T03:12:06.912909",
+  "total_estimated_duration": 5505,
+  "confidence": 0.42413231608107627,
+  "requires_approval": true,
+  "healing_actions": [
+    {
+      "action_id": "RAG_AI_1752183726_0",
+      "action_type": "Remote_Diagnostics_and_Log_Analysis",
+      "priority": 1,
+      "description": "Initiate a remote diagnostic session on node_4 using Nokia's NetAct or similar network management system.  Analyze the logs for detailed error messages and performance metrics related to the 'dynamic_detection' fault pattern. This will help pinpoint the root cause.  Focus on CPU utilization, memory usage, and any specific error codes related to core network functions.",
+      "parameters": {
+        "system": "NetAct",
+        "node_id": "node_4",
+        "log_level": "DEBUG",
+        "focus_area": "Core Network Functionality"
+      },
+      "estimated_duration": 3600,
+      "success_probability": 0.6
+    },
+    {
+      "action_id": "TMPL_3_1752183726",
+      "action_type": "load_balancing",
+      "priority": 1,
+      "description": "Redistribute traffic load across multiple links",
+      "parameters": {
+        "template_id": 3,
+        "prerequisites": [
+          "Multiple links available"
+        ]
+      },
+      "estimated_duration": 45,
+      "success_probability": 0.5599999999999999
+    },
+    {
+      "action_id": "DB_KB_1_1752183718",
+      "action_type": "emergency_reroute",
+      "priority": 1,
+      "description": "Immediately reroute traffic through alternative paths",
+      "parameters": {
+        "tactic_id": "1",
+        "estimated_time": 30,
+        "priority_level": "high"
+      },
+      "estimated_duration": 30,
+      "success_probability": 0.48
+    },
+    {
+      "action_id": "TMPL_4_1752183726",
+      "action_type": "qos_prioritization",
+      "priority": 1,
+      "description": "Activate emergency QoS policies",
+      "parameters": {
+        "template_id": 4,
+        "prerequisites": [
+          "QoS policies configured"
+        ]
+      },
+      "estimated_duration": 30,
+      "success_probability": 0.48
+    },
+    {
+      "action_id": "RAG_AI_1752183726_1",
+      "action_type": "Redundancy_Failover_Check",
+      "priority": 2,
+      "description": "Verify the status of any configured redundancy mechanisms for node_4 (e.g., high-availability pairs, backup systems). If a redundant system exists, initiate a failover to the backup node.  Monitor the backup node's performance closely for any issues. In rural networks, this might involve a secondary core node or a carefully planned geographical backup.",
+      "parameters": {
+        "redundancy_mechanism": "Check HA pair status and initiate failover if necessary",
+        "monitoring_interval": 60,
+        "backup_node_id": "node_4_backup"
+      },
+      "estimated_duration": 1800,
+      "success_probability": 0.6
+    }
+  ]
+}

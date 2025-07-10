@@ -1,0 +1,28 @@
+{
+  "simulation_config": {
+    "simulation_time": 300.0,
+    "animation_enabled": true,
+    "pcap_enabled": true,
+    "tracing_enabled": true,
+    "mobility_model": "ns3::ConstantPositionMobilityModel",
+    "propagation_model": "ns3::FriisPropagationLossModel",
+    "error_model": "ns3::YansErrorRateModel"
+  },
+  "network_topology_changes": [],
+  "routing_updates": [],
+  "configuration_changes": [],
+  "simulation_parameters": {
+    "healing_validation_enabled": true,
+    "metrics_collection_enhanced": true,
+    "animation_healing_events": true
+  },
+  "validation_criteria": {
+    "metrics_collection_interval": 1.0,
+    "convergence_timeout": 60.0,
+    "success_criteria": {
+      "throughput_recovery_threshold": 0.8,
+      "latency_improvement_threshold": 0.5,
+      "packet_loss_reduction_threshold": 0.3
+    }
+  }
+}

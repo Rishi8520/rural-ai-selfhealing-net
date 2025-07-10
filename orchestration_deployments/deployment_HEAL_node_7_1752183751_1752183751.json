@@ -1,0 +1,115 @@
+{
+  "deployment_metadata": {
+    "deployment_id": "DEPLOY_HEAL_node_7_1752183751_1752183751",
+    "healing_plan_id": "HEAL_node_7_1752183751",
+    "node_id": "node_7",
+    "timestamp": 1752183751.6519885,
+    "tosca_template_path": "tosca_templates/healing_tosca_node_7_20250711_031231.yaml",
+    "deployment_status": "queued",
+    "orchestration_agent": "robust_orchestration_agent",
+    "validation_passed": true,
+    "estimated_completion_time": 1752191116.651989
+  },
+  "healing_actions": [
+    {
+      "command": "activate_load_balancing",
+      "node_id": "node_7",
+      "parameters": {
+        "balancing_algorithm": "weighted_fair_queuing",
+        "redistribution_ratio": 0.7,
+        "neighbor_nodes": [
+          "node_05",
+          "node_06"
+        ],
+        "healing_duration": 45,
+        "dynamic_adjustment": true,
+        "threshold_monitoring": true
+      }
+    },
+    {
+      "command": "generic_healing_action",
+      "node_id": "node_7",
+      "parameters": {
+        "action_type": "emergency_reroute",
+        "healing_duration": 30,
+        "generic_parameters": {
+          "tactic_id": "1",
+          "estimated_time": 30,
+          "priority_level": "high"
+        }
+      }
+    },
+    {
+      "command": "generic_healing_action",
+      "node_id": "node_7",
+      "parameters": {
+        "action_type": "qos_prioritization",
+        "healing_duration": 30,
+        "generic_parameters": {
+          "template_id": 4,
+          "prerequisites": [
+            "QoS policies configured"
+          ]
+        }
+      }
+    },
+    {
+      "command": "generic_healing_action",
+      "node_id": "node_7",
+      "parameters": {
+        "action_type": "redundant_path_activation",
+        "healing_duration": 60,
+        "generic_parameters": {
+          "tactic_id": "3",
+          "estimated_time": 60,
+          "priority_level": "medium"
+        }
+      }
+    },
+    {
+      "command": "generic_healing_action",
+      "node_id": "node_7",
+      "parameters": {
+        "action_type": "physical_repair",
+        "healing_duration": 7200,
+        "generic_parameters": {
+          "tactic_id": "2",
+          "estimated_time": 7200,
+          "priority_level": "low"
+        }
+      }
+    }
+  ],
+  "ns3_commands": [
+    "ActivateLoadBalancing(node_7, 'weighted_fair_queuing')",
+    "SetLoadDistribution(node_7, ['node_05', 'node_06'])",
+    "EnableDynamicLoadAdjustment(node_7)",
+    "UpdateLoadBalancingVisualization(node_7, 'active')",
+    "ExecuteGenericHealing(node_7, 'emergency_reroute')",
+    "UpdateGenericVisualization(node_7, 'healing')",
+    "ExecuteGenericHealing(node_7, 'qos_prioritization')",
+    "UpdateGenericVisualization(node_7, 'healing')",
+    "ExecuteGenericHealing(node_7, 'redundant_path_activation')",
+    "UpdateGenericVisualization(node_7, 'healing')",
+    "ExecuteGenericHealing(node_7, 'physical_repair')",
+    "UpdateGenericVisualization(node_7, 'healing')",
+    "InitializeHealingCoordination(node_7)",
+    "SynchronizeHealingActions(node_7)",
+    "MonitorHealingProgress(node_7)"
+  ],
+  "visualization_updates": [],
+  "network_topology_changes": [
+    {
+      "change_type": "multi_action_coordination",
+      "primary_node": "node_7",
+      "coordination_nodes": [
+        "node_05"
+      ],
+      "healing_sequence": "parallel_with_dependencies",
+      "coordination_timeout": 300
+    }
+  ],
+  "routing_updates": [],
+  "performance_targets": {},
+  "rollback_plan": []
+}

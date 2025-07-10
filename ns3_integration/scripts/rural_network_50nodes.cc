@@ -339,6 +339,8 @@ private:
     void ProcessIncomingHealingPlans();
     void DeployHealingPlan(const HealingPlan& plan);
     void UpdateAgentInterface();
+    void ResolveFaultByHealing(uint32_t nodeId, const std::string& faultType);
+
     
     // **ENHANCED: Data collection**
     void CollectComprehensiveMetrics();
@@ -409,17 +411,17 @@ SimulationConfig ITU_Competition_Rural_Network::CreateITU_CompetitionConfig(int 
     // **NEW: Randomized fault parameters**
     if (config.totalSimulationTime <= 180) {
         // ✅ SHORT SIMULATION: Aggressive faults for demo
-        config.minFaultInterval = 10.0;     // 10 seconds minimum between faults
-        config.maxFaultInterval = 30.0;     // 30 seconds maximum between faults
-        config.minFaultDuration = 20.0;     // 20 seconds minimum fault duration
-        config.maxFaultDuration = 60.0;     // 60 seconds maximum fault duration
+        config.minFaultInterval = 10.0;     // 1 seconds minimum between faults
+        config.maxFaultInterval = 20.0;     // 15 seconds maximum between faults
+        config.minFaultDuration = 15.0;     // 20 seconds minimum fault duration
+        config.maxFaultDuration = 30.0;     // 60 seconds maximum fault duration
         std::cout << "🎬 SHORT DEMO: Fast fault injection enabled" << std::endl;
     } else {
         // ✅ LONG SIMULATION: Original parameters
-        config.minFaultInterval = 30.0;     // 30 seconds minimum between faults
-        config.maxFaultInterval = 150.0;    // 2.5 minutes maximum between faults
-        config.minFaultDuration = 120.0;    // 2 minutes minimum fault duration
-        config.maxFaultDuration = 300.0;    // 5 minutes maximum fault duration
+        config.minFaultInterval = 300.0;     // 30 seconds minimum between faults
+        config.maxFaultInterval = 600.0;    // 2.5 minutes maximum between faults
+        config.minFaultDuration = 1800.0;    // 2 minutes minimum fault duration
+        config.maxFaultDuration = 3600.0;    // 5 minutes maximum fault duration
         std::cout << "📊 FULL SIMULATION: Normal fault injection enabled" << std::endl;
     }
     config.fiberCutProbability = 0.5;   // 50% chance of fiber cut, 50% power fluctuation
@@ -943,6 +945,7 @@ void ITU_Competition_Rural_Network::ScheduleRandomizedFaultPatterns()
     
     if (m_config.enableFaultInjection && m_config.enableRandomizedFaults && faultGenerator) {
         // Generate randomized faults
+        gradualFaults.clear();
         gradualFaults = faultGenerator->GenerateRandomizedFaults(allNodes.GetN());
         
         // Schedule fault progression updates
@@ -968,9 +971,9 @@ void ITU_Competition_Rural_Network::UpdateFaultProgression()
     for (auto& fault : gradualFaults) {
         double startDeg = fault.startDegradation.GetSeconds();
         double faultOcc = fault.faultOccurrence.GetSeconds();
-        double endTime = faultOcc + fault.faultDuration.GetSeconds();
+        //double endTime = faultOcc + fault.faultDuration.GetSeconds();
         
-        if (currentTime >= startDeg && currentTime <= endTime) {
+        if (currentTime >= startDeg && !fault.isActive) {
             if (!fault.isActive) {
                 fault.isActive = true;
                 AnnounceFaultEvent(fault, "fault_started");
@@ -1009,7 +1012,7 @@ void ITU_Competition_Rural_Network::UpdateFaultProgression()
             if (m_config.enableFaultVisualization) {
                 ProcessFaultVisualization();
             }
-            
+        /*    
         } else if (currentTime > endTime && fault.isActive) {
             fault.isActive = false;
             
@@ -1041,7 +1044,7 @@ void ITU_Competition_Rural_Network::UpdateFaultProgression()
                 } else if (fault.faultType == "power_fluctuation") {
                     HidePowerIssue(fault.targetNode);
                 }
-            }
+            }*/
         }
     }
     
@@ -1447,11 +1450,12 @@ void ITU_Competition_Rural_Network::CollectComprehensiveMetrics()
     // Collect metrics for all nodes
     for (uint32_t nodeId = 0; nodeId < allNodes.GetN(); ++nodeId) {
         NodeMetrics metrics = GetEnhancedNodeMetrics(nodeId);
-        
+        std::string formattedNodeId = "node_" + std::to_string(nodeId);
+
         // Write comprehensive metrics to CSV
         metricsFile << std::fixed << std::setprecision(4)
                    << currentTime << ","
-                   << nodeId << ","
+                   << formattedNodeId << ","
                    << metrics.nodeType << ","
                    << metrics.throughputMbps << ","
                    << metrics.latencyMs << ","
@@ -1490,7 +1494,8 @@ ITU_Competition_Rural_Network::NodeMetrics ITU_Competition_Rural_Network::GetEnh
 {
     NodeMetrics metrics;
     metrics.nodeId = nodeId;
-    
+    std::string formattedNodeId = "node_" + std::to_string(nodeId);
+
     // Determine node type
     if (nodeId < 5) {
         metrics.nodeType = "CORE";
@@ -1821,39 +1826,90 @@ void ITU_Competition_Rural_Network::ProcessDeploymentFile(const std::string& fil
     }
 }
 
-// NEW: Add this method to execute healing commands
-void ITU_Competition_Rural_Network::ExecuteHealingCommand(uint32_t nodeId, const std::string& command)
+// ✅ NEW: Only healing agent can resolve faults
+void ITU_Competition_Rural_Network::ResolveFaultByHealing(uint32_t nodeId, const std::string& faultType)
 {
-    std::cout << "🚀 Executing healing command: " << command << " for node " << nodeId << std::endl;
+    std::cout << "💊 HEALING AGENT: Resolving " << faultType << " for node " << nodeId << std::endl;
     
-    if (command == "power_healing") {
-        // Execute power fluctuation healing
-        if (healingEngine && animInterface) {
-            healingEngine->ShowHealingInProgress(nodeId, animInterface, allNodes);
+    for (auto& fault : gradualFaults) {
+        if ((fault.targetNode == nodeId || fault.connectedNode == nodeId) && 
+            fault.faultType == faultType && fault.isActive) {
             
-            // Schedule healing completion
-            Simulator::Schedule(Seconds(30), [this, nodeId]() {
-                healingEngine->ShowHealingCompleted(nodeId, animInterface, allNodes);
-                RestoreOriginalNodeSize(nodeId);
-                std::cout << "✅ Power healing completed for node " << nodeId << std::endl;
-            });
-        }
-        
-    } else if (command == "fiber_rerouting") {
-        // Execute fiber cut rerouting
-        if (healingEngine && animInterface) {
-            healingEngine->ShowHealingInProgress(nodeId, animInterface, allNodes);
+            // Mark fault as resolved
+            fault.isActive = false;
+            fault.currentSeverity = 0.0;
             
-            // Schedule healing completion
-            Simulator::Schedule(Seconds(45), [this, nodeId]() {
-                healingEngine->ShowHealingCompleted(nodeId, animInterface, allNodes);
-                RestoreOriginalNodeSize(nodeId);
-                std::cout << "✅ Fiber rerouting completed for node " << nodeId << std::endl;
-            });
+            // Create fault resolved event
+            FaultEvent endEvent;
+            endEvent.timestamp = Simulator::Now().GetSeconds();
+            endEvent.eventType = "fault_resolved_by_healing";
+            endEvent.faultType = fault.faultType;
+            endEvent.affectedNodes = {fault.targetNode, fault.connectedNode};
+            endEvent.description = fault.faultDescription + " - HEALED BY AGENT";
+            endEvent.severity = 0.0;
+            
+            faultEvents.push_back(endEvent);
+            
+            // Restore visual state
+            RestoreOriginalNodeSize(fault.targetNode);
+            if (fault.faultType == "fiber_cut") {
+                RestoreOriginalNodeSize(fault.connectedNode);
+                RestoreFiberLink(fault.targetNode, fault.connectedNode);
+            } else if (fault.faultType == "power_fluctuation") {
+                HidePowerIssue(fault.targetNode);
+            }
+            
+            std::cout << "✅ HEALING SUCCESS: " << fault.faultType 
+                      << " resolved for node " << nodeId << std::endl;
+            
+            // Export healing success event
+            if (agentAPI) {
+                std::vector<FaultEvent> healingEvents = {endEvent};
+                agentAPI->ExportRealTimeFaultEvents(healingEvents);
+            }
+            
+            break;
         }
     }
+}
+
+void ITU_Competition_Rural_Network::ExecuteHealingCommand(uint32_t nodeId, const std::string& command)
+{
+    std::cout << "🚀 HEALING AGENT: Executing " << command << " for node " << nodeId << std::endl;
     
-    std::cout << "🎬 VISUAL: Healing initiated for node " << GetNodeVisualName(nodeId) << std::endl;
+    if (command == "power_healing") {
+        // Show healing in progress
+        if (healingEngine && animInterface) {
+            healingEngine->ShowHealingInProgress(nodeId, animInterface, allNodes);
+        }
+        
+        // ✅ FIXED: Actually resolve the fault after healing time
+        Simulator::Schedule(Seconds(30), [this, nodeId]() {
+            ResolveFaultByHealing(nodeId, "power_fluctuation");
+            
+            if (healingEngine && animInterface) {
+                healingEngine->ShowHealingCompleted(nodeId, animInterface, allNodes);
+            }
+            
+            std::cout << "✅ HEALING COMPLETE: Power fluctuation resolved by healing agent" << std::endl;
+        });
+        
+    } else if (command == "fiber_rerouting") {
+        if (healingEngine && animInterface) {
+            healingEngine->ShowHealingInProgress(nodeId, animInterface, allNodes);
+        }
+        
+        // ✅ FIXED: Actually resolve the fault
+        Simulator::Schedule(Seconds(45), [this, nodeId]() {
+            ResolveFaultByHealing(nodeId, "fiber_cut");
+            
+            if (healingEngine && animInterface) {
+                healingEngine->ShowHealingCompleted(nodeId, animInterface, allNodes);
+            }
+            
+            std::cout << "✅ HEALING COMPLETE: Fiber cut resolved by healing agent" << std::endl;
+        });
+    }
 }
 
 void ITU_Competition_Rural_Network::ExecuteHealingDeployment(const std::map<std::string, std::string>& deploymentData)
@@ -1970,7 +2026,7 @@ void ITU_Competition_Rural_Network::SetupRobustNetAnimVisualization()
     animInterface = new AnimationInterface(animFileName);
     
     // ✅ FIX: Limit packet tracing to prevent "Max Packets per trace file exceeded"
-    animInterface->SetMaxPktsPerTraceFile(50000);  // Reduce from default 1M to 50K
+    animInterface->SetMaxPktsPerTraceFile(1000);  
     animInterface->EnablePacketMetadata(false);     // Disable detailed packet metadata
     //animInterface->EnableWifiPacketMetadata(false); // Disable WiFi packet details
     

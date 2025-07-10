@@ -1,0 +1,82 @@
+{
+  "plan_id": "HEAL_node_3_1752183718",
+  "anomaly_id": "ANOM_node_3_1752183632",
+  "node_id": "node_3",
+  "severity": "critical",
+  "generated_timestamp": "2025-07-11T03:11:58.680244",
+  "total_estimated_duration": 4305,
+  "confidence": 0.42447655782814925,
+  "requires_approval": true,
+  "healing_actions": [
+    {
+      "action_id": "RAG_AI_1752183718_0",
+      "action_type": "Remote_Diagnostics_and_Log_Analysis",
+      "priority": 1,
+      "description": "Initiate immediate remote diagnostics on node_3 (CORE) using Nokia's NetAct or similar network management system.  Analyze logs for error messages, resource utilization, and any clues related to the 'dynamic_detection' fault pattern. This will help pinpoint the root cause before implementing more disruptive actions.",
+      "parameters": {
+        "system": "NetAct",
+        "node_id": "node_3",
+        "log_types": [
+          "system",
+          "network",
+          "hardware"
+        ]
+      },
+      "estimated_duration": 3600,
+      "success_probability": 0.6
+    },
+    {
+      "action_id": "TMPL_3_1752183718",
+      "action_type": "load_balancing",
+      "priority": 1,
+      "description": "Redistribute traffic load across multiple links",
+      "parameters": {
+        "template_id": 3,
+        "prerequisites": [
+          "Multiple links available"
+        ]
+      },
+      "estimated_duration": 45,
+      "success_probability": 0.5599999999999999
+    },
+    {
+      "action_id": "DB_KB_1_1752183688",
+      "action_type": "emergency_reroute",
+      "priority": 1,
+      "description": "Immediately reroute traffic through alternative paths",
+      "parameters": {
+        "tactic_id": "1",
+        "estimated_time": 30,
+        "priority_level": "high"
+      },
+      "estimated_duration": 30,
+      "success_probability": 0.48
+    },
+    {
+      "action_id": "TMPL_4_1752183718",
+      "action_type": "qos_prioritization",
+      "priority": 1,
+      "description": "Activate emergency QoS policies",
+      "parameters": {
+        "template_id": 4,
+        "prerequisites": [
+          "QoS policies configured"
+        ]
+      },
+      "estimated_duration": 30,
+      "success_probability": 0.48
+    },
+    {
+      "action_id": "RAG_AI_1752183718_1",
+      "action_type": "Redundancy_Check_and_Failover",
+      "priority": 2,
+      "description": "Verify the status of any redundant CORE nodes or network paths configured for node_3. If redundancy exists and is healthy, initiate a failover to the redundant node. This minimizes service disruption while troubleshooting the primary node.  This leverages Nokia's inherent redundancy features common in rural deployments.",
+      "parameters": {
+        "redundancy_scheme": "active-passive",
+        "failover_mechanism": "automatic"
+      },
+      "estimated_duration": 600,
+      "success_probability": 0.6
+    }
+  ]
+}
