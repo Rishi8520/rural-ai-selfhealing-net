@@ -1,0 +1,25 @@
+{
+  "monitoring_report": {
+    "generated_timestamp": "2025-07-11T03:13:47.818906",
+    "agent_version": "robust_2.0",
+    "monitoring_status": {
+      "static_monitoring": true,
+      "realtime_monitoring": true,
+      "overall_status": "stopped"
+    }
+  },
+  "statistics": {
+    "files_processed": 12,
+    "data_points_collected": 600,
+    "real_faults_detected": 1,
+    "realtime_events_processed": 0,
+    "calculation_agent_notifications": 12,
+    "duplicate_faults_avoided": 0,
+    "last_update": "2025-07-11T03:09:25.340605"
+  },
+  "fault_tracking": {
+    "processed_fault_ids": 1,
+    "duplicate_faults_avoided": 0,
+    "file_hashes_tracked": 4
+  }
+}

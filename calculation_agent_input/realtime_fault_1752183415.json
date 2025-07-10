@@ -1,0 +1,14 @@
+{
+  "fault_type": "power_fluctuation",
+  "affected_nodes": [
+    49,
+    49
+  ],
+  "severity": 0.936263,
+  "timestamp": 25,
+  "event_id": "evt_power_fluctuation_25",
+  "description": "Randomized power fluctuation at node 49",
+  "requires_immediate_action": true,
+  "event_type": "fault_started",
+  "visual_effect": ""
+}

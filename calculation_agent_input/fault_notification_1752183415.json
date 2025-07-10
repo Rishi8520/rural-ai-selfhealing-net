@@ -1,0 +1,25 @@
+{
+  "notification_type": "realtime_fault_detected",
+  "timestamp": "2025-07-11T03:06:55.440356",
+  "source_agent": "enhanced_monitor_agent_robust",
+  "target_agent": "calculation_agent",
+  "priority": "high",
+  "data_file": "calculation_agent_input/realtime_fault_1752183415.json",
+  "fault_summary": {
+    "fault_count": 1,
+    "affected_nodes": 2,
+    "max_severity": 0.936263,
+    "fault_types": [
+      "power_fluctuation"
+    ],
+    "fault_event_ids": [
+      "evt_power_fluctuation_25"
+    ],
+    "requires_immediate_action": true
+  },
+  "processing_instructions": {
+    "suggested_lstm_priority": "high",
+    "suggested_anomaly_threshold": 0.7,
+    "suggested_confidence_threshold": 0.8
+  }
+}
